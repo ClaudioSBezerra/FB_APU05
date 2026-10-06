@@ -65,11 +65,11 @@ Dois regimes coexistem, por decisão explícita (motor de aprovação e exporta�
 - **Prevents:** um fluxo de login/validação de token divergente do já corrigido em produção no FB_APU02 (ex.: esquecer a checagem de `email_verified`, achado de segurança documentado lá).
 - **Rule:** replica o fluxo já validado em produção no FB_APU02 — OIDC/PKCE contra `https://iam.fcxlabs.com/realms/ferreiracosta`, validação via JWKS, checagem obrigatória de `email_verified`. Perfil e ator sempre da sessão, nunca do payload.
 
-### AD-7 — Autorização single-company `[ADOPTED]`
+### AD-7 — Autorização single-company `[AMENDED]`
 
 - **Binds:** `all`, FR-2
-- **Prevents:** introdução desnecessária de campo/filtro `company_id` ou lógica de multitenancy copiada do FB_APU02, divergindo do fato de que o FB_APU05 serve uma única empresa; dois times lendo o perfil de claims diferentes do Keycloak (ex. um via `realm_access.roles`, outro via grupo), causando autorização divergente silenciosa.
-- **Rule:** sem `company_id`/multitenancy (diferente do FB_APU02). Middleware de perfil (`solicitante`/`administrador`) deriva exclusivamente de roles de client no Keycloak, lidas via `resource_access.<client>.roles` — nunca de grupo nem de claim customizada (client/realm exatos de provisionamento seguem em aberto, PRD Questão Aberta 2 / Deferred). Último administrador ativo não pode ser rebaixado nem desativado — validação ocorre no mesmo módulo que concede perfil administrador (FR-2), nunca só na UI.
+- **Prevents:** introdução desnecessária de campo/filtro `company_id` ou lógica de multitenancy copiada do FB_APU02, divergindo do fato de que o FB_APU05 serve uma única empresa; dois caminhos de código decidindo "quem é admin" de formas diferentes (ex. um lendo claim do Keycloak, outro lendo a tabela de usuários), causando autorização divergente silenciosa.
+- **Rule:** sem `company_id`/multitenancy (diferente do FB_APU02). Perfil (`solicitante`/`administrador`) é uma coluna gerenciada pela própria aplicação (tabela `usuarios`, mesmo padrão do `users.role` já validado no FB_APU02) — **não** deriva de role/claim do Keycloak. Identidade (qual usuário é) vem do Keycloak (e-mail verificado); autorização (o que esse usuário pode fazer) vem do nosso banco. Concessão de perfil administrador é uma escrita nessa coluna, feita por um módulo único que também aplica a proteção do último admin (FR-2) — nunca só na UI, nunca via chamada à Admin API do Keycloak (que não está no escopo deste projeto). Correção registrada em 2026-10-06 durante a investigação da Story 1.2: a versão original deste AD (derivar perfil de `resource_access.<client>.roles`) era incompatível com FR-2, que exige que o próprio sistema seja capaz de conceder/revogar perfil e proteger o último admin — algo que uma claim do Keycloak, somente legível, não permite.
 
 ### AD-8 — Carga da base Senior via upload manual
 
@@ -232,7 +232,7 @@ FB_APU05/
 - Domínio, proxy, observabilidade, SLA técnico de cada ambiente (PRD Questão Aberta 4) — a topologia de ambientes em si já está decidida (AD-10); o que falta é configuração fina, não arquitetura.
 - Estratégia de rollback de aplicação e banco (PRD Questão Aberta 5).
 - HA, backup e restore do Postgres de produção (PRD Questão Aberta 6).
-- Client/realm exato de provisionamento no Keycloak para este módulo — reaproveitar o client do FB_APU02 ou criar um próprio (PRD Questão Aberta 2) — o formato da claim de perfil já está decidido (AD-7).
+- Client/realm exato de provisionamento no Keycloak para este módulo — reaproveitar o client do FB_APU02 ou criar um próprio (PRD Questão Aberta 2). Perfil não depende dessa decisão (AD-7 já fixa que vem da tabela `usuarios`, não de claim do Keycloak) — falta só a identidade/provisionamento do client em si.
 - Formato final da API SAP — dependência externa de outro time, forma ainda desconhecida; `ExportadorAPI` (AD-3) só pode ser desenhado em detalhe quando o contrato existir.
 - Cadência de recarga da base Senior (PRD Questão Aberta 1) — AD-8 fixa o mecanismo (upload manual), não a frequência.
 - Regra de pausa do SLA (PRD Questão Aberta 10) — AD-11 fixa onde o cálculo mora, não a regra de negócio da pausa em si.
