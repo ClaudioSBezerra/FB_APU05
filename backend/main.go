@@ -15,11 +15,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"fb_apu05/handlers"
+	"fb_apu05/iam"
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -161,6 +163,7 @@ func onDBConnected() {
 func main() {
 	_ = godotenv.Load()
 
+	handlers.ValidateJWTSecret()
 	initDBAsync()
 
 	port := os.Getenv("PORT")
@@ -169,6 +172,46 @@ func main() {
 	}
 
 	http.HandleFunc("/api/health", handlers.HealthHandler)
+
+	// withDB adia a resolução do *sql.DB para o momento da requisição — na
+	// subida do processo o banco ainda pode estar conectando (initDBAsync roda
+	// em background com retry), então handlers que precisam de DB não podem
+	// capturar um *sql.DB nulo no registro da rota.
+	withDB := func(handlerFactory func(*sql.DB) http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			database := getDB()
+			if database == nil {
+				http.Error(w, "Database initializing, please wait...", http.StatusServiceUnavailable)
+				return
+			}
+			handlerFactory(database)(w, r)
+		}
+	}
+
+	// SSO Keycloak (AD-6) — único fluxo de login do FB_APU05 (sem cadastro de
+	// usuário/senha separado). Config exposta em runtime (não build-time) via
+	// /api/auth/sso/config, replicando o padrão já validado em produção no
+	// FB_APU02 (ver spec Code Map da Story 1.2).
+	http.HandleFunc("/api/auth/sso/config", handlers.SSOConfigHandler())
+	http.HandleFunc("/api/auth/logout", withDB(handlers.LogoutHandler))
+
+	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
+		var allowedClientIDs []string
+		for _, id := range strings.Split(os.Getenv("IAM_ALLOWED_CLIENT_IDS"), ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				allowedClientIDs = append(allowedClientIDs, id)
+			}
+		}
+		if len(allowedClientIDs) == 0 {
+			log.Printf("[Auth] AVISO: SSO Keycloak habilitado (IAM_BASE_URL=%s) mas IAM_ALLOWED_CLIENT_IDS está vazio — toda tentativa de login via Keycloak vai falhar (azp nunca bate com uma allowlist vazia)", iamBaseURL)
+		}
+		jwksClient := iam.NewJWKSClient(iamBaseURL, "", time.Hour, false)
+		iamAuthMW := iam.IAMAuthMiddleware(jwksClient, iamBaseURL, allowedClientIDs, nil, nil)
+		http.Handle("/api/auth/sso/keycloak", iamAuthMW(withDB(handlers.KeycloakSSOHandler)))
+		log.Printf("[Auth] SSO Keycloak habilitado (realm: %s)", iamBaseURL)
+	} else {
+		log.Println("[Auth] SSO Keycloak desabilitado (IAM_BASE_URL não setada) — /api/auth/sso/keycloak não registrado.")
+	}
 
 	server := &http.Server{
 		Addr:         ":" + port,

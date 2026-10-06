@@ -7,3 +7,12 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-scaffold-inicial-do-projeto.md`
   summary: Ambiente de teste do frontend (`vite.config.ts`, `test.environment: 'node'`) não está pronto para testes de componente React (sem `jsdom`/`@testing-library/react`).
   evidence: Nenhum teste existe ainda no frontend; só vira problema quando a primeira story escrever um teste de componente.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-login-via-sso-corporativo.md`
+  summary: Logout é hoje só client-side — `tokenBlacklist` é gravado mas nunca lido, porque nenhuma rota ainda exige nosso próprio JWT (só o middleware do Keycloak existe). Revisitar quando a primeira rota autenticada por JWT próprio for construída (precisa de um middleware de "auth required" que consulte a blacklist).
+  evidence: `backend/handlers/auth.go` — `tokenBlacklist.Store` em `LogoutHandler`, nenhum `Load`/checagem em nenhum middleware.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-login-via-sso-corporativo.md`
+  summary: `iam.GetKey` (JWKS) dispara fetch síncrono segurando lock exclusivo para todo `kid` desconhecido, sem cache negativo nem rate limit — vetor de DoS barato. Herdado byte a byte do FB_APU02 (já em produção lá); corrigir só no FB_APU05 criaria inconsistência entre os sistemas irmãos — avaliar nos dois juntos.
+  evidence: `backend/iam/iam_jwks_client.go` (`GetKey`), confirmado idêntico ao FB_APU02 via diff.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-login-via-sso-corporativo.md`
+  summary: Coluna `usuarios.updated_at` nunca é escrita por nenhum caminho atual (sempre igual a `created_at`) — sem efeito até que algo atualize o perfil do usuário.
+  evidence: `backend/migrations/001_create_usuarios.sql` — nenhum trigger nem UPDATE statement no diff.

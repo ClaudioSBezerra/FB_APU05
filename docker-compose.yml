@@ -14,6 +14,14 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - APP_URL=${APP_URL:-http://localhost:3000}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}
+      # SSO Keycloak (AD-6) — vazio por padrão: sem estas vars, as rotas de SSO
+      # ficam desabilitadas (ver main.go) e o backend sobe normalmente sem
+      # Keycloak configurado. Setadas via .env na raiz para habilitar.
+      - IAM_BASE_URL=${IAM_BASE_URL:-}
+      - IAM_CLIENT_ID=${IAM_CLIENT_ID:-}
+      - IAM_REDIRECT_URI=${IAM_REDIRECT_URI:-}
+      - IAM_ALLOWED_CLIENT_IDS=${IAM_ALLOWED_CLIENT_IDS:-}
+      - IAM_SCOPES=${IAM_SCOPES:-}
     depends_on:
       db:
         condition: service_healthy
