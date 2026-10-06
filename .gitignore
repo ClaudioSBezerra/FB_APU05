@@ -1,0 +1,44 @@
+node_modules/
+dist/
+build/
+backend/server
+backend/fb_apu05
+*.exe
+*.test
+
+# Env
+.env
+.env.local
+.env.*
+backend/.env
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Backups
+backups/
+*.dump
+*.bak
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude Code local state / generated skill mirrors (regenerado via `npx bmad-method install`)
+.claude/
+skills/
+
+# Metadados do Windows/WSL (alternate data stream exposta como arquivo separado)
+*:Zone.Identifier
