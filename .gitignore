@@ -10,6 +10,7 @@ backend/fb_apu05
 .env
 .env.local
 .env.*
+!**/.env.example
 backend/.env
 docker-compose.override.yml
 

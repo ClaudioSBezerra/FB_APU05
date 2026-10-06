@@ -1,0 +1,54 @@
+services:
+  # Backend (Go)
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+      - DATABASE_URL=postgres://${DB_USER:-fb_apu05}:${DB_PASSWORD:-fb_apu05}@db:5432/${DB_NAME:-fb_apu05}?sslmode=disable
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-dev-key-change-me}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      - APP_URL=${APP_URL:-http://localhost:3000}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Frontend (Vite dev server) — dev local apenas; build de produção fica para
+  # uma story de deploy futura (ver docker-compose.prod.yml, fora de escopo aqui).
+  web:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_TARGET=http://api:8081
+    depends_on:
+      - api
+
+  # Banco de Dados
+  db:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${DB_USER:-fb_apu05}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-fb_apu05}
+      - POSTGRES_DB=${DB_NAME:-fb_apu05}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-fb_apu05} -d ${DB_NAME:-fb_apu05}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
