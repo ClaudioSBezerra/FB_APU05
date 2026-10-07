@@ -116,40 +116,65 @@ func (r *ResolverCalculado) alcada(s Solicitacao) (Aprovador, bool, error) {
 	return aprovador, true, nil
 }
 
+// As 3 queries de `gerentes_aprovacao` abaixo são literais fixos (nunca
+// montados por concatenação/fmt.Sprintf) — a condição WHERE extra nunca vem
+// de entrada do usuário, mas um literal fixo por chamador evita que uma
+// futura extensão (ex. mais um degrau de fallback) introduza concatenação de
+// algo que não seja uma string fixa no módulo de maior risco do produto.
+const (
+	queryGerentePorCC = `
+		SELECT id, colaborador_id, papel_aprovador
+		FROM gerentes_aprovacao
+		WHERE ativo = true
+		  AND teto >= $1
+		  AND centro_custo_id = $2
+		ORDER BY teto ASC, id
+		LIMIT 1
+	`
+	queryGerentePorDivisao = `
+		SELECT id, colaborador_id, papel_aprovador
+		FROM gerentes_aprovacao
+		WHERE ativo = true
+		  AND teto >= $1
+		  AND centro_custo_id IS NULL AND divisao_id = $2
+		ORDER BY teto ASC, id
+		LIMIT 1
+	`
+	queryGerenteGlobal = `
+		SELECT id, colaborador_id, papel_aprovador
+		FROM gerentes_aprovacao
+		WHERE ativo = true
+		  AND teto >= $1
+		  AND centro_custo_id IS NULL AND divisao_id IS NULL
+		ORDER BY teto ASC, id
+		LIMIT 1
+	`
+)
+
 // janelaGerenteCC consulta `gerentes_aprovacao` pela linha específica do
 // centro de custo (teto >= valor — FR-10: janela do gerente vale até
 // R$20.000 por padrão, mas o teto é por linha, não uma constante).
 func (r *ResolverCalculado) janelaGerenteCC(s Solicitacao) (Aprovador, bool, error) {
-	return r.gerente("centro_custo_id = $2", s.CentroCustoID, s.Valor, "janela do gerente do centro de custo")
+	return r.gerente(queryGerentePorCC, s.CentroCustoID, s.Valor, "janela do gerente do centro de custo")
 }
 
 // fallbackDivisao consulta `gerentes_aprovacao` pela linha de divisão
 // (centro_custo_id nulo, divisao_id preenchido) — "sobe para o GR mais
 // próximo acima" quando não há linha específica do CC.
 func (r *ResolverCalculado) fallbackDivisao(s Solicitacao) (Aprovador, bool, error) {
-	return r.gerente("centro_custo_id IS NULL AND divisao_id = $2", s.DivisaoID, s.Valor, "fallback do GR da divisão")
+	return r.gerente(queryGerentePorDivisao, s.DivisaoID, s.Valor, "fallback do GR da divisão")
 }
 
 // fallbackGlobal consulta `gerentes_aprovacao` pela linha global (os dois
 // nulos) — último degrau antes de ErrSemAlcadaCadastrada.
 func (r *ResolverCalculado) fallbackGlobal(s Solicitacao) (Aprovador, bool, error) {
-	return r.gerente("centro_custo_id IS NULL AND divisao_id IS NULL", nil, s.Valor, "fallback do GR global")
+	return r.gerente(queryGerenteGlobal, nil, s.Valor, "fallback do GR global")
 }
 
 // gerente é o helper compartilhado pelas 3 consultas acima a
-// `gerentes_aprovacao` — só a condição WHERE extra (e seu argumento, quando
-// houver) muda entre elas.
-func (r *ResolverCalculado) gerente(condicaoExtra string, arg interface{}, valor float64, motivo string) (Aprovador, bool, error) {
-	query := fmt.Sprintf(`
-		SELECT id, colaborador_id, papel_aprovador
-		FROM gerentes_aprovacao
-		WHERE ativo = true
-		  AND teto >= $1
-		  AND %s
-		ORDER BY teto ASC, id
-		LIMIT 1
-	`, condicaoExtra)
-
+// `gerentes_aprovacao` — recebe a query literal já fixa (nunca montada por
+// concatenação) e só varia o argumento posicional, quando houver.
+func (r *ResolverCalculado) gerente(query string, arg interface{}, valor float64, motivo string) (Aprovador, bool, error) {
 	var row *sql.Row
 	if arg == nil {
 		row = r.db.QueryRow(query, valor)

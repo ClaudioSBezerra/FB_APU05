@@ -1230,6 +1230,104 @@ func TestImportarCadastroHandler_CcExcecao_ParDuplicado(t *testing.T) {
 	}
 }
 
+// TestAtualizarCadastroHandler_CentrosCusto_FilialAusente cobre
+// extractStringOpcional exigindo a chave "filial" presente no corpo de PUT
+// de "centros-custo" (Story 3.1 adicionou esta coluna opcional) — mesmo
+// padrão de TestAtualizarCadastroHandler_Alcadas_ValorMaximoAusente. Antes
+// desta story, decodeJSONCentrosCusto só exigia codigo/nome/divisao_id;
+// qualquer chamador pré-existente que não envie "filial" agora recebe 400,
+// então este teste fixa esse contrato (em vez de deixá-lo sem nenhuma
+// cobertura, como estava).
+func TestAtualizarCadastroHandler_CentrosCusto_FilialAusente(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	body := `{"codigo":"CC1","nome":"Centro Um","divisao_id":"33333333-3333-3333-3333-333333333333"}`
+	req := newCadastroRequest(http.MethodPut, "centros-custo", testCadastroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "filial") {
+		t.Fatalf("corpo não cita o campo ausente: %s", rec.Body.String())
+	}
+}
+
+// TestAtualizarCadastroHandler_CentrosCusto_FilialPreenchida cobre o
+// caminho feliz com a chave "filial" presente e preenchida — complementa o
+// teste de ausência acima e fixa que o tipo "centros-custo" continua
+// editável por PUT depois da Story 3.1.
+func TestAtualizarCadastroHandler_CentrosCusto_FilialPreenchida(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const divisaoID = "33333333-3333-3333-3333-333333333333"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE id = $1 FOR UPDATE")).
+		WithArgs(testCadastroID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCadastroID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 0) + 1 FROM cadastro_historico WHERE tipo_cadastro = $1 AND registro_id = $2")).
+		WithArgs("centros-custo", testCadastroID).
+		WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(2))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE centros_custo SET codigo = $1, nome = $2, divisao_id = $3, filial = $4, updated_at = now() WHERE id = $5")).
+		WithArgs("CC1-novo", "Centro Um", divisaoID, "F2", testCadastroID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("centros-custo", testCadastroID, 2, `{"codigo":"CC1-novo","divisao_id":"33333333-3333-3333-3333-333333333333","filial":"F2","nome":"Centro Um"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := AtualizarCadastroHandler(db)
+	body := `{"codigo":"CC1-novo","nome":"Centro Um","divisao_id":"` + divisaoID + `","filial":"F2"}`
+	req := newCadastroRequest(http.MethodPut, "centros-custo", testCadastroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAtualizarCadastroHandler_RegrasAprovacao_AutorExclusivo cobre
+// validarAutorExclusivo: uma linha de "regras-aprovacao" com
+// colaborador_id E papel_aprovador preenchidos ao mesmo tempo é 400 — sem
+// esta checagem, montarAprovador prioriza colaborador_id silenciosamente,
+// descartando o papel_aprovador que o administrador também curou.
+func TestAtualizarCadastroHandler_RegrasAprovacao_AutorExclusivo(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	body := `{"precedencia":1,"filial":"F1","centro_custo_codigo":"CC1","valor_minimo":100,"valor_maximo":null,"colaborador_id":"11111111-1111-1111-1111-111111111111","papel_aprovador":"Gerente","ativo":true}`
+	req := newCadastroRequest(http.MethodPut, "regras-aprovacao", testCadastroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "no máximo um") {
+		t.Fatalf("corpo não cita a exclusividade esperada: %s", rec.Body.String())
+	}
+}
+
+// TestAtualizarCadastroHandler_GerentesAprovacao_AutorExclusivo cobre a
+// mesma checagem para "gerentes-aprovacao".
+func TestAtualizarCadastroHandler_GerentesAprovacao_AutorExclusivo(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	body := `{"centro_custo_id":"cc000000-0000-0000-0000-000000000001","divisao_id":null,"colaborador_id":"11111111-1111-1111-1111-111111111111","papel_aprovador":"Gerente","teto":20000,"ativo":true}`
+	req := newCadastroRequest(http.MethodPut, "gerentes-aprovacao", testCadastroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "no máximo um") {
+		t.Fatalf("corpo não cita a exclusividade esperada: %s", rec.Body.String())
+	}
+}
+
 // TestAtualizarCadastroHandler_CcExcecao_Success cobre "Edição feliz": PUT
 // com novo centro_custo_id válido (já resolvido, UUID) -> 200, registro
 // atualizado, nova versão em histórico.

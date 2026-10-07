@@ -386,6 +386,20 @@ func validarAutorRegra(colaboradorID, papelAprovador interface{}) error {
 	return nil
 }
 
+// validarAutorExclusivo impede uma linha de regras_aprovacao/
+// gerentes_aprovacao com colaborador_id E papel_aprovador preenchidos ao
+// mesmo tempo — a migration documenta "exatamente um dos dois preenchido"
+// para identificar Tipo="pessoa" xor Tipo="cargo" (AD-2); sem esta checagem,
+// uma linha com os dois preenchidos silenciosamente resolveria sempre como
+// Tipo="pessoa" (montarAprovador prioriza colaborador_id), descartando o
+// papel_aprovador que o administrador também curou para aquela linha.
+func validarAutorExclusivo(colaboradorID, papelAprovador interface{}) error {
+	if colaboradorID != nil && papelAprovador != nil {
+		return fmt.Errorf("informe no máximo um entre 'colaborador_id'/'colaborador_email' e 'papel_aprovador'")
+	}
+	return nil
+}
+
 // validarCCXorDivisao impede uma linha de gerentes_aprovacao com
 // centro_custo_id E divisao_id preenchidos ao mesmo tempo — a hierarquia
 // CC -> divisão -> global (Design Notes da spec) pressupõe no máximo um dos
@@ -435,6 +449,9 @@ func decodeJSONRegrasAprovacao(corpo map[string]interface{}) ([]interface{}, err
 	if err := validarAutorRegra(colaboradorID, papelAprovador); err != nil {
 		return nil, err
 	}
+	if err := validarAutorExclusivo(colaboradorID, papelAprovador); err != nil {
+		return nil, err
+	}
 	ativo, err := extractBool(corpo, "ativo")
 	if err != nil {
 		return nil, err
@@ -465,6 +482,9 @@ func decodeJSONGerentesAprovacao(corpo map[string]interface{}) ([]interface{}, e
 		return nil, err
 	}
 	if err := validarAutorRegra(colaboradorID, papelAprovador); err != nil {
+		return nil, err
+	}
+	if err := validarAutorExclusivo(colaboradorID, papelAprovador); err != nil {
 		return nil, err
 	}
 	teto, err := extractFloat(corpo, "teto")

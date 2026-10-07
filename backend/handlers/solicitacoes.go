@@ -162,6 +162,15 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Boundaries "Always" da spec: a divisão da linha é "derivada do CC",
+		// nunca um valor independente do cliente — rejeita aqui (400) em vez
+		// de deixar a FK de solicitacao_lancamentos.divisao_id estourar como
+		// 500 numa divisão bem-formada porém incorreta/inexistente.
+		if msgErro := validarDivisaoDerivadaDoCC(lancamentos, ccDivisaoID); msgErro != "" {
+			jsonErr(w, http.StatusBadRequest, msgErro)
+			return
+		}
+
 		msgErro, errServidor := validarPlanoContaBIFC(tx, lancamentos)
 		if errServidor != nil {
 			log.Printf("[Solicitacoes] Erro ao checar plano de conta: %v", errServidor)
@@ -173,7 +182,11 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		valorTotal := somaPorLado(lancamentos, "origem")
+		// Os 2 lados batem dentro de uma tolerância de R$0,01 (não
+		// exatamente) — usar o maior dos dois é a escolha conservadora: nunca
+		// resolve a alçada para um valor menor do que o cliente de fato
+		// movimentou, mesmo bem na borda de uma faixa.
+		valorTotal := math.Max(somaPorLado(lancamentos, "origem"), somaPorLado(lancamentos, "destino"))
 
 		resolver, err := aprovacao.ResolverParaTipo(req.TipoSolicitacao, tx)
 		if err != nil {
@@ -338,6 +351,19 @@ func validarMesmoCentroCusto(linhas []lancamentoValidado) (string, string) {
 		}
 	}
 	return centroCustoID, ""
+}
+
+// validarDivisaoDerivadaDoCC garante que toda linha referencia a MESMA
+// divisao_id do centro de custo da solicitação (Boundaries "Always" da
+// spec: "...e portanto a mesma divisao_id, derivada do CC") — divisao_id
+// não é um valor independente que o cliente possa escolher por linha.
+func validarDivisaoDerivadaDoCC(linhas []lancamentoValidado, ccDivisaoID string) string {
+	for i, l := range linhas {
+		if l.DivisaoID != ccDivisaoID {
+			return fmt.Sprintf("linha %d: campo 'divisao_id' diverge da divisão do centro de custo", i+1)
+		}
+	}
+	return ""
 }
 
 // validarBalanceamento checa soma(origem) == soma(destino) dentro da

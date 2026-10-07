@@ -69,6 +69,88 @@ func TestAbrirSolicitacaoHandler_TipoNaoSuportado(t *testing.T) {
 	}
 }
 
+func TestAbrirSolicitacaoHandler_MenosDeDuasLinhas(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoTransferencia(
+		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", 1000),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ao menos uma linha de origem e uma de destino") {
+		t.Fatalf("corpo não cita a linha mínima esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_MesForaDaConvencaoDia1(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoTransferencia(
+		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-15", 1000) + "," +
+			linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 1000),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "dia 1 do mês de competência") {
+		t.Fatalf("corpo não cita a convenção de dia 1: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_DivisaoDivergenteDoCC(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const outraDivisaoID = "dd000000-0000-0000-0000-000000000099"
+	corpo := corpoTransferencia(
+		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", 1000) + "," +
+			linhaJSON("destino", outraDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo, divisao_id, filial FROM centros_custo WHERE id = $1")).
+		WithArgs(testSolicitacaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"codigo", "divisao_id", "filial"}).
+			AddRow("CC1", testSolicitacaoDivisaoID, "F1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT cc_proprio_id FROM usuarios WHERE id = $1")).
+		WithArgs(testAtorID).
+		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "divisao_id") {
+		t.Fatalf("corpo não cita a divergência de divisão: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
 func TestAbrirSolicitacaoHandler_LadosDesbalanceados(t *testing.T) {
 	db, mock := newSQLMock(t)
 
@@ -259,6 +341,9 @@ func TestAbrirSolicitacaoHandler_SemAlcadaCadastrada(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "sem alçada cadastrada") {
 		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "CC1") || !strings.Contains(rec.Body.String(), "F1") {
+		t.Fatalf("corpo não cita o CC e a filial (I/O Matrix exige citar os dois): %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectativas do mock não satisfeitas: %v", err)

@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS regras_aprovacao (
 );
 
 CREATE INDEX IF NOT EXISTS idx_regras_aprovacao_colaborador_id ON regras_aprovacao (colaborador_id);
+CREATE INDEX IF NOT EXISTS idx_regras_aprovacao_filial_cc ON regras_aprovacao (filial, centro_custo_codigo);
 
 -- `gerentes_aprovacao`: unifica "janela do gerente do CC" e "fallback GR
 -- mais próximo acima" numa MESMA tabela (Design Notes da spec) —

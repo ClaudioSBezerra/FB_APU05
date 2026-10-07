@@ -432,6 +432,9 @@ func decodeCSVRegrasAprovacao(tx *sql.Tx, linha []string) ([]interface{}, error)
 	if err := validarAutorRegra(colaboradorID, papelAprovador); err != nil {
 		return nil, err
 	}
+	if err := validarAutorExclusivo(colaboradorID, papelAprovador); err != nil {
+		return nil, err
+	}
 	ativo, err := parseBoolCSV(linha[7])
 	if err != nil {
 		return nil, err
@@ -475,6 +478,9 @@ func decodeCSVGerentesAprovacao(tx *sql.Tx, linha []string) ([]interface{}, erro
 	}
 	papelAprovador := parseStringOpcional(linha[3])
 	if err := validarAutorRegra(colaboradorID, papelAprovador); err != nil {
+		return nil, err
+	}
+	if err := validarAutorExclusivo(colaboradorID, papelAprovador); err != nil {
 		return nil, err
 	}
 
