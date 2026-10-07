@@ -19,3 +19,11 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-bootstrap-e-protecao-do-administrador.md`
   summary: Quando um admin e rebaixado/desativado via PATCH, o JWT que essa pessoa ja tem em maos continua valido ate expirar (ate 30min) - nao existe hoje um jeito de invalidar "todos os tokens do usuario X" de uma vez (blacklist e por token individual).
   evidence: `backend/handlers/middleware.go` (RequireAuth so confere blacklist por token, nao por user_id); mesmo trade-off ja aceito desde a Story 1.2 (token de acesso curto por design).
+
+### DW-1: Nenhum teste verifica que PATCH /api/admin/usuarios/{id} está de fato registrado atrás de RequireAuth(..., "administrador") em main.go.
+origin: spec-deferred 2bacedfbdeca
+location: backend/main.go:202
+source_spec: `spec-1-3-bootstrap-e-protecao-do-administrador.md`
+severity: medium
+reason: Busca por TestMain/httptest.NewServer em backend só encontra uso em iam/iam_auth_middleware_test.go; nada cobre o roteamento de main.go. Uma regressão que remova o wrapper RequireAuth ou troque o perfilExigido não derrubaria nenhum teste existente. O menor fix exigiria extrair o registro de rotas de main() para uma função testável — refactor estrutural sem precedente hoje no repo (nem a rota de logout da Story 1.2 tem teste de fiação).
+status: open

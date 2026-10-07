@@ -38,7 +38,7 @@ development_status:
   epic-1: in-progress
   1-1-scaffold-inicial-do-projeto: review
   1-2-login-via-sso-corporativo: review
-  1-3-bootstrap-e-proteção-do-administrador: review
+  1-3-bootstrap-e-proteção-do-administrador: done
   epic-1-retrospective: optional
 
   epic-2: backlog
