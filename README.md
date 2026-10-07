@@ -53,6 +53,30 @@ npm install
 npm run dev
 ```
 
+## Primeiro acesso administrativo
+
+Não existe cadastro de usuário separado (AD-6/AD-7): o login via SSO corporativo
+cria automaticamente o registro em `usuarios` no primeiro acesso de cada
+pessoa, sempre com perfil `solicitante`. Para promover a primeira pessoa a
+`administrador`:
+
+1. Peça para a pessoa fazer login uma vez via SSO (isso a cria em `usuarios`).
+2. Edite `backend/scripts/bootstrap_admin.sql`, substituindo o placeholder
+   `<SUBSTITUA_PELO_EMAIL_REAL>` pelo e-mail real dela.
+3. Rode o script manualmente (ele nunca roda sozinho — fica fora de
+   `backend/migrations/` de propósito):
+   ```bash
+   psql "$DATABASE_URL" -f backend/scripts/bootstrap_admin.sql
+   ```
+4. Reverta a edição do passo 2 antes de commitar — o arquivo deve voltar ao
+   placeholder no repositório (dado sensível, repositório público).
+
+Depois do primeiro administrador criado, qualquer administrador autenticado
+pode conceder/revogar o perfil `administrador` e ativar/desativar outros
+usuários via `PATCH /api/admin/usuarios/{id}` (protegido por `RequireAuth`,
+grava trilha de auditoria em `usuarios_auditoria`). O sistema sempre recusa
+(`409`) qualquer mudança que deixaria zero administradores ativos.
+
 ## Estrutura de diretórios
 
 ```text

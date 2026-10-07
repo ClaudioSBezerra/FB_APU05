@@ -195,6 +195,12 @@ func main() {
 	http.HandleFunc("/api/auth/sso/config", handlers.SSOConfigHandler())
 	http.HandleFunc("/api/auth/logout", withDB(handlers.LogoutHandler))
 
+	// Bootstrap e proteção do administrador (Story 1.3, FR-2) — concede/
+	// revoga perfil `administrador` e ativa/desativa usuários. Primeira rota
+	// do FB_APU05 protegida por RequireAuth (fecha o gap deixado pela Story
+	// 1.2: a tokenBlacklist nunca era lida em lugar nenhum até aqui).
+	http.HandleFunc("PATCH /api/admin/usuarios/{id}", handlers.RequireAuth(withDB(handlers.AdminUpdateUsuarioHandler), "administrador"))
+
 	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
 		var allowedClientIDs []string
 		for _, id := range strings.Split(os.Getenv("IAM_ALLOWED_CLIENT_IDS"), ",") {

@@ -16,3 +16,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-2-login-via-sso-corporativo.md`
   summary: Coluna `usuarios.updated_at` nunca é escrita por nenhum caminho atual (sempre igual a `created_at`) — sem efeito até que algo atualize o perfil do usuário.
   evidence: `backend/migrations/001_create_usuarios.sql` — nenhum trigger nem UPDATE statement no diff.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-bootstrap-e-protecao-do-administrador.md`
+  summary: Quando um admin e rebaixado/desativado via PATCH, o JWT que essa pessoa ja tem em maos continua valido ate expirar (ate 30min) - nao existe hoje um jeito de invalidar "todos os tokens do usuario X" de uma vez (blacklist e por token individual).
+  evidence: `backend/handlers/middleware.go` (RequireAuth so confere blacklist por token, nao por user_id); mesmo trade-off ja aceito desde a Story 1.2 (token de acesso curto por design).

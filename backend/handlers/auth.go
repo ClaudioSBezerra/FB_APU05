@@ -219,7 +219,7 @@ func LogoutHandler(db *sql.DB) http.HandlerFunc {
 			tokenString := authHeader[7:]
 			tok, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
 				return getJWTSecret(), nil
-			})
+			}, jwt.WithValidMethods([]string{"HS256"}))
 			// Só blacklista um token que de fato passa na nossa própria
 			// assinatura/validade — um bearer forjado (assinatura inválida) não
 			// deve ter seu `exp` reivindicado aceito e gravado na blacklist.
