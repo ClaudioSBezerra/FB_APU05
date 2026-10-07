@@ -2,15 +2,29 @@
 title: 'Abrir Inclusão SFC com aprovação calculada'
 type: 'feature'
 created: '2026-10-07'
-status: 'in-progress'
-baseline_revision: 'eeffdd9904ac1ac588845f853f3ed27c7b55d005'
+status: 'done'
+baseline_revision: 'd200de895a340f596d6e02a3310d61b09b86e6ab'
 review_loop_iteration: 0
 followup_review_recommended: false
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-3-context.md'
   - '{project-root}/_bmad-output/planning-artifacts/architecture/architecture-FB_APU05-2026-10-06/ARCHITECTURE-SPINE.md'
 warnings: [oversized]
-deferred: []
+deferred:
+  - summary: >-
+      A rejeição de valor<=0 em validarLancamentosEstrutura (compartilhada entre
+      transferencia e inclusao_sfc) não tem nenhum teste no caminho
+      transferencia — só o caminho inclusao_sfc ganhou cobertura nesta story.
+    evidence: |-
+      Confirmado por busca no repo: nenhum teste em solicitacoes_test.go (nem
+      os de Story 3.1/transferencia) exercitava valor<=0 antes desta story;
+      a cobertura adicionada aqui (TestAbrirSolicitacaoHandler_InclusaoSFC_ValorInvalido)
+      cobre apenas o caminho inclusao_sfc. Gap pré-existente da Story 3.1, não
+      introduzido por esta mudança. Se a regra compartilhada regredir, nada
+      detecta isso no fluxo principal de Transferência.
+    location: >-
+      backend/handlers/solicitacoes.go:325 (validarLancamentosEstrutura)
+    severity: medium
 ---
 
 <intent-contract>
@@ -69,6 +83,14 @@ deferred: []
 
 ## Review Triage Log
 
+### 2026-10-07 — Review pass
+- verdicts: 4 findings — high 0, medium 1, low 3, false 0, maybe-false 0
+- findings:
+  - `low` `reject` Design Notes ("Cobertura do motor calculado não duplicada via HTTP") afirma que a story adiciona só 1 teste de sucesso + 1 de "sem alçada" no nível do handler, mas já havia 5 (e agora 6, após a correção de valor) — a correção seria editar o próprio spec, fora de escopo da triagem (regra explícita de rejeição).
+  - `low` `patch` Comentário de bloco acima do grupo de testes de Inclusão SFC em `solicitacoes_test.go` descrevia o escopo (contagem/lado, plano SFC, feliz/sem-alçada) sem citar validação de valor, ficando desatualizado com a adição de `TestAbrirSolicitacaoHandler_InclusaoSFC_ValorInvalido` — comentário atualizado para citar `valor<=0`.
+  - `medium` `defer` A rejeição compartilhada de `valor<=0` (`validarLancamentosEstrutura`) não tem nenhum teste no caminho `transferencia` — gap pré-existente da Story 3.1, não introduzido por esta mudança; registrado em `deferred`.
+  - `low` `patch` `TestAbrirSolicitacaoHandler_InclusaoSFC_ValorInvalido` só cobria `valor=0`, não um valor negativo, embora a matriz cite "zero/negativo" — convertido para subteste cobrindo `valor=0` e `valor=-100`.
+
 ## Design Notes
 
 **`lado="destino"` fixo para Inclusão SFC:** nenhum artefato de planejamento modela "lado" para Inclusão — só Transferência tem "2 lados" explícito (FR-5). Reutilizar a coluna `lado CHECK(origem,destino)` já existente evita uma migration nova; `"destino"` é a leitura mais direta (inclusão adiciona um lançamento, análogo ao lado que recebe valor em Transferência) e é EXIGIDA explicitamente no payload (`lado="origem"` é 400), não um valor silenciosamente sobrescrito pelo servidor — mantém o contrato observável e testável.
@@ -82,3 +104,25 @@ deferred: []
 **Commands:**
 - `cd backend && go build ./... && go vet ./... && gofmt -l .` -- expected: sem erros, sem diffs de formatação
 - `cd backend && go test ./...` -- expected: todos os pacotes passam, incluindo `internal/aprovacao` e os novos testes de `solicitacoes_test.go`
+
+## Auto Run Result
+
+Status: done
+
+**Resumo:** A implementação funcional desta story (dispatch de `inclusao_sfc` para o `ResolverCalculado`, validação tipo-aware de contagem/lado, generalização de `validarPlanoConta` para `SFC`/`BIFC`, e os 5 testes iniciais da matriz de I/O) já havia sido entregue e commitada em `d200de8` numa sessão anterior (recuperação manual de uma execução bmad-loop interrompida, conforme a mensagem desse commit). Esta execução confirmou que o código já satisfazia integralmente o spec, encontrou e fechou uma lacuna real na auditoria da matriz (a linha "Valor zero/negativo" não tinha nenhum teste, nem para `inclusao_sfc` nem para `transferencia`), e conduziu a review de 4 camadas sobre o diff incremental resultante.
+
+**Arquivos alterados nesta sessão** (incrementais sobre `d200de8`):
+- `backend/handlers/solicitacoes_test.go` -- adicionado `TestAbrirSolicitacaoHandler_InclusaoSFC_ValorInvalido` (subtestes `valor=0` e `valor=-100`, fechando a linha "Valor zero/negativo" da matriz) e atualizado o comentário do bloco de testes de Inclusão SFC para citar a validação de valor.
+- `_bmad-output/implementation-artifacts/spec-3-2-abrir-inclusao-sfc-com-aprovacao-calculada.md` -- `baseline_revision` realinhado para `d200de8` (HEAD ao iniciar esta sessão), `status` avançado para `in-review` e depois `done`, registro de triagem e item deferido.
+
+**Review (4 camadas, 4 findings no total):**
+- `patch` (low) -- comentário de bloco desatualizado em `solicitacoes_test.go` (não citava validação de valor) -- corrigido.
+- `patch` (low) -- novo teste de valor inválido só cobria `valor=0`, não um valor negativo -- corrigido (subteste `valor=-100` adicionado).
+- `defer` (medium) -- rejeição compartilhada de `valor<=0` (`validarLancamentosEstrutura`) sem nenhum teste no caminho `transferencia` -- gap pré-existente da Story 3.1, não introduzido por esta mudança; registrado em `deferred`.
+- `reject` (low) -- Design Notes do spec desatualizadas quanto à contagem de testes de handler -- a correção seria editar o próprio spec, fora de escopo da triagem.
+
+**Follow-up review recomendado:** `false` -- nenhum finding `high` e nenhum `medium` foi corrigido nesta passagem (o único `medium` foi deferido, não corrigido); apenas 2 `low` corrigidos.
+
+**Verificação executada:** `go build ./...`, `go vet ./...`, `gofmt -l .` (sem diffs) e `go test ./... -count=1` -- todos os pacotes (`handlers`, `iam`, `internal/aprovacao`) passam, incluindo os 6 testes de `inclusao_sfc` (5 originais + o novo de valor inválido com 2 subtestes).
+
+**Riscos residuais:** o gap deferido acima (cobertura de `valor<=0` ausente no caminho `transferencia`) permanece em aberto; nenhum outro risco identificado.

@@ -423,8 +423,36 @@ func TestAbrirSolicitacaoHandler_Success(t *testing.T) {
 // testes de internal/aprovacao/calculado_test.go (Story 3.1) e é 100%
 // reaproveitado por este tipo (Design Notes da spec 3.2) — os testes abaixo
 // cobrem só o wiring novo deste handler: contagem/lado tipo-aware
-// (validarContagemELadoPorTipo), validação de plano SFC (validarPlanoConta)
-// e o caminho feliz/sem-alçada de ponta a ponta.
+// (validarContagemELadoPorTipo), validação de valor (valor<=0), validação de
+// plano SFC (validarPlanoConta) e o caminho feliz/sem-alçada de ponta a
+// ponta.
+
+func TestAbrirSolicitacaoHandler_InclusaoSFC_ValorInvalido(t *testing.T) {
+	for _, valor := range []float64{0, -100} {
+		t.Run(fmt.Sprintf("valor=%g", valor), func(t *testing.T) {
+			db, mock := newSQLMock(t)
+
+			corpo := corpoInclusaoSFC(
+				linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaSFC, "2026-10-01", valor),
+			)
+
+			handler := AbrirSolicitacaoHandler(db)
+			req := newSolicitacaoRequest(corpo)
+			rec := httptest.NewRecorder()
+			handler(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "maior que zero") {
+				t.Fatalf("corpo não cita a validação de valor esperada: %s", rec.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+			}
+		})
+	}
+}
 
 func TestAbrirSolicitacaoHandler_InclusaoSFC_MaisDeUmaLinha(t *testing.T) {
 	db, mock := newSQLMock(t)

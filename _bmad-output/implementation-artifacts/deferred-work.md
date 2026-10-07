@@ -34,3 +34,11 @@ location: backend/handlers/cadastros_csv.go:91-112
 source_spec: `spec-2-1-carga-inicial-e-cadastros-administraveis.md`
 reason: parseNumeroObrigatorio/parseNumeroOpcional (cadastros_csv.go) usam strconv.ParseFloat diretamente sobre o texto do CSV, sem normalizar vírgula para ponto; um valor como "100,50" falha a conversão. O formato decimal real usado nos CSVs de origem (ERP) não está neste repositório para confirmar (mesma limitação já registrada em Design Notes sobre os dados reais de origem). Para resolver: obter uma amostra real do CSV de alcadas e confirmar se usa vírgula ou ponto como separador decimal antes da carga real em produção.
 status: open
+
+### DW-3: A rejeição de valor<=0 em validarLancamentosEstrutura (compartilhada entre transferencia e inclusao_sfc) não tem nenhum teste no caminho transferencia — só o caminho inclusao_sfc ganhou cobertura
+origin: spec-deferred bdc299b3b6a5
+location: backend/handlers/solicitacoes.go:325 (validarLancamentosEstrutura)
+source_spec: `spec-3-2-abrir-inclusao-sfc-com-aprovacao-calculada.md`
+severity: medium
+reason: Confirmado por busca no repo: nenhum teste em solicitacoes_test.go (nem os de Story 3.1/transferencia) exercitava valor<=0 antes desta story; a cobertura adicionada aqui (TestAbrirSolicitacaoHandler_InclusaoSFC_ValorInvalido) cobre apenas o caminho inclusao_sfc. Gap pré-existente da Story 3.1, não introduzido por esta mudança. Se a regra compartilhada regredir, nada detecta isso no fluxo principal de Transferência.
+status: open
