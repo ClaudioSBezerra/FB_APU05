@@ -201,6 +201,17 @@ func main() {
 	// 1.2: a tokenBlacklist nunca era lida em lugar nenhum até aqui).
 	http.HandleFunc("PATCH /api/admin/usuarios/{id}", handlers.RequireAuth(withDB(handlers.AdminUpdateUsuarioHandler), "administrador"))
 
+	// Cadastros administráveis (Story 2.1, FR-16) — 5 rotas genéricas
+	// parametrizadas por {tipo} (um dos 7 cadastros mestres do Epic 2),
+	// mesma implementação Go para todos: carga inicial via CSV, listagem
+	// paginada, edição, histórico e restauração de versão. Todas atrás de
+	// RequireAuth(..., "administrador"), mesmo padrão da linha acima.
+	http.HandleFunc("GET /api/admin/cadastros/{tipo}", handlers.RequireAuth(withDB(handlers.ListarCadastroHandler), "administrador"))
+	http.HandleFunc("POST /api/admin/cadastros/{tipo}", handlers.RequireAuth(withDB(handlers.ImportarCadastroHandler), "administrador"))
+	http.HandleFunc("PUT /api/admin/cadastros/{tipo}/{id}", handlers.RequireAuth(withDB(handlers.AtualizarCadastroHandler), "administrador"))
+	http.HandleFunc("GET /api/admin/cadastros/{tipo}/{id}/historico", handlers.RequireAuth(withDB(handlers.HistoricoCadastroHandler), "administrador"))
+	http.HandleFunc("POST /api/admin/cadastros/{tipo}/{id}/restaurar", handlers.RequireAuth(withDB(handlers.RestaurarCadastroHandler), "administrador"))
+
 	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
 		var allowedClientIDs []string
 		for _, id := range strings.Split(os.Getenv("IAM_ALLOWED_CLIENT_IDS"), ",") {
