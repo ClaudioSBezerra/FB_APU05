@@ -57,6 +57,9 @@ func TestAdminUpdateUsuarioHandler_LastAdminProtection_Rejects(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock($1)")).
+		WithArgs(adminMutationLockKey).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT perfil, ativo FROM usuarios WHERE id = $1 FOR UPDATE")).
 		WithArgs(testAlvoID).
 		WillReturnRows(sqlmock.NewRows([]string{"perfil", "ativo"}).AddRow("administrador", true))
@@ -88,6 +91,9 @@ func TestAdminUpdateUsuarioHandler_Success_UpdatesAndAudits(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock($1)")).
+		WithArgs(adminMutationLockKey).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT perfil, ativo FROM usuarios WHERE id = $1 FOR UPDATE")).
 		WithArgs(testAlvoID).
 		WillReturnRows(sqlmock.NewRows([]string{"perfil", "ativo"}).AddRow("administrador", true))
@@ -121,6 +127,9 @@ func TestAdminUpdateUsuarioHandler_NoOp_CommitsWithoutAuditing(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock($1)")).
+		WithArgs(adminMutationLockKey).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT perfil, ativo FROM usuarios WHERE id = $1 FOR UPDATE")).
 		WithArgs(testAlvoID).
 		WillReturnRows(sqlmock.NewRows([]string{"perfil", "ativo"}).AddRow("administrador", true))
@@ -140,34 +149,59 @@ func TestAdminUpdateUsuarioHandler_NoOp_CommitsWithoutAuditing(t *testing.T) {
 }
 
 // TestAdminUpdateUsuarioHandler_RejectsEmptyBody garante 400 quando nem
-// `perfil` nem `ativo` são enviados — db=nil é seguro: o handler retorna
-// antes de qualquer acesso ao banco.
+// `perfil` nem `ativo` são enviados — usa um id de formato válido para que a
+// requisição de fato alcance essa validação (e não a de "id inválido"); db=nil
+// é seguro: o handler retorna antes de qualquer acesso ao banco.
 func TestAdminUpdateUsuarioHandler_RejectsEmptyBody(t *testing.T) {
 	handler := AdminUpdateUsuarioHandler(nil)
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/admin/usuarios/abc", strings.NewReader(`{}`))
-	req.SetPathValue("id", "abc")
+	req := newAdminRequest(testAlvoID, `{}`)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), "informe ao menos") {
+		t.Fatalf("corpo não indica a causa esperada (campo ausente): %s", rec.Body.String())
+	}
 }
 
 // TestAdminUpdateUsuarioHandler_RejectsInvalidPerfil garante 400 para um
 // valor de `perfil` fora do CHECK constraint da coluna (só
-// 'administrador'/'solicitante').
+// 'administrador'/'solicitante') — usa um id de formato válido pela mesma
+// razão do teste acima.
 func TestAdminUpdateUsuarioHandler_RejectsInvalidPerfil(t *testing.T) {
 	handler := AdminUpdateUsuarioHandler(nil)
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/admin/usuarios/abc", strings.NewReader(`{"perfil":"super-admin"}`))
-	req.SetPathValue("id", "abc")
+	req := newAdminRequest(testAlvoID, `{"perfil":"super-admin"}`)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "perfil deve ser") {
+		t.Fatalf("corpo não indica a causa esperada (perfil inválido): %s", rec.Body.String())
+	}
+}
+
+// TestAdminUpdateUsuarioHandler_RejectsInvalidID garante 400 quando o {id} do
+// path não tem formato de UUID — precisa recusar antes de chegar ao banco
+// (um id malformado na query `WHERE id = $1` contra coluna UUID vira erro de
+// sintaxe do Postgres, um 500 genérico em vez de um 400 claro).
+func TestAdminUpdateUsuarioHandler_RejectsInvalidID(t *testing.T) {
+	handler := AdminUpdateUsuarioHandler(nil)
+
+	req := newAdminRequest("abc", `{"ativo":false}`)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "id inválido") {
+		t.Fatalf("corpo não indica a causa esperada (id inválido): %s", rec.Body.String())
 	}
 }
 

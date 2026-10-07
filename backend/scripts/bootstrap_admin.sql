@@ -25,6 +25,6 @@
 --      deve voltar ao placeholder no repositório.
 
 UPDATE usuarios
-SET perfil = 'administrador'
+SET perfil = 'administrador', ativo = true
 WHERE email = '<SUBSTITUA_PELO_EMAIL_REAL>'
-RETURNING id, email, perfil;
+RETURNING id, email, perfil, ativo;

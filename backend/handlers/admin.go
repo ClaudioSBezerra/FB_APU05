@@ -44,6 +44,10 @@ type AdminUpdateUsuarioRequest struct {
 
 const errMsgUltimoAdministrador = "operação recusada: deixaria o sistema sem nenhum administrador ativo"
 
+// adminMutationLockKey é a chave fixa do advisory lock que serializa toda
+// transação de AdminUpdateUsuarioHandler (ver uso abaixo).
+const adminMutationLockKey = 72190001
+
 func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPatch {
@@ -86,6 +90,23 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		defer func() { _ = tx.Rollback() }()
+
+		// Serializa toda transação desta rota num advisory lock de chave fixa,
+		// adquirido ANTES de qualquer SELECT ... FOR UPDATE. Sem isso, duas
+		// requisições concorrentes mirando dois administradores-alvo
+		// DIFERENTES podiam travar primeiro suas próprias linhas-alvo (em
+		// ordens não relacionadas entre si) e só depois tentar travar o
+		// conjunto de admins ativos com ORDER BY — a ordem das duas travas por
+		// linha-alvo não é coberta por esse ORDER BY, então as duas
+		// transações podiam se esperar mutuamente (deadlock), e uma delas
+		// recebia um 500 genérico em vez do 200/409 esperado. Com o advisory
+		// lock, a segunda requisição simplesmente espera a primeira
+		// commitar/abortar antes de travar qualquer linha.
+		if _, err = tx.Exec(`SELECT pg_advisory_xact_lock($1)`, adminMutationLockKey); err != nil {
+			log.Printf("[Admin] Erro ao adquirir advisory lock: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
 
 		var perfilAnterior string
 		var ativoAnterior bool
