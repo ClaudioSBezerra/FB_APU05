@@ -111,6 +111,30 @@ func parseNumeroOpcional(valor string) (interface{}, error) {
 	return v, nil
 }
 
+// parseStringOpcional devolve nil quando o campo vem vazio (ex. "filial"
+// ainda não cadastrada, ou campo opcional de regras-aprovacao/
+// gerentes-aprovacao) — nil vira SQL NULL no INSERT e JSON null no
+// snapshot, mesmo padrão de parseNumeroOpcional.
+func parseStringOpcional(valor string) interface{} {
+	trimmed := strings.TrimSpace(valor)
+	if trimmed == "" {
+		return nil
+	}
+	return trimmed
+}
+
+// parseNumeroOpcionalComDefault é parseNumeroOpcional, mas devolve
+// `padrao` em vez de nil quando o campo vem vazio — usado por `teto`
+// (gerentes-aprovacao), que tem default 20000 na tabela (FR-10) e deve
+// manter esse mesmo default quando a carga CSV não informa o valor.
+func parseNumeroOpcionalComDefault(valor string, padrao float64) (float64, error) {
+	trimmed := strings.TrimSpace(valor)
+	if trimmed == "" {
+		return padrao, nil
+	}
+	return parseNumeroObrigatorio(trimmed)
+}
+
 // parseDataISO valida (sem reformatar) uma data no formato YYYY-MM-DD —
 // mesma string é usada tanto para o INSERT (Postgres aceita o literal ISO
 // para uma coluna DATE) quanto para o snapshot JSONB.
@@ -237,7 +261,10 @@ func decodeCSVCentrosCusto(tx *sql.Tx, linha []string) ([]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []interface{}{codigo, nome, divisaoID}, nil
+	// "filial" (Story 3.1): opcional — vazio no CSV vira NULL, não rejeita a
+	// linha (Design Notes da spec: carga real é tarefa do negócio).
+	filial := parseStringOpcional(linha[3])
+	return []interface{}{codigo, nome, divisaoID, filial}, nil
 }
 
 func decodeCSVContas(_ *sql.Tx, linha []string) ([]interface{}, error) {
@@ -349,4 +376,116 @@ func decodeCSVCcExcecao(tx *sql.Tx, linha []string) ([]interface{}, error) {
 	}
 
 	return []interface{}{colaboradorID, centroCustoID}, nil
+}
+
+// resolveColaboradorIDPorEmailOpcional é resolveColaboradorIDPorEmail, mas
+// devolve nil (sem erro) quando o e-mail vem vazio — "sem pessoa nomeada"
+// é um estado válido para regras-aprovacao/gerentes-aprovacao quando a linha
+// é identificada por papel_aprovador (cargo) em vez de colaborador
+// específico (Design Notes da spec: unifica pessoa/cargo/colegiado numa
+// única linha).
+func resolveColaboradorIDPorEmailOpcional(tx *sql.Tx, email string) (interface{}, error) {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return nil, nil
+	}
+	id, err := resolveColaboradorIDPorEmail(tx, email)
+	if err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
+// decodeCSVRegrasAprovacao (Story 3.1, FR-10) resolve colaborador_email
+// opcional -> colaborador_id (usuarios), mesmo padrão case-insensitive de
+// cc-excecao. "centro_custo_codigo" é texto livre SEM FK, mesmo padrão já
+// adotado por "alcadas" (migration 003).
+func decodeCSVRegrasAprovacao(tx *sql.Tx, linha []string) ([]interface{}, error) {
+	precedencia, err := parseNumeroObrigatorio(linha[0])
+	if err != nil {
+		return nil, err
+	}
+	filial, err := campoObrigatorio(linha[1], "filial")
+	if err != nil {
+		return nil, err
+	}
+	centroCustoCodigo, err := campoObrigatorio(linha[2], "centro_custo_codigo")
+	if err != nil {
+		return nil, err
+	}
+	valorMinimo, err := parseNumeroObrigatorio(linha[3])
+	if err != nil {
+		return nil, err
+	}
+	valorMaximo, err := parseNumeroOpcional(linha[4])
+	if err != nil {
+		return nil, err
+	}
+	if err := validarFaixaAlcada(valorMinimo, valorMaximo); err != nil {
+		return nil, err
+	}
+	colaboradorID, err := resolveColaboradorIDPorEmailOpcional(tx, linha[5])
+	if err != nil {
+		return nil, err
+	}
+	papelAprovador := parseStringOpcional(linha[6])
+	if err := validarAutorRegra(colaboradorID, papelAprovador); err != nil {
+		return nil, err
+	}
+	ativo, err := parseBoolCSV(linha[7])
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{precedencia, filial, centroCustoCodigo, valorMinimo, valorMaximo, colaboradorID, papelAprovador, ativo}, nil
+}
+
+// decodeCSVGerentesAprovacao (Story 3.1, FR-10) resolve
+// centro_custo_codigo/divisao_codigo/colaborador_email, todos opcionais ->
+// centro_custo_id/divisao_id/colaborador_id — os dois primeiros nulos ao
+// mesmo tempo = fallback global (Design Notes da spec); nunca os dois
+// preenchidos ao mesmo tempo (validarCCXorDivisao).
+func decodeCSVGerentesAprovacao(tx *sql.Tx, linha []string) ([]interface{}, error) {
+	centroCustoCodigo := strings.TrimSpace(linha[0])
+	var centroCustoID interface{}
+	if centroCustoCodigo != "" {
+		id, err := resolveCentroCustoIDPorCodigo(tx, centroCustoCodigo)
+		if err != nil {
+			return nil, err
+		}
+		centroCustoID = id
+	}
+
+	divisaoCodigo := strings.TrimSpace(linha[1])
+	var divisaoID interface{}
+	if divisaoCodigo != "" {
+		id, err := resolveDivisaoID(tx, divisaoCodigo)
+		if err != nil {
+			return nil, err
+		}
+		divisaoID = id
+	}
+
+	if err := validarCCXorDivisao(centroCustoID, divisaoID); err != nil {
+		return nil, err
+	}
+
+	colaboradorID, err := resolveColaboradorIDPorEmailOpcional(tx, linha[2])
+	if err != nil {
+		return nil, err
+	}
+	papelAprovador := parseStringOpcional(linha[3])
+	if err := validarAutorRegra(colaboradorID, papelAprovador); err != nil {
+		return nil, err
+	}
+
+	teto, err := parseNumeroOpcionalComDefault(linha[4], 20000)
+	if err != nil {
+		return nil, err
+	}
+	ativo, err := parseBoolCSV(linha[5])
+	if err != nil {
+		return nil, err
+	}
+
+	return []interface{}{centroCustoID, divisaoID, colaboradorID, papelAprovador, teto, ativo}, nil
 }

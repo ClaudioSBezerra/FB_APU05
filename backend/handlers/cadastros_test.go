@@ -216,7 +216,7 @@ func TestImportarCadastroHandler_CentrosCusto_Success(t *testing.T) {
 	const divisaoID = "33333333-3333-3333-3333-333333333333"
 	const centroCustoID = "55555555-5555-5555-5555-555555555555"
 
-	csv := "codigo;nome;divisao_codigo\nCC1;Centro Um;D1\n"
+	csv := "codigo;nome;divisao_codigo;filial\nCC1;Centro Um;D1;F1\n"
 
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
@@ -228,11 +228,11 @@ func TestImportarCadastroHandler_CentrosCusto_Success(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM divisoes WHERE codigo = $1")).
 		WithArgs("D1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(divisaoID))
-	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO centros_custo (codigo, nome, divisao_id) VALUES ($1, $2, $3) RETURNING id")).
-		WithArgs("CC1", "Centro Um", divisaoID).
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO centros_custo (codigo, nome, divisao_id, filial) VALUES ($1, $2, $3, $4) RETURNING id")).
+		WithArgs("CC1", "Centro Um", divisaoID, "F1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(centroCustoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
-		WithArgs("centros-custo", centroCustoID, `{"codigo":"CC1","divisao_id":"33333333-3333-3333-3333-333333333333","nome":"Centro Um"}`, testAtorID).
+		WithArgs("centros-custo", centroCustoID, `{"codigo":"CC1","divisao_id":"33333333-3333-3333-3333-333333333333","filial":"F1","nome":"Centro Um"}`, testAtorID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	mock.ExpectCommit()
@@ -302,7 +302,7 @@ func TestImportarCadastroHandler_Alcadas_Success(t *testing.T) {
 func TestImportarCadastroHandler_CentrosCusto_DivisaoNaoEncontrada(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	csv := "codigo;nome;divisao_codigo\nCC1;Centro Um;D-INEXISTENTE\n"
+	csv := "codigo;nome;divisao_codigo;filial\nCC1;Centro Um;D-INEXISTENTE;\n"
 
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
@@ -1375,5 +1375,173 @@ func TestCadastroRoutes_CcExcecao_RequireAdministrador(t *testing.T) {
 	}
 	if called {
 		t.Fatal("handler de cadastro não deveria ser chamado com perfil insuficiente")
+	}
+}
+
+// --- regras-aprovacao / gerentes-aprovacao (Story 3.1) ---
+
+// TestImportarCadastroHandler_RegrasAprovacao_Success cobre o caminho feliz
+// de "regras-aprovacao": colaborador_email vazio (linha identificada por
+// papel_aprovador, não por pessoa) -> colaborador_id grava NULL sem
+// consultar `usuarios`.
+func TestImportarCadastroHandler_RegrasAprovacao_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const regraID = "77777777-7777-7777-7777-777777777777"
+	csv := "precedencia;filial;centro_custo_codigo;valor_minimo;valor_maximo;colaborador_email;papel_aprovador;ativo\n" +
+		"1;F1;CC1;1000;;;Gerente Financeiro;true\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_regras-aprovacao").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM regras_aprovacao)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	mock.ExpectQuery(regexp.QuoteMeta(
+		"INSERT INTO regras_aprovacao (precedencia, filial, centro_custo_codigo, valor_minimo, valor_maximo, colaborador_id, papel_aprovador, ativo) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+	)).
+		WithArgs(1.0, "F1", "CC1", 1000.0, nil, nil, "Gerente Financeiro", true).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(regraID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs(
+			"regras-aprovacao", regraID,
+			`{"ativo":true,"centro_custo_codigo":"CC1","colaborador_id":null,"filial":"F1","papel_aprovador":"Gerente Financeiro","precedencia":1,"valor_maximo":null,"valor_minimo":1000}`,
+			testAtorID,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "regras-aprovacao", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_RegrasAprovacao_SemAprovador cobre
+// validarAutorRegra: colaborador_email E papel_aprovador vazios na mesma
+// linha -> 400, nada gravado (uma linha assim casaria no resolver e
+// produziria um Aprovador sem nome nem titular).
+func TestImportarCadastroHandler_RegrasAprovacao_SemAprovador(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "precedencia;filial;centro_custo_codigo;valor_minimo;valor_maximo;colaborador_email;papel_aprovador;ativo\n" +
+		"1;F1;CC1;1000;;;;true\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_regras-aprovacao").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM regras_aprovacao)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "regras-aprovacao", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nenhum INSERT deveria ter sido tentado): %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_GerentesAprovacao_FallbackDivisao cobre a
+// resolução de FK divisao_codigo -> divisao_id com centro_custo_codigo
+// vazio (linha de fallback por divisão, Design Notes da spec) e "teto"
+// vazio assumindo o default 20000.
+func TestImportarCadastroHandler_GerentesAprovacao_FallbackDivisao(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const divisaoID = "88888888-8888-8888-8888-888888888888"
+	const gerenteID = "99999999-9999-9999-9999-999999999999"
+	csv := "centro_custo_codigo;divisao_codigo;colaborador_email;papel_aprovador;teto;ativo\n" +
+		";D1;;Gerentes Regionais de Logística;;true\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_gerentes-aprovacao").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM gerentes_aprovacao)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM divisoes WHERE codigo = $1")).
+		WithArgs("D1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(divisaoID))
+
+	mock.ExpectQuery(regexp.QuoteMeta(
+		"INSERT INTO gerentes_aprovacao (centro_custo_id, divisao_id, colaborador_id, papel_aprovador, teto, ativo) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+	)).
+		WithArgs(nil, divisaoID, nil, "Gerentes Regionais de Logística", 20000.0, true).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(gerenteID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs(
+			"gerentes-aprovacao", gerenteID,
+			`{"ativo":true,"centro_custo_id":null,"colaborador_id":null,"divisao_id":"88888888-8888-8888-8888-888888888888","papel_aprovador":"Gerentes Regionais de Logística","teto":20000}`,
+			testAtorID,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "gerentes-aprovacao", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_GerentesAprovacao_CCEDivisaoAoMesmoTempo
+// cobre validarCCXorDivisao: centro_custo_codigo E divisao_codigo
+// preenchidos na mesma linha -> 400, nada gravado.
+func TestImportarCadastroHandler_GerentesAprovacao_CCEDivisaoAoMesmoTempo(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const centroCustoID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	const divisaoID = "88888888-8888-8888-8888-888888888888"
+	csv := "centro_custo_codigo;divisao_codigo;colaborador_email;papel_aprovador;teto;ativo\n" +
+		"CC1;D1;;Gerente;;true\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_gerentes-aprovacao").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM gerentes_aprovacao)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("CC1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(centroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM divisoes WHERE codigo = $1")).
+		WithArgs("D1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(divisaoID))
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "gerentes-aprovacao", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nenhum INSERT deveria ter sido tentado): %v", err)
 	}
 }

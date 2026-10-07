@@ -39,6 +39,14 @@ const (
 	colNumericoNulo
 	colBool
 	colData
+	// colStringNulo cobre tanto uma coluna de texto nulável (ex.
+	// `centros_custo.filial`) quanto uma coluna UUID nulável endereçada como
+	// string (ex. `regras_aprovacao.colaborador_id`, `gerentes_aprovacao.
+	// centro_custo_id`/`divisao_id`) — mesmo padrão de colNumericoNulo, mas
+	// para string; a validação de formato UUID (quando aplicável) é feita
+	// pelo DecodeJSON/DecodeCSV específico do tipo, não por este colKind
+	// (que só cuida de scan/snapshot genéricos).
+	colStringNulo
 )
 
 // colunaDef é uma coluna editável (nunca id/created_at/updated_at, que nunca
@@ -74,12 +82,17 @@ var cadastroRegistry = map[string]cadastroTipo{
 		DecodeJSON: decodeJSONDivisoes,
 	},
 	"centros-custo": {
-		Tabela:       "centros_custo",
-		CSVCabecalho: []string{"codigo", "nome", "divisao_codigo"},
+		Tabela: "centros_custo",
+		// "filial": coluna opcional nova (Story 3.1) — nenhum artefato de
+		// planejamento modela filial como cadastro próprio; carga real é
+		// tarefa do negócio (Design Notes da spec), então vazio no CSV vira
+		// NULL, não um erro de linha.
+		CSVCabecalho: []string{"codigo", "nome", "divisao_codigo", "filial"},
 		Colunas: []colunaDef{
 			{Nome: "codigo", Kind: colString},
 			{Nome: "nome", Kind: colString},
 			{Nome: "divisao_id", Kind: colUUID},
+			{Nome: "filial", Kind: colStringNulo},
 		},
 		DecodeCSV:  decodeCSVCentrosCusto,
 		DecodeJSON: decodeJSONCentrosCusto,
@@ -149,6 +162,43 @@ var cadastroRegistry = map[string]cadastroTipo{
 		DecodeCSV:  decodeCSVCcExcecao,
 		DecodeJSON: decodeJSONCcExcecao,
 	},
+	// "regras-aprovacao"/"gerentes-aprovacao": Story 3.1 (FR-5/FR-10) — mais
+	// 2 {tipo} no MESMO registry (nenhuma rota nova), mesmo padrão de
+	// "alcadas"/"cc-excecao": FKs opcionais resolvidas por e-mail/código no
+	// CSV, aceitas como UUID já resolvido (ou null) no corpo de PUT.
+	"regras-aprovacao": {
+		Tabela: "regras_aprovacao",
+		CSVCabecalho: []string{
+			"precedencia", "filial", "centro_custo_codigo", "valor_minimo", "valor_maximo",
+			"colaborador_email", "papel_aprovador", "ativo",
+		},
+		Colunas: []colunaDef{
+			{Nome: "precedencia", Kind: colNumerico},
+			{Nome: "filial", Kind: colString},
+			{Nome: "centro_custo_codigo", Kind: colString},
+			{Nome: "valor_minimo", Kind: colNumerico},
+			{Nome: "valor_maximo", Kind: colNumericoNulo},
+			{Nome: "colaborador_id", Kind: colStringNulo},
+			{Nome: "papel_aprovador", Kind: colStringNulo},
+			{Nome: "ativo", Kind: colBool},
+		},
+		DecodeCSV:  decodeCSVRegrasAprovacao,
+		DecodeJSON: decodeJSONRegrasAprovacao,
+	},
+	"gerentes-aprovacao": {
+		Tabela:       "gerentes_aprovacao",
+		CSVCabecalho: []string{"centro_custo_codigo", "divisao_codigo", "colaborador_email", "papel_aprovador", "teto", "ativo"},
+		Colunas: []colunaDef{
+			{Nome: "centro_custo_id", Kind: colStringNulo},
+			{Nome: "divisao_id", Kind: colStringNulo},
+			{Nome: "colaborador_id", Kind: colStringNulo},
+			{Nome: "papel_aprovador", Kind: colStringNulo},
+			{Nome: "teto", Kind: colNumerico},
+			{Nome: "ativo", Kind: colBool},
+		},
+		DecodeCSV:  decodeCSVGerentesAprovacao,
+		DecodeJSON: decodeJSONGerentesAprovacao,
+	},
 }
 
 // --- DecodeJSON por tipo (corpo de PUT .../{id}) — mesma ordem de Colunas.
@@ -184,7 +234,11 @@ func decodeJSONCentrosCusto(corpo map[string]interface{}) ([]interface{}, error)
 	if !uuidFormatRegexp.MatchString(divisaoID) {
 		return nil, fmt.Errorf("campo 'divisao_id' inválido")
 	}
-	return []interface{}{codigo, nome, divisaoID}, nil
+	filial, err := extractStringOpcional(corpo, "filial")
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{codigo, nome, divisaoID, filial}, nil
 }
 
 func decodeJSONContas(corpo map[string]interface{}) ([]interface{}, error) {
@@ -317,6 +371,113 @@ func decodeJSONCcExcecao(corpo map[string]interface{}) ([]interface{}, error) {
 	return []interface{}{colaboradorID, centroCustoID}, nil
 }
 
+// validarAutorRegra garante que uma linha de regras_aprovacao/
+// gerentes_aprovacao identifica um aprovador de algum jeito — exatamente a
+// semântica de Aprovador do AD-2 (Tipo="pessoa" quando colaborador_id está
+// presente, Tipo="cargo" quando só papel_aprovador está presente). Sem essa
+// checagem, uma linha com os dois nulos casaria no resolver e produziria um
+// Aprovador vazio (Nome=""), o que o AD-2 proíbe implicitamente ("nunca
+// sintetiza um Aprovador" — um Aprovador sem nome nem titular não identifica
+// ninguém).
+func validarAutorRegra(colaboradorID, papelAprovador interface{}) error {
+	if colaboradorID == nil && papelAprovador == nil {
+		return fmt.Errorf("informe 'colaborador_id'/'colaborador_email' ou 'papel_aprovador'")
+	}
+	return nil
+}
+
+// validarCCXorDivisao impede uma linha de gerentes_aprovacao com
+// centro_custo_id E divisao_id preenchidos ao mesmo tempo — a hierarquia
+// CC -> divisão -> global (Design Notes da spec) pressupõe no máximo um dos
+// dois preenchido por linha (os dois nulos = fallback global, uma
+// combinação válida à parte).
+func validarCCXorDivisao(centroCustoID, divisaoID interface{}) error {
+	if centroCustoID != nil && divisaoID != nil {
+		return fmt.Errorf("informe no máximo um entre 'centro_custo_codigo'/'centro_custo_id' e 'divisao_codigo'/'divisao_id' (os dois vazios = fallback global)")
+	}
+	return nil
+}
+
+// decodeJSONRegrasAprovacao aceita colaborador_id JÁ RESOLVIDO (UUID ou
+// null) no corpo de PUT — mesmo padrão de decodeJSONCcExcecao.
+func decodeJSONRegrasAprovacao(corpo map[string]interface{}) ([]interface{}, error) {
+	precedencia, err := extractFloat(corpo, "precedencia")
+	if err != nil {
+		return nil, err
+	}
+	filial, err := extractString(corpo, "filial")
+	if err != nil {
+		return nil, err
+	}
+	centroCustoCodigo, err := extractString(corpo, "centro_custo_codigo")
+	if err != nil {
+		return nil, err
+	}
+	valorMinimo, err := extractFloat(corpo, "valor_minimo")
+	if err != nil {
+		return nil, err
+	}
+	valorMaximo, err := extractFloatOpcional(corpo, "valor_maximo")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarFaixaAlcada(valorMinimo, valorMaximo); err != nil {
+		return nil, err
+	}
+	colaboradorID, err := extractUUIDOpcional(corpo, "colaborador_id")
+	if err != nil {
+		return nil, err
+	}
+	papelAprovador, err := extractStringOpcional(corpo, "papel_aprovador")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarAutorRegra(colaboradorID, papelAprovador); err != nil {
+		return nil, err
+	}
+	ativo, err := extractBool(corpo, "ativo")
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{precedencia, filial, centroCustoCodigo, valorMinimo, valorMaximo, colaboradorID, papelAprovador, ativo}, nil
+}
+
+// decodeJSONGerentesAprovacao aceita centro_custo_id/divisao_id/
+// colaborador_id JÁ RESOLVIDOS (UUID ou null) no corpo de PUT.
+func decodeJSONGerentesAprovacao(corpo map[string]interface{}) ([]interface{}, error) {
+	centroCustoID, err := extractUUIDOpcional(corpo, "centro_custo_id")
+	if err != nil {
+		return nil, err
+	}
+	divisaoID, err := extractUUIDOpcional(corpo, "divisao_id")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarCCXorDivisao(centroCustoID, divisaoID); err != nil {
+		return nil, err
+	}
+	colaboradorID, err := extractUUIDOpcional(corpo, "colaborador_id")
+	if err != nil {
+		return nil, err
+	}
+	papelAprovador, err := extractStringOpcional(corpo, "papel_aprovador")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarAutorRegra(colaboradorID, papelAprovador); err != nil {
+		return nil, err
+	}
+	teto, err := extractFloat(corpo, "teto")
+	if err != nil {
+		return nil, err
+	}
+	ativo, err := extractBool(corpo, "ativo")
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{centroCustoID, divisaoID, colaboradorID, papelAprovador, teto, ativo}, nil
+}
+
 // --- extract helpers (corpo de PUT, JSON genérico) ---
 
 func extractString(corpo map[string]interface{}, campo string) (string, error) {
@@ -364,6 +525,46 @@ func extractFloatOpcional(corpo map[string]interface{}, campo string) (interface
 		return nil, fmt.Errorf("campo '%s' deve ser numérico ou nulo", campo)
 	}
 	return f, nil
+}
+
+// extractStringOpcional devolve nil quando o campo veio EXPLICITAMENTE
+// `null` ou string vazia — a chave precisa estar presente no corpo; se
+// estiver ausente, é um erro (ex. typo do cliente), mesmo padrão de
+// extractFloatOpcional.
+func extractStringOpcional(corpo map[string]interface{}, campo string) (interface{}, error) {
+	v, ok := corpo[campo]
+	if !ok {
+		return nil, fmt.Errorf("campo '%s' é obrigatório (use null quando não houver valor)", campo)
+	}
+	if v == nil {
+		return nil, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return nil, fmt.Errorf("campo '%s' deve ser texto ou nulo", campo)
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	return s, nil
+}
+
+// extractUUIDOpcional é extractStringOpcional + validação de formato UUID
+// quando o valor não é nulo.
+func extractUUIDOpcional(corpo map[string]interface{}, campo string) (interface{}, error) {
+	v, err := extractStringOpcional(corpo, campo)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	s := v.(string)
+	if !uuidFormatRegexp.MatchString(s) {
+		return nil, fmt.Errorf("campo '%s' inválido", campo)
+	}
+	return s, nil
 }
 
 func extractBool(corpo map[string]interface{}, campo string) (bool, error) {
@@ -432,6 +633,8 @@ func destinoParaKind(k colKind) interface{} {
 		return new(bool)
 	case colData:
 		return new(time.Time)
+	case colStringNulo:
+		return new(sql.NullString)
 	default: // colString, colUUID
 		return new(string)
 	}
@@ -457,6 +660,12 @@ func valorDeDestino(k colKind, dest interface{}) interface{} {
 		return *dest.(*bool)
 	case colData:
 		return dest.(*time.Time).Format(dataISOFormato)
+	case colStringNulo:
+		ns := dest.(*sql.NullString)
+		if ns.Valid {
+			return ns.String
+		}
+		return nil
 	default:
 		return *dest.(*string)
 	}

@@ -220,6 +220,13 @@ func main() {
 	// acima; diferente delas, reimportar é sempre permitido (nunca 409).
 	http.HandleFunc("POST /api/admin/colaboradores/carga", handlers.RequireAuth(withDB(handlers.CarregarColaboradoresHandler), "administrador"))
 
+	// Abrir solicitação (Story 3.1, FR-5/FR-10) — primeira rota do FB_APU05
+	// que não exige perfil `administrador` (RequireAuth(..., "") — qualquer
+	// solicitante autenticado). Só tipo_solicitacao="transferencia" tem
+	// suporte nesta story; o mesmo handler será estendido pelas histórias
+	// 3.2-3.5 para os outros 4 tipos.
+	http.HandleFunc("POST /api/solicitacoes", handlers.RequireAuth(withDB(handlers.AbrirSolicitacaoHandler), ""))
+
 	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
 		var allowedClientIDs []string
 		for _, id := range strings.Split(os.Getenv("IAM_ALLOWED_CLIENT_IDS"), ",") {
