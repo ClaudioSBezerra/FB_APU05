@@ -27,3 +27,10 @@ source_spec: `spec-1-3-bootstrap-e-protecao-do-administrador.md`
 severity: medium
 reason: Busca por TestMain/httptest.NewServer em backend só encontra uso em iam/iam_auth_middleware_test.go; nada cobre o roteamento de main.go. Uma regressão que remova o wrapper RequireAuth ou troque o perfilExigido não derrubaria nenhum teste existente. O menor fix exigiria extrair o registro de rotas de main() para uma função testável — refactor estrutural sem precedente hoje no repo (nem a rota de logout da Story 1.2 tem teste de fiação).
 status: open
+
+### DW-2: CSV de números (valor_minimo/valor_maximo de alcadas) pode rejeitar formato decimal pt-BR (vírgula) se os dados reais de origem usarem esse formato.
+origin: spec-deferred b1f47a0cb794
+location: backend/handlers/cadastros_csv.go:91-112
+source_spec: `spec-2-1-carga-inicial-e-cadastros-administraveis.md`
+reason: parseNumeroObrigatorio/parseNumeroOpcional (cadastros_csv.go) usam strconv.ParseFloat diretamente sobre o texto do CSV, sem normalizar vírgula para ponto; um valor como "100,50" falha a conversão. O formato decimal real usado nos CSVs de origem (ERP) não está neste repositório para confirmar (mesma limitação já registrada em Design Notes sobre os dados reais de origem). Para resolver: obter uma amostra real do CSV de alcadas e confirmar se usa vírgula ou ponto como separador decimal antes da carga real em produção.
+status: open
