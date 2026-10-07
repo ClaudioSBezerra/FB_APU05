@@ -167,6 +167,44 @@ func resolveDivisaoID(tx *sql.Tx, codigo string) (string, error) {
 	return id, nil
 }
 
+// resolveColaboradorIDPorEmail traduz colaborador_email (coluna do CSV de
+// cc-excecao) para colaborador_id (coluna da tabela cc_excecao) consultando
+// `usuarios` dentro da MESMA transação do import — comparação
+// case-insensitive (`LOWER(email) = LOWER($1)`), mesmo padrão já estabelecido
+// em colaboradores.go/auth_sso.go (Boundaries da spec: reaproveitar essa
+// convenção, não a comparação case-sensitive original de resolveDivisaoID).
+// Não encontrado -> rejeita a linha citando a causa (mesmo padrão atômico de
+// centros-custo).
+func resolveColaboradorIDPorEmail(tx *sql.Tx, email string) (string, error) {
+	var id string
+	err := tx.QueryRow(`SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)`, email).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("colaborador com e-mail %q não encontrado", email)
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// resolveCentroCustoIDPorCodigo traduz centro_custo_codigo (coluna do CSV de
+// cc-excecao) para centro_custo_id consultando `centros_custo` dentro da
+// MESMA transação do import — comparação case-insensitive
+// (`UPPER(codigo) = UPPER($1)`), reaproveitando a correção já aplicada na
+// Story 2.2 (review triage daquela story), não a comparação case-sensitive de
+// resolveDivisaoID. Não encontrado -> rejeita a linha citando a causa.
+func resolveCentroCustoIDPorCodigo(tx *sql.Tx, codigo string) (string, error) {
+	var id string
+	err := tx.QueryRow(`SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)`, codigo).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("centro de custo com código %q não encontrado", codigo)
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 // --- DecodeCSV por tipo — devolvem valores na MESMA ordem de
 // cadastroTipo.Colunas (ver registry em cadastros.go) ---
 
@@ -283,4 +321,32 @@ func decodeCSVFeriados(_ *sql.Tx, linha []string) ([]interface{}, error) {
 		return nil, err
 	}
 	return []interface{}{data, descricao}, nil
+}
+
+// decodeCSVCcExcecao resolve colaborador_email -> colaborador_id (usuarios) e
+// centro_custo_codigo -> centro_custo_id (centros_custo), ambos
+// case-insensitive, dentro da MESMA transação do import — Story 2.3
+// (Boundaries da spec: qualquer um não encontrado rejeita a linha citando a
+// causa, mesmo padrão atômico de centros-custo, não o best-effort de
+// colaboradores.go).
+func decodeCSVCcExcecao(tx *sql.Tx, linha []string) ([]interface{}, error) {
+	email, err := campoObrigatorio(linha[0], "colaborador_email")
+	if err != nil {
+		return nil, err
+	}
+	colaboradorID, err := resolveColaboradorIDPorEmail(tx, email)
+	if err != nil {
+		return nil, err
+	}
+
+	centroCustoCodigo, err := campoObrigatorio(linha[1], "centro_custo_codigo")
+	if err != nil {
+		return nil, err
+	}
+	centroCustoID, err := resolveCentroCustoIDPorCodigo(tx, centroCustoCodigo)
+	if err != nil {
+		return nil, err
+	}
+
+	return []interface{}{colaboradorID, centroCustoID}, nil
 }

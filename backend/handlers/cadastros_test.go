@@ -970,3 +970,410 @@ func TestCadastroRoutes_RequireAdministrador(t *testing.T) {
 		t.Fatal("handler de cadastro não deveria ser chamado com perfil insuficiente")
 	}
 }
+
+// --- cc-excecao (Story 2.3, FR-4) ---
+//
+// Oitavo {tipo} no MESMO registry/Handler Factory da Story 2.1 — cobre a
+// I/O Matrix própria desta story: import feliz/409/400×3 (e-mail inexistente,
+// CC inexistente, par duplicado), PUT feliz, restaurar feliz, 403. Mesmo
+// padrão httptest+sqlmock de TestImportarCadastroHandler_CentrosCusto_*.
+
+const (
+	testCcExcecaoColaboradorID = "c0000000-0000-0000-0000-000000000001"
+	testCcExcecaoCentroCustoID = "c0000000-0000-0000-0000-000000000002"
+	testCcExcecaoRegistroID    = "c0000000-0000-0000-0000-000000000003"
+)
+
+// TestImportarCadastroHandler_CcExcecao_Success cobre "Import feliz": CSV
+// válido, e-mail já existe em usuarios, centro_custo_codigo existe -> 201,
+// linha nasce em cc_excecao, histórico 'criado'. Resolução de ambas as FKs
+// (colaborador_email -> usuarios.id, centro_custo_codigo -> centros_custo.id)
+// é case-insensitive (LOWER/UPPER), mesma convenção de colaboradores.go.
+func TestImportarCadastroHandler_CcExcecao_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "colaborador_email;centro_custo_codigo\nFulano@Exemplo.com;cc1\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_cc-excecao").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("Fulano@Exemplo.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoColaboradorID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("cc1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoCentroCustoID))
+
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO cc_excecao (colaborador_id, centro_custo_id) VALUES ($1, $2) RETURNING id")).
+		WithArgs(testCcExcecaoColaboradorID, testCcExcecaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoRegistroID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("cc-excecao", testCcExcecaoRegistroID,
+			`{"centro_custo_id":"`+testCcExcecaoCentroCustoID+`","colaborador_id":"`+testCcExcecaoColaboradorID+`"}`,
+			testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "cc-excecao", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"importados":1`) {
+		t.Fatalf("corpo não indica 1 importado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_CcExcecao_TabelaNaoVazia cobre "Import com
+// tabela não-vazia": nada é escrito, 409 "cadastro já possui dados" — mesmo
+// padrão atômico dos 7 tipos da Story 2.1, não o best-effort de
+// colaboradores.go (Design Notes da spec).
+func TestImportarCadastroHandler_CcExcecao_TabelaNaoVazia(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_cc-excecao").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "cc-excecao", "", "colaborador_email;centro_custo_codigo\nfulano@exemplo.com;CC1\n")
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("esperado 409, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cadastro já possui dados") {
+		t.Fatalf("corpo não contém a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_CcExcecao_EmailNaoEncontrado cobre "E-mail
+// inexistente": colaborador_email sem usuarios correspondente -> nada é
+// escrito, 400 citando a linha.
+func TestImportarCadastroHandler_CcExcecao_EmailNaoEncontrado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "colaborador_email;centro_custo_codigo\nfulano@exemplo.com;CC1\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_cc-excecao").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("fulano@exemplo.com").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "cc-excecao", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 2") || !strings.Contains(rec.Body.String(), "não encontrado") {
+		t.Fatalf("corpo não cita a linha/causa da rejeição: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nenhum INSERT deveria ter sido tentado): %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_CcExcecao_EmailVazio cobre decodeCSVCcExcecao
+// rejeitando colaborador_email vazio -> nada é escrito, 400 citando a linha
+// (campoObrigatorio falha antes de qualquer resolução em usuarios).
+func TestImportarCadastroHandler_CcExcecao_EmailVazio(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "colaborador_email;centro_custo_codigo\n;CC1\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_cc-excecao").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "cc-excecao", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 2") || !strings.Contains(rec.Body.String(), "colaborador_email") {
+		t.Fatalf("corpo não cita a linha/causa da rejeição: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nenhuma resolução/INSERT deveria ter sido tentada): %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_CcExcecao_CentroCustoNaoEncontrado cobre "CC
+// inexistente": centro_custo_codigo não existe -> nada é escrito, 400
+// citando a linha.
+func TestImportarCadastroHandler_CcExcecao_CentroCustoNaoEncontrado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "colaborador_email;centro_custo_codigo\nfulano@exemplo.com;CC-INEXISTENTE\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_cc-excecao").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("fulano@exemplo.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoColaboradorID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("CC-INEXISTENTE").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "cc-excecao", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 2") || !strings.Contains(rec.Body.String(), "não encontrado") {
+		t.Fatalf("corpo não cita a linha/causa da rejeição: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nenhum INSERT deveria ter sido tentado): %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_CcExcecao_ParDuplicado cobre "Mesmo par
+// duplicado": CSV com 2 linhas colaborador+CC idênticas -> nada é escrito
+// (transação inteira desfeita), 400 (violação UNIQUE) citando a linha.
+func TestImportarCadastroHandler_CcExcecao_ParDuplicado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "colaborador_email;centro_custo_codigo\nfulano@exemplo.com;CC1\nfulano@exemplo.com;CC1\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_cc-excecao").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	// Linha 2 — insere com sucesso.
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("fulano@exemplo.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoColaboradorID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("CC1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO cc_excecao (colaborador_id, centro_custo_id) VALUES ($1, $2) RETURNING id")).
+		WithArgs(testCcExcecaoColaboradorID, testCcExcecaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoRegistroID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("cc-excecao", testCcExcecaoRegistroID,
+			`{"centro_custo_id":"`+testCcExcecaoCentroCustoID+`","colaborador_id":"`+testCcExcecaoColaboradorID+`"}`,
+			testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Linha 3 — mesmo par, violação UNIQUE no INSERT.
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("fulano@exemplo.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoColaboradorID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("CC1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO cc_excecao (colaborador_id, centro_custo_id) VALUES ($1, $2) RETURNING id")).
+		WithArgs(testCcExcecaoColaboradorID, testCcExcecaoCentroCustoID).
+		WillReturnError(&pq.Error{Code: "23505"})
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "cc-excecao", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 3") || !strings.Contains(rec.Body.String(), "registro duplicado") {
+		t.Fatalf("corpo não cita a linha/causa da rejeição: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAtualizarCadastroHandler_CcExcecao_Success cobre "Edição feliz": PUT
+// com novo centro_custo_id válido (já resolvido, UUID) -> 200, registro
+// atualizado, nova versão em histórico.
+func TestAtualizarCadastroHandler_CcExcecao_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const novoCentroCustoID = "c0000000-0000-0000-0000-000000000099"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM cc_excecao WHERE id = $1 FOR UPDATE")).
+		WithArgs(testCcExcecaoRegistroID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoRegistroID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 0) + 1 FROM cadastro_historico WHERE tipo_cadastro = $1 AND registro_id = $2")).
+		WithArgs("cc-excecao", testCcExcecaoRegistroID).
+		WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(2))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE cc_excecao SET colaborador_id = $1, centro_custo_id = $2, updated_at = now() WHERE id = $3")).
+		WithArgs(testCcExcecaoColaboradorID, novoCentroCustoID, testCcExcecaoRegistroID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("cc-excecao", testCcExcecaoRegistroID, 2,
+			`{"centro_custo_id":"`+novoCentroCustoID+`","colaborador_id":"`+testCcExcecaoColaboradorID+`"}`,
+			testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := AtualizarCadastroHandler(db)
+	body := `{"colaborador_id":"` + testCcExcecaoColaboradorID + `","centro_custo_id":"` + novoCentroCustoID + `"}`
+	req := newCadastroRequest(http.MethodPut, "cc-excecao", testCcExcecaoRegistroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), novoCentroCustoID) {
+		t.Fatalf("corpo não reflete o novo centro_custo_id: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAtualizarCadastroHandler_CcExcecao_CampoAusente cobre decodeJSONCcExcecao
+// rejeitando corpo sem 'centro_custo_id' -> 400, nenhuma query tentada
+// (decode acontece antes de db.Begin).
+func TestAtualizarCadastroHandler_CcExcecao_CampoAusente(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	body := `{"colaborador_id":"` + testCcExcecaoColaboradorID + `"}`
+	req := newCadastroRequest(http.MethodPut, "cc-excecao", testCcExcecaoRegistroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "centro_custo_id") {
+		t.Fatalf("corpo não cita o campo ausente: %s", rec.Body.String())
+	}
+}
+
+// TestAtualizarCadastroHandler_CcExcecao_UUIDInvalido cobre decodeJSONCcExcecao
+// rejeitando 'colaborador_id' que não bate com o formato UUID -> 400.
+func TestAtualizarCadastroHandler_CcExcecao_UUIDInvalido(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	body := `{"colaborador_id":"nao-e-um-uuid","centro_custo_id":"` + testCcExcecaoCentroCustoID + `"}`
+	req := newCadastroRequest(http.MethodPut, "cc-excecao", testCcExcecaoRegistroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "colaborador_id") {
+		t.Fatalf("corpo não cita o campo inválido: %s", rec.Body.String())
+	}
+}
+
+// TestRestaurarCadastroHandler_CcExcecao_Success cobre "Restauração feliz":
+// campos voltam aos valores da versão alvo, nova versão 'restaurado'.
+func TestRestaurarCadastroHandler_CcExcecao_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	dadosVersao1 := `{"centro_custo_id":"` + testCcExcecaoCentroCustoID + `","colaborador_id":"` + testCcExcecaoColaboradorID + `"}`
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM cc_excecao WHERE id = $1 FOR UPDATE")).
+		WithArgs(testCcExcecaoRegistroID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCcExcecaoRegistroID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT dados FROM cadastro_historico WHERE tipo_cadastro = $1 AND registro_id = $2 AND versao = $3")).
+		WithArgs("cc-excecao", testCcExcecaoRegistroID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"dados"}).AddRow([]byte(dadosVersao1)))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 0) + 1 FROM cadastro_historico WHERE tipo_cadastro = $1 AND registro_id = $2")).
+		WithArgs("cc-excecao", testCcExcecaoRegistroID).
+		WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(2))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE cc_excecao SET colaborador_id = $1, centro_custo_id = $2, updated_at = now() WHERE id = $3")).
+		WithArgs(testCcExcecaoColaboradorID, testCcExcecaoCentroCustoID, testCcExcecaoRegistroID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("cc-excecao", testCcExcecaoRegistroID, 2, dadosVersao1, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := RestaurarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "cc-excecao", testCcExcecaoRegistroID, `{"versao":1}`)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), testCcExcecaoCentroCustoID) {
+		t.Fatalf("corpo não reflete os valores restaurados: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestCadastroRoutes_CcExcecao_RequireAdministrador cobre "Acesso sem perfil
+// administrador" especificamente para {tipo}=cc-excecao -- 403, handler nunca
+// chamado.
+func TestCadastroRoutes_CcExcecao_RequireAdministrador(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-secret-at-least-32-bytes-long!!")
+
+	token, err := GenerateToken("user-790", "solicitante")
+	if err != nil {
+		t.Fatalf("GenerateToken falhou: %v", err)
+	}
+
+	called := false
+	protected := RequireAuth(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}, "administrador")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/cadastros/cc-excecao", nil)
+	req.SetPathValue("tipo", "cc-excecao")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	protected(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("esperado 403, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if called {
+		t.Fatal("handler de cadastro não deveria ser chamado com perfil insuficiente")
+	}
+}

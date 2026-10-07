@@ -139,6 +139,16 @@ var cadastroRegistry = map[string]cadastroTipo{
 		DecodeCSV:  decodeCSVFeriados,
 		DecodeJSON: decodeJSONFeriados,
 	},
+	"cc-excecao": {
+		Tabela:       "cc_excecao",
+		CSVCabecalho: []string{"colaborador_email", "centro_custo_codigo"},
+		Colunas: []colunaDef{
+			{Nome: "colaborador_id", Kind: colUUID},
+			{Nome: "centro_custo_id", Kind: colUUID},
+		},
+		DecodeCSV:  decodeCSVCcExcecao,
+		DecodeJSON: decodeJSONCcExcecao,
+	},
 }
 
 // --- DecodeJSON por tipo (corpo de PUT .../{id}) — mesma ordem de Colunas.
@@ -283,6 +293,28 @@ func decodeJSONFeriados(corpo map[string]interface{}) ([]interface{}, error) {
 		return nil, err
 	}
 	return []interface{}{data, descricao}, nil
+}
+
+// decodeJSONCcExcecao aceita colaborador_id/centro_custo_id JÁ RESOLVIDOS
+// (UUID) no corpo de PUT — mesmo padrão de decodeJSONCentrosCusto (a
+// resolução e-mail/código->id é particularidade da carga CSV, não do estado
+// já persistido).
+func decodeJSONCcExcecao(corpo map[string]interface{}) ([]interface{}, error) {
+	colaboradorID, err := extractString(corpo, "colaborador_id")
+	if err != nil {
+		return nil, err
+	}
+	if !uuidFormatRegexp.MatchString(colaboradorID) {
+		return nil, fmt.Errorf("campo 'colaborador_id' inválido")
+	}
+	centroCustoID, err := extractString(corpo, "centro_custo_id")
+	if err != nil {
+		return nil, err
+	}
+	if !uuidFormatRegexp.MatchString(centroCustoID) {
+		return nil, fmt.Errorf("campo 'centro_custo_id' inválido")
+	}
+	return []interface{}{colaboradorID, centroCustoID}, nil
 }
 
 // --- extract helpers (corpo de PUT, JSON genérico) ---

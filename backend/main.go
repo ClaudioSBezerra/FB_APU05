@@ -202,9 +202,11 @@ func main() {
 	http.HandleFunc("PATCH /api/admin/usuarios/{id}", handlers.RequireAuth(withDB(handlers.AdminUpdateUsuarioHandler), "administrador"))
 
 	// Cadastros administráveis (Story 2.1, FR-16) — 5 rotas genéricas
-	// parametrizadas por {tipo} (um dos 7 cadastros mestres do Epic 2),
-	// mesma implementação Go para todos: carga inicial via CSV, listagem
-	// paginada, edição, histórico e restauração de versão. Todas atrás de
+	// parametrizadas por {tipo} (um dos 7 cadastros mestres do Epic 2, mais
+	// "cc-excecao" — exceção de centro de custo, Story 2.3, FR-4 — oitavo
+	// {tipo} no mesmo registry, nenhuma rota nova), mesma implementação Go
+	// para todos: carga inicial via CSV, listagem paginada, edição,
+	// histórico e restauração de versão. Todas atrás de
 	// RequireAuth(..., "administrador"), mesmo padrão da linha acima.
 	http.HandleFunc("GET /api/admin/cadastros/{tipo}", handlers.RequireAuth(withDB(handlers.ListarCadastroHandler), "administrador"))
 	http.HandleFunc("POST /api/admin/cadastros/{tipo}", handlers.RequireAuth(withDB(handlers.ImportarCadastroHandler), "administrador"))
