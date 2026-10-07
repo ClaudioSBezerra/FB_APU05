@@ -1,20 +1,23 @@
 package handlers
 
 // solicitacoes.go — Story 3.1 (Abrir Transferência com aprovação calculada,
-// FR-5/FR-10).
+// FR-5/FR-10) e Story 3.2 (Abrir Inclusão SFC com aprovação calculada,
+// FR-7/FR-10).
 //
 // AbrirSolicitacaoHandler é a primeira rota do FB_APU05 que não exige
 // perfil `administrador` (RequireAuth(..., "") — qualquer solicitante
 // autenticado pode abrir uma solicitação). Valida o corpo (lados batendo,
-// exercício único, CC autorizado, plano de conta), delega o cálculo do
-// aprovador a `internal/aprovacao` (AD-1/AD-2 — o handler nunca decide
-// aprovador diretamente) e grava `solicitacoes`+`solicitacao_lancamentos`
-// numa única transação: qualquer erro de validação ou ErrSemAlcadaCadastrada
-// não grava nada (Boundaries "Always" da spec).
+// exercício único, CC autorizado, plano de conta — balanceamento e
+// exercício único só se aplicam a transferencia, Inclusão SFC é 1 linha
+// só), delega o cálculo do aprovador a `internal/aprovacao` (AD-1/AD-2 — o
+// handler nunca decide aprovador diretamente) e grava
+// `solicitacoes`+`solicitacao_lancamentos` numa única transação: qualquer
+// erro de validação ou ErrSemAlcadaCadastrada não grava nada (Boundaries
+// "Always" da spec).
 //
-// Só tipo_solicitacao="transferencia" é aceito nesta story; qualquer outro
-// valor é 400 "tipo de solicitação não suportado ainda" (histórias 3.2-3.5
-// estendem este MESMO handler, nunca reimplementam).
+// Só tipo_solicitacao="transferencia" ou "inclusao_sfc" é aceito até agora;
+// qualquer outro valor é 400 "tipo de solicitação não suportado ainda"
+// (histórias 3.3-3.5 estendem este MESMO handler, nunca reimplementam).
 
 import (
 	"database/sql"
@@ -95,11 +98,12 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Boundaries "Never" da spec: só "transferencia" tem handler nesta
-		// story — qualquer outro valor (inclusive os 4 ainda não
-		// implementados) é 400, nunca um 501/404 que sugira "não existe
-		// rota" (a rota existe; o TIPO ainda não é suportado).
-		if req.TipoSolicitacao != "transferencia" {
+		// Boundaries "Never" da spec: só "transferencia" (3.1) e
+		// "inclusao_sfc" (3.2) têm handler até agora — qualquer outro valor
+		// (inclusive os 3 ainda não implementados) é 400, nunca um 501/404
+		// que sugira "não existe rota" (a rota existe; o TIPO ainda não é
+		// suportado).
+		if req.TipoSolicitacao != "transferencia" && req.TipoSolicitacao != "inclusao_sfc" {
 			jsonErr(w, http.StatusBadRequest, "tipo de solicitação não suportado ainda")
 			return
 		}
@@ -110,20 +114,30 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		if msgErro := validarContagemELadoPorTipo(req.TipoSolicitacao, lancamentos); msgErro != "" {
+			jsonErr(w, http.StatusBadRequest, msgErro)
+			return
+		}
+
 		centroCustoID, msgErro := validarMesmoCentroCusto(lancamentos)
 		if msgErro != "" {
 			jsonErr(w, http.StatusBadRequest, msgErro)
 			return
 		}
 
-		if msgErro := validarBalanceamento(lancamentos); msgErro != "" {
-			jsonErr(w, http.StatusBadRequest, msgErro)
-			return
-		}
+		// Balanceamento entre 2 lados e exercício orçamentário único só fazem
+		// sentido para Transferência (Boundaries "Never" da spec: Inclusão SFC
+		// é sempre 1 única linha, nenhum dos dois conceitos se aplica).
+		if req.TipoSolicitacao == "transferencia" {
+			if msgErro := validarBalanceamento(lancamentos); msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
 
-		if msgErro := validarExercicioUnico(lancamentos); msgErro != "" {
-			jsonErr(w, http.StatusBadRequest, msgErro)
-			return
+			if msgErro := validarExercicioUnico(lancamentos); msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
 		}
 
 		solicitanteID := GetUserIDFromContext(r)
@@ -171,7 +185,11 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		msgErro, errServidor := validarPlanoContaBIFC(tx, lancamentos)
+		planoEsperado, rotuloTipo := "BIFC", "Transferência"
+		if req.TipoSolicitacao == "inclusao_sfc" {
+			planoEsperado, rotuloTipo = "SFC", "Inclusão SFC"
+		}
+		msgErro, errServidor := validarPlanoConta(tx, lancamentos, planoEsperado, rotuloTipo)
 		if errServidor != nil {
 			log.Printf("[Solicitacoes] Erro ao checar plano de conta: %v", errServidor)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -190,9 +208,10 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		resolver, err := aprovacao.ResolverParaTipo(req.TipoSolicitacao, tx)
 		if err != nil {
-			// Defensivo: o guard de tipo_solicitacao acima já filtra só
-			// "transferencia" — este branch só seria alcançado se o guard e
-			// o dispatch do pacote aprovacao divergissem no futuro.
+			// Defensivo: o guard de tipo_solicitacao acima já filtra para
+			// "transferencia"/"inclusao_sfc" — este branch só seria
+			// alcançado se o guard e o dispatch do pacote aprovacao
+			// divergissem no futuro.
 			jsonErr(w, http.StatusBadRequest, "tipo de solicitação não suportado ainda")
 			return
 		}
@@ -283,14 +302,11 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // validarLancamentosEstrutura valida cada linha isoladamente (lado válido,
-// UUIDs bem formados, valor>0, mês no formato YYYY-MM-01) e exige ao menos 2
-// linhas (uma de cada lado — implícito pelo balanceamento, mas checado aqui
-// cedo para uma mensagem mais clara).
+// UUIDs bem formados, valor>0, mês no formato YYYY-MM-01). A contagem de
+// linhas e a regra de "lado" permitido são tipo-aware e ficam em
+// validarContagemELadoPorTipo, chamada logo depois desta (Code Map da
+// spec 3.2).
 func validarLancamentosEstrutura(linhas []lancamentoRequest) ([]lancamentoValidado, string) {
-	if len(linhas) < 2 {
-		return nil, "a solicitação de transferência precisa de ao menos uma linha de origem e uma de destino"
-	}
-
 	validadas := make([]lancamentoValidado, 0, len(linhas))
 	for i, l := range linhas {
 		n := i + 1
@@ -323,6 +339,29 @@ func validarLancamentosEstrutura(linhas []lancamentoRequest) ([]lancamentoValida
 		})
 	}
 	return validadas, ""
+}
+
+// validarContagemELadoPorTipo aplica a regra de contagem de linhas e "lado"
+// permitido específica de cada tipo_solicitacao (Code Map da spec 3.2):
+// "transferencia" exige ao menos 2 linhas (uma de cada lado — implícito pelo
+// balanceamento, mas checado aqui cedo para uma mensagem mais clara);
+// "inclusao_sfc" não tem o conceito de "2 lados" de Transferência (Boundaries
+// "Never" da spec) e exige exatamente 1 linha com lado="destino".
+func validarContagemELadoPorTipo(tipo string, linhas []lancamentoValidado) string {
+	switch tipo {
+	case "transferencia":
+		if len(linhas) < 2 {
+			return "a solicitação de transferência precisa de ao menos uma linha de origem e uma de destino"
+		}
+	case "inclusao_sfc":
+		if len(linhas) != 1 {
+			return "Inclusão SFC aceita apenas uma linha"
+		}
+		if linhas[0].Lado != "destino" {
+			return `inclusão SFC exige lado="destino"`
+		}
+	}
+	return ""
 }
 
 // parseMesCompetencia exige o formato YYYY-MM-DD com dia fixo 01 —
@@ -425,12 +464,14 @@ func solicitanteAutorizadoParaCC(tx *sql.Tx, solicitanteID, centroCustoID string
 	return existeExcecao, nil
 }
 
-// validarPlanoContaBIFC checa que toda conta referenciada pelas linhas
-// pertence ao plano BIFC (nunca SFC — Transferência não é Inclusão SFC,
-// Boundaries "Always" da spec). Devolve (mensagem 400, nil) para uma
-// violação de regra de negócio, ou (_, err) para um erro de infraestrutura
-// que o chamador deve traduzir como 500 — os dois nunca se confundem.
-func validarPlanoContaBIFC(tx *sql.Tx, linhas []lancamentoValidado) (string, error) {
+// validarPlanoConta checa que toda conta referenciada pelas linhas pertence
+// EXATAMENTE ao plano esperado para o tipo_solicitacao em questão (nunca o
+// outro plano, mesmo quando o código numérico colide — Boundaries "Always"
+// da spec): ("BIFC", "Transferência") para transferencia, ("SFC", "Inclusão
+// SFC") para inclusao_sfc. Devolve (mensagem 400, nil) para uma violação de
+// regra de negócio, ou (_, err) para um erro de infraestrutura que o
+// chamador deve traduzir como 500 — os dois nunca se confundem.
+func validarPlanoConta(tx *sql.Tx, linhas []lancamentoValidado, planoEsperado, rotuloTipo string) (string, error) {
 	for i, l := range linhas {
 		var plano string
 		err := tx.QueryRow(`SELECT plano FROM contas WHERE id = $1`, l.ContaID).Scan(&plano)
@@ -440,8 +481,8 @@ func validarPlanoContaBIFC(tx *sql.Tx, linhas []lancamentoValidado) (string, err
 		if err != nil {
 			return "", fmt.Errorf("checar plano da conta %s: %w", l.ContaID, err)
 		}
-		if plano != "BIFC" {
-			return fmt.Sprintf("linha %d: conta do plano %s não é permitida em Transferência (apenas BIFC)", i+1, plano), nil
+		if plano != planoEsperado {
+			return fmt.Sprintf("linha %d: conta do plano %s não é permitida em %s (apenas %s)", i+1, plano, rotuloTipo, planoEsperado), nil
 		}
 	}
 	return "", nil

@@ -260,4 +260,10 @@ func TestResolverParaTipo(t *testing.T) {
 	if err != nil || resolver == nil {
 		t.Fatalf("esperado Resolver não-nil sem erro para 'transferencia', obtido resolver=%v err=%v", resolver, err)
 	}
+
+	// Story 3.2: "inclusao_sfc" reaproveita o MESMO ResolverCalculado.
+	resolverInclusaoSFC, err := ResolverParaTipo("inclusao_sfc", db)
+	if err != nil || resolverInclusaoSFC == nil {
+		t.Fatalf("esperado Resolver não-nil sem erro para 'inclusao_sfc', obtido resolver=%v err=%v", resolverInclusaoSFC, err)
+	}
 }

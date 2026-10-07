@@ -38,17 +38,20 @@ type DBTX interface {
 }
 
 // ErrTipoNaoSuportado é devolvido por ResolverParaTipo para qualquer
-// tipo_solicitacao fora do mapeado nesta story — hoje só "transferencia"
-// (Boundaries "Never" da spec: os outros 4 tipos ainda não têm Resolver
-// implementado; histórias 3.2-3.5 estendem este mapa, nunca reimplementam o
-// dispatch tipo->resolver).
+// tipo_solicitacao fora do mapeado até agora — "transferencia" (3.1) e
+// "inclusao_sfc" (3.2), ambos via ResolverCalculado (Boundaries "Never" da
+// spec: os outros 3 tipos ainda não têm Resolver implementado; histórias
+// 3.3-3.5 estendem este mapa, nunca reimplementam o dispatch tipo->resolver).
 var ErrTipoNaoSuportado = errors.New("tipo de solicitação não suportado ainda")
 
 // ResolverParaTipo é a ÚNICA função de dispatch tipo->resolver do sistema
 // (AD-2) — nenhum handler reimplementa este mapeamento.
 func ResolverParaTipo(tipo string, db DBTX) (Resolver, error) {
 	switch tipo {
-	case "transferencia":
+	case "transferencia", "inclusao_sfc":
+		// Story 3.2: Inclusão SFC reaproveita o MESMO ResolverCalculado de
+		// Transferência (Epic 3 Cross-Story Dependencies) — nenhuma lógica
+		// nova neste pacote.
 		return NovoResolverCalculado(db), nil
 	default:
 		return nil, ErrTipoNaoSuportado
