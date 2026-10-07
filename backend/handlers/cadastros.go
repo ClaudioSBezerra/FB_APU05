@@ -1019,6 +1019,10 @@ func RestaurarCadastroHandler(db *sql.DB) http.HandlerFunc {
 		updateSQL := montarUpdateSQL(def.Tabela, colunas)
 		args := append(append([]interface{}{}, valores...), id)
 		if _, err := tx.Exec(updateSQL, args...); err != nil {
+			if ehViolacaoDeConstraint(err) {
+				jsonErr(w, http.StatusBadRequest, errorMsgAmigavel(err))
+				return
+			}
 			log.Printf("[Cadastros] Erro ao restaurar %s/%s para v%d: %v", tipo, id, *req.Versao, err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return

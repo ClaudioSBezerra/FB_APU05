@@ -16,8 +16,6 @@ CREATE TABLE IF NOT EXISTS divisoes (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_divisoes_codigo ON divisoes (codigo);
-
 -- `divisao_id` é resolvido a partir de `divisao_codigo` no CSV (ver
 -- cadastros_csv.go) — a carga de centros_custo só funciona depois que
 -- divisoes já estiver populada (Design Notes da spec); não é imposto aqui

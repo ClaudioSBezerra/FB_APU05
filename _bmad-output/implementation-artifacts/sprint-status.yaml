@@ -42,7 +42,7 @@ development_status:
   epic-1-retrospective: optional
 
   epic-2: backlog
-  2-1-carga-inicial-e-cadastros-administráveis: backlog
+  2-1-carga-inicial-e-cadastros-administráveis: done
   2-2-carga-de-colaborador-centro-de-custo: backlog
   2-3-exceção-de-centro-de-custo: backlog
   epic-2-retrospective: optional
