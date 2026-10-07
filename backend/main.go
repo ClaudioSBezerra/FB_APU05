@@ -212,6 +212,12 @@ func main() {
 	http.HandleFunc("GET /api/admin/cadastros/{tipo}/{id}/historico", handlers.RequireAuth(withDB(handlers.HistoricoCadastroHandler), "administrador"))
 	http.HandleFunc("POST /api/admin/cadastros/{tipo}/{id}/restaurar", handlers.RequireAuth(withDB(handlers.RestaurarCadastroHandler), "administrador"))
 
+	// Carga de colaborador × centro de custo (Story 2.2, FR-3, AD-8) — upload
+	// CSV que atualiza somente usuarios.cc_proprio_id, casando por e-mail
+	// contra um usuário já provisionado via SSO. Mesma proteção das rotas
+	// acima; diferente delas, reimportar é sempre permitido (nunca 409).
+	http.HandleFunc("POST /api/admin/colaboradores/carga", handlers.RequireAuth(withDB(handlers.CarregarColaboradoresHandler), "administrador"))
+
 	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
 		var allowedClientIDs []string
 		for _, id := range strings.Split(os.Getenv("IAM_ALLOWED_CLIENT_IDS"), ",") {
