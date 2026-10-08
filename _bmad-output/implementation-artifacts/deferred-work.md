@@ -42,3 +42,35 @@ source_spec: `spec-3-2-abrir-inclusao-sfc-com-aprovacao-calculada.md`
 severity: medium
 reason: Confirmado por busca no repo: nenhum teste em solicitacoes_test.go (nem os de Story 3.1/transferencia) exercitava valor<=0 antes desta story; a cobertura adicionada aqui (TestAbrirSolicitacaoHandler_InclusaoSFC_ValorInvalido) cobre apenas o caminho inclusao_sfc. Gap pré-existente da Story 3.1, não introduzido por esta mudança. Se a regra compartilhada regredir, nada detecta isso no fluxo principal de Transferência.
 status: open
+
+### DW-4: Nenhuma validação impede 2 linhas ativas com faixas de valor sobrepostas para o mesmo centro_custo_codigo+colaborador_id em autorizadores_formulario.
+origin: spec-deferred 5e9c69a78334
+location: backend/handlers/cadastros.go (decodeJSONAutorizadoresFormulario) / backend/handlers/cadastros_csv.go (decodeCSVAutorizadoresFormulario)
+source_spec: `spec-3-3-abrir-inclusao-com-autorizador-nominal.md`
+severity: medium
+reason: Confirmado por leitura de decodeJSONAutorizadoresFormulario/ decodeCSVAutorizadoresFormulario: nenhuma checagem de sobreposição existe. Mesmo padrão de alcadas (migration 003), que também não valida sobreposição no decode; só regras_aprovacao tem um desempate explícito (precedencia), e mesmo essa não valida sobreposição na carga. Não introduzido por esta story.
+status: open
+
+### DW-5: AutorizadorNominal.Resolve nunca checa se o colaborador_id escolhido ainda é um usuarios.ativo=true.
+origin: spec-deferred 2433eafbed3b
+location: backend/internal/aprovacao/nominal.go:38-56 (AutorizadorNominal.Resolve)
+source_spec: `spec-3-3-abrir-inclusao-com-autorizador-nominal.md`
+severity: medium
+reason: Confirmado: a query em nominal.go só filtra autorizadores_formulario.ativo, nunca usuarios.ativo. Lacuna sistêmica do pacote aprovacao — nenhum resolver existente (alcada, gerente, regraCurada) checa usuarios.ativo hoje. Não introduzido por esta story.
+status: open
+
+### DW-6: TestResolverParaTipo só assevera "imobilizado" como não suportado, nunca "obras".
+origin: spec-deferred 209614bb742f
+location: backend/internal/aprovacao/calculado_test.go (TestResolverParaTipo)
+source_spec: `spec-3-3-abrir-inclusao-com-autorizador-nominal.md`
+severity: low
+reason: Confirmado por leitura de calculado_test.go. A asserção de "imobilizado" é da Story 3.1; esta story só adicionou as asserções de "inclusao" sem tocar essa linha — não introduzido por 3.3. Ambos os valores caem no mesmo branch default/ErrTipoNaoSuportado em ResolverParaTipo, então testar um é representativo do outro.
+status: open
+
+### DW-7: TestAbrirSolicitacaoHandler_Inclusao_Success nunca assevera que regra_id/regra_versao/motivo aparecem no corpo da resposta HTTP.
+origin: spec-deferred 00f8937bc1f0
+location: backend/handlers/solicitacoes_test.go (TestAbrirSolicitacaoHandler_Inclusao_Success)
+source_spec: `spec-3-3-abrir-inclusao-com-autorizador-nominal.md`
+severity: low
+reason: Confirmado por leitura do teste — só tipo/nome do aprovador são checados no body. Mesmo padrão em todos os testes de sucesso do arquivo, para todos os tipos (transferencia/inclusao_sfc/inclusao); não introduzido por esta story.
+status: open
