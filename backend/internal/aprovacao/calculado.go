@@ -208,13 +208,13 @@ func (r *ResolverCalculado) gerente(query string, arg interface{}, valor float64
 // — reaproveita o histórico já existente em vez de versionar em paralelo
 // (Code Map da spec).
 func (r *ResolverCalculado) montarAprovador(id, tipoCadastro, motivo string, colaboradorID, papelAprovador sql.NullString) (Aprovador, error) {
-	versao, err := r.versaoDoCadastro(tipoCadastro, id)
+	versao, err := versaoDoCadastro(r.db, tipoCadastro, id)
 	if err != nil {
 		return Aprovador{}, err
 	}
 
 	if colaboradorID.Valid {
-		nome, err := r.nomeColaborador(colaboradorID.String)
+		nome, err := nomeColaborador(r.db, colaboradorID.String)
 		if err != nil {
 			return Aprovador{}, err
 		}
@@ -242,9 +242,14 @@ func (r *ResolverCalculado) montarAprovador(id, tipoCadastro, motivo string, col
 	}, nil
 }
 
-func (r *ResolverCalculado) versaoDoCadastro(tipoCadastro, registroID string) (int, error) {
+// versaoDoCadastro e nomeColaborador são funções livres (não métodos de
+// *ResolverCalculado) porque AutorizadorNominal (Story 3.3) também precisa
+// delas — mesma query, nunca duplicada entre os dois Resolvers (Boundaries
+// "Never" da spec 3.3: "Duplicar as queries de versaoDoCadastro/
+// nomeColaborador").
+func versaoDoCadastro(db DBTX, tipoCadastro, registroID string) (int, error) {
 	var versao int
-	err := r.db.QueryRow(`
+	err := db.QueryRow(`
 		SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico WHERE tipo_cadastro = $1 AND registro_id = $2
 	`, tipoCadastro, registroID).Scan(&versao)
 	if err != nil {
@@ -253,9 +258,9 @@ func (r *ResolverCalculado) versaoDoCadastro(tipoCadastro, registroID string) (i
 	return versao, nil
 }
 
-func (r *ResolverCalculado) nomeColaborador(colaboradorID string) (string, error) {
+func nomeColaborador(db DBTX, colaboradorID string) (string, error) {
 	var nome string
-	err := r.db.QueryRow(`SELECT nome FROM usuarios WHERE id = $1`, colaboradorID).Scan(&nome)
+	err := db.QueryRow(`SELECT nome FROM usuarios WHERE id = $1`, colaboradorID).Scan(&nome)
 	if err != nil {
 		return "", fmt.Errorf("aprovacao: usuarios (%s): %w", colaboradorID, err)
 	}

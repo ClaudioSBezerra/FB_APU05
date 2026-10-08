@@ -18,6 +18,11 @@ type Solicitacao struct {
 	CentroCustoCodigo string
 	DivisaoID         string
 	Valor             float64
+	// AutorizadorEscolhidoID é o colaborador_id escolhido pelo solicitante
+	// no campo `autorizador_id` da requisição — só consumido por
+	// AutorizadorNominal (tipo_solicitacao="inclusao", Story 3.3); vazio e
+	// ignorado por ResolverCalculado (Code Map da spec 3.3).
+	AutorizadorEscolhidoID string
 }
 
 // Resolver é a porta única do motor de aprovação (AD-2): todo handler de
@@ -38,10 +43,10 @@ type DBTX interface {
 }
 
 // ErrTipoNaoSuportado é devolvido por ResolverParaTipo para qualquer
-// tipo_solicitacao fora do mapeado até agora — "transferencia" (3.1) e
-// "inclusao_sfc" (3.2), ambos via ResolverCalculado (Boundaries "Never" da
-// spec: os outros 3 tipos ainda não têm Resolver implementado; histórias
-// 3.3-3.5 estendem este mapa, nunca reimplementam o dispatch tipo->resolver).
+// tipo_solicitacao fora do mapeado até agora — "transferencia" (3.1),
+// "inclusao_sfc" (3.2) e "inclusao" (3.3) (Boundaries "Never" da spec 3.3:
+// "imobilizado"/"obras" ainda não têm Resolver implementado; histórias 3.4-
+// 3.5 estendem este mapa, nunca reimplementam o dispatch tipo->resolver).
 var ErrTipoNaoSuportado = errors.New("tipo de solicitação não suportado ainda")
 
 // ResolverParaTipo é a ÚNICA função de dispatch tipo->resolver do sistema
@@ -53,6 +58,10 @@ func ResolverParaTipo(tipo string, db DBTX) (Resolver, error) {
 		// Transferência (Epic 3 Cross-Story Dependencies) — nenhuma lógica
 		// nova neste pacote.
 		return NovoResolverCalculado(db), nil
+	case "inclusao":
+		// Story 3.3: Inclusão (plain) usa o motor de autorizador nominal —
+		// 2ª implementação de Resolver (AD-2).
+		return NovoAutorizadorNominal(db), nil
 	default:
 		return nil, ErrTipoNaoSuportado
 	}

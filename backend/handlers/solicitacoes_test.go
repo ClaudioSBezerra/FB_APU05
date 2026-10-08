@@ -26,6 +26,8 @@ const (
 	testSolicitacaoContaOrigem   = "ca000000-0000-0000-0000-000000000001"
 	testSolicitacaoContaDestino  = "ca000000-0000-0000-0000-000000000002"
 	testSolicitacaoContaSFC      = "ca000000-0000-0000-0000-000000000003"
+	testSolicitacaoContaBIFC     = "ca000000-0000-0000-0000-000000000004"
+	testSolicitacaoAutorizadorID = "aa000000-0000-0000-0000-000000000001"
 )
 
 // newSolicitacaoRequest monta uma requisição POST com claims de solicitante
@@ -48,6 +50,16 @@ func corpoInclusaoSFC(lancamentosJSON string) string {
 	return `{"tipo_solicitacao":"inclusao_sfc","lancamentos":[` + lancamentosJSON + `]}`
 }
 
+// corpoInclusao monta o corpo de uma Inclusão (Story 3.3, autorizador
+// nominal) — análogo a corpoInclusaoSFC, mas com o campo autorizador_id no
+// nível da solicitação.
+func corpoInclusao(autorizadorID, lancamentosJSON string) string {
+	return fmt.Sprintf(
+		`{"tipo_solicitacao":"inclusao","autorizador_id":%q,"lancamentos":[%s]}`,
+		autorizadorID, lancamentosJSON,
+	)
+}
+
 func linhaJSON(lado, divisaoID, centroCustoID, contaID, mes string, valor float64) string {
 	return fmt.Sprintf(
 		`{"lado":"%s","divisao_id":"%s","centro_custo_id":"%s","conta_id":"%s","mes":"%s","valor":%g}`,
@@ -60,8 +72,11 @@ func linhaJSON(lado, divisaoID, centroCustoID, contaID, mes string, valor float6
 func TestAbrirSolicitacaoHandler_TipoNaoSuportado(t *testing.T) {
 	db, mock := newSQLMock(t)
 
+	// "imobilizado" (Story 3.4) ainda não tem handler — "inclusao" já é
+	// suportado a partir da Story 3.3, então não serve mais como exemplo de
+	// tipo não suportado (Boundaries "Never" da spec 3.3).
 	handler := AbrirSolicitacaoHandler(db)
-	req := newSolicitacaoRequest(`{"tipo_solicitacao":"inclusao","lancamentos":[]}`)
+	req := newSolicitacaoRequest(`{"tipo_solicitacao":"imobilizado","lancamentos":[]}`)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 
@@ -629,6 +644,266 @@ func TestAbrirSolicitacaoHandler_InclusaoSFC_Success(t *testing.T) {
 		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"Gerente Financeiro"`) {
+		t.Fatalf("corpo não contém o aprovador esperado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// --- Story 3.3 — Abrir Inclusão com autorizador nominal ---
+//
+// AutorizadorNominal.Resolve (a consulta a autorizadores_formulario) ainda
+// não tinha cobertura própria em internal/aprovacao (Code Map da spec 3.3
+// só lista a asserção de dispatch em calculado_test.go) — os testes abaixo
+// cobrem o Resolve de ponta a ponta via handler, além do wiring novo
+// (autorizador_id ausente/malformado, contagem/lado, valor<=0, plano BIFC):
+// I/O Matrix da spec 3.3.
+
+func TestAbrirSolicitacaoHandler_Inclusao_AutorizadorIDAusente(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoInclusao("",
+		linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", 1000),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "campo 'autorizador_id' inválido") {
+		t.Fatalf("corpo não cita a validação esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Inclusao_AutorizadorIDMalformado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoInclusao("nao-e-um-uuid",
+		linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", 1000),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "campo 'autorizador_id' inválido") {
+		t.Fatalf("corpo não cita a validação esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Inclusao_ValorInvalido(t *testing.T) {
+	for _, valor := range []float64{0, -100} {
+		t.Run(fmt.Sprintf("valor=%g", valor), func(t *testing.T) {
+			db, mock := newSQLMock(t)
+
+			corpo := corpoInclusao(testSolicitacaoAutorizadorID,
+				linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", valor),
+			)
+
+			handler := AbrirSolicitacaoHandler(db)
+			req := newSolicitacaoRequest(corpo)
+			rec := httptest.NewRecorder()
+			handler(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "maior que zero") {
+				t.Fatalf("corpo não cita a validação de valor esperada: %s", rec.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+			}
+		})
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Inclusao_MaisDeUmaLinha(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoInclusao(testSolicitacaoAutorizadorID,
+		linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", 1000)+","+
+			linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", 500),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Inclusão aceita apenas uma linha") {
+		t.Fatalf("corpo não cita a restrição de contagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Inclusao_LadoOrigemInvalido(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoInclusao(testSolicitacaoAutorizadorID,
+		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", 1000),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `lado=`) || !strings.Contains(rec.Body.String(), "destino") {
+		t.Fatalf("corpo não cita a exigência de lado=destino: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Inclusao_ContaPlanoSFC(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoInclusao(testSolicitacaoAutorizadorID,
+		linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaSFC, "2026-10-01", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo, divisao_id, filial FROM centros_custo WHERE id = $1")).
+		WithArgs(testSolicitacaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"codigo", "divisao_id", "filial"}).
+			AddRow("CC1", testSolicitacaoDivisaoID, "F1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT cc_proprio_id FROM usuarios WHERE id = $1")).
+		WithArgs(testAtorID).
+		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
+		WithArgs(testSolicitacaoContaSFC).
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("SFC"))
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "BIFC") || !strings.Contains(rec.Body.String(), "Inclusão") {
+		t.Fatalf("corpo não cita a restrição de plano esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Inclusao_AutorizadorForaDoCCOuFaixa(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoInclusao(testSolicitacaoAutorizadorID,
+		linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo, divisao_id, filial FROM centros_custo WHERE id = $1")).
+		WithArgs(testSolicitacaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"codigo", "divisao_id", "filial"}).
+			AddRow("CC1", testSolicitacaoDivisaoID, "F1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT cc_proprio_id FROM usuarios WHERE id = $1")).
+		WithArgs(testAtorID).
+		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
+		WithArgs(testSolicitacaoContaBIFC).
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario")).
+		WithArgs("CC1", testSolicitacaoAutorizadorID, 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "autorizador selecionado não é válido") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Inclusao_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const solicitacaoID = "so000000-0000-0000-0000-000000000003"
+	const autorizadorRegraID = "ar000000-0000-0000-0000-000000000001"
+
+	corpo := corpoInclusao(testSolicitacaoAutorizadorID,
+		linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo, divisao_id, filial FROM centros_custo WHERE id = $1")).
+		WithArgs(testSolicitacaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"codigo", "divisao_id", "filial"}).
+			AddRow("CC1", testSolicitacaoDivisaoID, "F1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT cc_proprio_id FROM usuarios WHERE id = $1")).
+		WithArgs(testAtorID).
+		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
+		WithArgs(testSolicitacaoContaBIFC).
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario")).
+		WithArgs("CC1", testSolicitacaoAutorizadorID, 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(autorizadorRegraID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico")).
+		WithArgs("autorizadores-formulario", autorizadorRegraID).
+		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT nome FROM usuarios WHERE id = $1")).
+		WithArgs(testSolicitacaoAutorizadorID).
+		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Autorizador Nominal"))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
+		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", 1000.0).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"tipo":"pessoa"`) {
+		t.Fatalf("corpo não indica Tipo=pessoa: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"Autorizador Nominal"`) {
 		t.Fatalf("corpo não contém o aprovador esperado: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

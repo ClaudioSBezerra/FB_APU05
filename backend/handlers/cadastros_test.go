@@ -1643,3 +1643,141 @@ func TestImportarCadastroHandler_GerentesAprovacao_CCEDivisaoAoMesmoTempo(t *tes
 		t.Fatalf("expectativas do mock não satisfeitas (nenhum INSERT deveria ter sido tentado): %v", err)
 	}
 }
+
+// --- Story 3.3 — "autorizadores-formulario" (FR-6/FR-11) ---
+//
+// Mesmo padrão de "regras-aprovacao": colaborador_email resolvido para
+// colaborador_id dentro da MESMA transação do import — mas aqui
+// OBRIGATÓRIO (resolveColaboradorIDPorEmail, não ...Opcional), já que
+// autorizadores_formulario é SEMPRE pessoa, nunca papel_aprovador
+// (Boundaries "Always" da spec 3.3).
+
+// TestImportarCadastroHandler_AutorizadoresFormulario_Success cobre o
+// caminho feliz: colaborador_email resolvido -> colaborador_id, ativo=true.
+func TestImportarCadastroHandler_AutorizadoresFormulario_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const colaboradorID = "d0000000-0000-0000-0000-000000000001"
+	const registroID = "d0000000-0000-0000-0000-000000000002"
+	csv := "centro_custo_codigo;valor_minimo;valor_maximo;colaborador_email;ativo\n" +
+		"CC1;1000;5000;fulano@exemplo.com;true\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_autorizadores-formulario").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM autorizadores_formulario)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("fulano@exemplo.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(colaboradorID))
+
+	mock.ExpectQuery(regexp.QuoteMeta(
+		"INSERT INTO autorizadores_formulario (centro_custo_codigo, valor_minimo, valor_maximo, colaborador_id, ativo) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+	)).
+		WithArgs("CC1", 1000.0, 5000.0, colaboradorID, true).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(registroID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs(
+			"autorizadores-formulario", registroID,
+			`{"ativo":true,"centro_custo_codigo":"CC1","colaborador_id":"`+colaboradorID+`","valor_maximo":5000,"valor_minimo":1000}`,
+			testAtorID,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "autorizadores-formulario", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"importados":1`) {
+		t.Fatalf("corpo não indica 1 importado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_AutorizadoresFormulario_EmailNaoEncontrado
+// cobre "E-mail inexistente" (mesmo padrão de cc-excecao/regras-aprovacao):
+// colaborador_email sem usuarios correspondente -> nada é escrito, 400
+// citando a linha.
+func TestImportarCadastroHandler_AutorizadoresFormulario_EmailNaoEncontrado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "centro_custo_codigo;valor_minimo;valor_maximo;colaborador_email;ativo\n" +
+		"CC1;1000;5000;fulano@exemplo.com;true\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_autorizadores-formulario").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM autorizadores_formulario)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("fulano@exemplo.com").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "autorizadores-formulario", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 2") || !strings.Contains(rec.Body.String(), "não encontrado") {
+		t.Fatalf("corpo não cita a linha/causa da rejeição: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nenhum INSERT deveria ter sido tentado): %v", err)
+	}
+}
+
+// TestAtualizarCadastroHandler_AutorizadoresFormulario_ColaboradorIDAusente
+// cobre decodeJSONAutorizadoresFormulario rejeitando corpo sem
+// 'colaborador_id' -> 400, nenhuma query tentada (decode acontece antes de
+// db.Begin). Diferente de "regras-aprovacao" (onde colaborador_id é
+// opcional), aqui é OBRIGATÓRIO — autorizadores_formulario é sempre pessoa
+// (Boundaries "Always" da spec 3.3).
+func TestAtualizarCadastroHandler_AutorizadoresFormulario_ColaboradorIDAusente(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	const registroID = "d0000000-0000-0000-0000-000000000003"
+	body := `{"centro_custo_codigo":"CC1","valor_minimo":1000,"valor_maximo":5000,"ativo":true}`
+	req := newCadastroRequest(http.MethodPut, "autorizadores-formulario", registroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "colaborador_id") {
+		t.Fatalf("corpo não cita o campo ausente: %s", rec.Body.String())
+	}
+}
+
+// TestAtualizarCadastroHandler_AutorizadoresFormulario_ColaboradorIDInvalido
+// cobre decodeJSONAutorizadoresFormulario rejeitando 'colaborador_id' que não
+// bate com o formato UUID -> 400.
+func TestAtualizarCadastroHandler_AutorizadoresFormulario_ColaboradorIDInvalido(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	const registroID = "d0000000-0000-0000-0000-000000000003"
+	body := `{"centro_custo_codigo":"CC1","valor_minimo":1000,"valor_maximo":5000,"colaborador_id":"nao-e-um-uuid","ativo":true}`
+	req := newCadastroRequest(http.MethodPut, "autorizadores-formulario", registroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "colaborador_id") {
+		t.Fatalf("corpo não cita o campo inválido: %s", rec.Body.String())
+	}
+}

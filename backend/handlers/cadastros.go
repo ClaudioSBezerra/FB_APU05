@@ -199,6 +199,25 @@ var cadastroRegistry = map[string]cadastroTipo{
 		DecodeCSV:  decodeCSVGerentesAprovacao,
 		DecodeJSON: decodeJSONGerentesAprovacao,
 	},
+	// "autorizadores-formulario": Story 3.3 (FR-6/FR-11) — mais 1 {tipo} no
+	// MESMO registry (nenhuma rota nova), mesmo padrão de
+	// "regras-aprovacao"/"gerentes-aprovacao": FK opcional resolvida por
+	// e-mail no CSV. Diferente dos dois, `colaborador_id` é OBRIGATÓRIO
+	// (nunca null) — autorizadores_formulario é sempre pessoa, nunca cargo
+	// (Boundaries "Always" da spec).
+	"autorizadores-formulario": {
+		Tabela:       "autorizadores_formulario",
+		CSVCabecalho: []string{"centro_custo_codigo", "valor_minimo", "valor_maximo", "colaborador_email", "ativo"},
+		Colunas: []colunaDef{
+			{Nome: "centro_custo_codigo", Kind: colString},
+			{Nome: "valor_minimo", Kind: colNumerico},
+			{Nome: "valor_maximo", Kind: colNumericoNulo},
+			{Nome: "colaborador_id", Kind: colUUID},
+			{Nome: "ativo", Kind: colBool},
+		},
+		DecodeCSV:  decodeCSVAutorizadoresFormulario,
+		DecodeJSON: decodeJSONAutorizadoresFormulario,
+	},
 }
 
 // --- DecodeJSON por tipo (corpo de PUT .../{id}) — mesma ordem de Colunas.
@@ -496,6 +515,41 @@ func decodeJSONGerentesAprovacao(corpo map[string]interface{}) ([]interface{}, e
 		return nil, err
 	}
 	return []interface{}{centroCustoID, divisaoID, colaboradorID, papelAprovador, teto, ativo}, nil
+}
+
+// decodeJSONAutorizadoresFormulario (Story 3.3, FR-6/FR-11) aceita
+// colaborador_id JÁ RESOLVIDO (UUID) no corpo de PUT — mesmo padrão de
+// decodeJSONCcExcecao/decodeJSONRegrasAprovacao, mas aqui OBRIGATÓRIO (não
+// opcional): autorizadores_formulario é SEMPRE pessoa, nunca papel_aprovador
+// (Boundaries "Always" da spec 3.3).
+func decodeJSONAutorizadoresFormulario(corpo map[string]interface{}) ([]interface{}, error) {
+	centroCustoCodigo, err := extractString(corpo, "centro_custo_codigo")
+	if err != nil {
+		return nil, err
+	}
+	valorMinimo, err := extractFloat(corpo, "valor_minimo")
+	if err != nil {
+		return nil, err
+	}
+	valorMaximo, err := extractFloatOpcional(corpo, "valor_maximo")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarFaixaAlcada(valorMinimo, valorMaximo); err != nil {
+		return nil, err
+	}
+	colaboradorID, err := extractString(corpo, "colaborador_id")
+	if err != nil {
+		return nil, err
+	}
+	if !uuidFormatRegexp.MatchString(colaboradorID) {
+		return nil, fmt.Errorf("campo 'colaborador_id' inválido")
+	}
+	ativo, err := extractBool(corpo, "ativo")
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{centroCustoCodigo, valorMinimo, valorMaximo, colaboradorID, ativo}, nil
 }
 
 // --- extract helpers (corpo de PUT, JSON genérico) ---

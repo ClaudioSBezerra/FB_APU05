@@ -44,3 +44,24 @@ type ErrSemAlcadaCadastrada struct {
 func (e *ErrSemAlcadaCadastrada) Error() string {
 	return fmt.Sprintf("sem alçada cadastrada para o centro de custo %q (filial %q)", e.CentroCusto, e.Filial)
 }
+
+// ErrAutorizadorInvalido é o erro sentinela devolvido por AutorizadorNominal
+// (Story 3.3, FR-6/FR-11) quando o autorizador_id escolhido pelo
+// solicitante NÃO tem nenhuma linha ativa em `autorizadores_formulario`
+// cobrindo o centro de custo e a faixa de valor da solicitação —
+// AutorizadorNominal NUNCA sintetiza um Aprovador quando essa checagem falha
+// (mesmo princípio AD-2 de ErrSemAlcadaCadastrada). É o chamador (handler
+// HTTP) que traduz este erro em 400, não 422 — Design Notes da spec 3.3:
+// diferente de ErrSemAlcadaCadastrada (lacuna de configuração num cálculo
+// sem entrada do cliente), este erro sempre envolve um autorizador_id que o
+// próprio cliente enviou (mesma natureza de "conta do plano errado"). A
+// mensagem nunca distingue "ninguém cadastrado para este CC/faixa" de "esta
+// pessoa não é a cadastrada" — evita expor a lista de autorizadores por CC
+// via tentativa e erro.
+type ErrAutorizadorInvalido struct {
+	CentroCusto string
+}
+
+func (e *ErrAutorizadorInvalido) Error() string {
+	return "autorizador selecionado não é válido para este centro de custo e faixa de valor"
+}

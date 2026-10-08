@@ -495,3 +495,41 @@ func decodeCSVGerentesAprovacao(tx *sql.Tx, linha []string) ([]interface{}, erro
 
 	return []interface{}{centroCustoID, divisaoID, colaboradorID, papelAprovador, teto, ativo}, nil
 }
+
+// decodeCSVAutorizadoresFormulario (Story 3.3, FR-6/FR-11) resolve
+// colaborador_email -> colaborador_id (usuarios), mesmo padrão
+// case-insensitive de cc-excecao/regras-aprovacao — mas aqui com a variante
+// OBRIGATÓRIA (resolveColaboradorIDPorEmail, não ...Opcional):
+// autorizadores_formulario é SEMPRE pessoa, nunca papel_aprovador
+// (Boundaries "Always" da spec 3.3). "centro_custo_codigo" é texto livre SEM
+// FK, mesmo padrão já adotado por alcadas/regras-aprovacao.
+func decodeCSVAutorizadoresFormulario(tx *sql.Tx, linha []string) ([]interface{}, error) {
+	centroCustoCodigo, err := campoObrigatorio(linha[0], "centro_custo_codigo")
+	if err != nil {
+		return nil, err
+	}
+	valorMinimo, err := parseNumeroObrigatorio(linha[1])
+	if err != nil {
+		return nil, err
+	}
+	valorMaximo, err := parseNumeroOpcional(linha[2])
+	if err != nil {
+		return nil, err
+	}
+	if err := validarFaixaAlcada(valorMinimo, valorMaximo); err != nil {
+		return nil, err
+	}
+	email, err := campoObrigatorio(linha[3], "colaborador_email")
+	if err != nil {
+		return nil, err
+	}
+	colaboradorID, err := resolveColaboradorIDPorEmail(tx, email)
+	if err != nil {
+		return nil, err
+	}
+	ativo, err := parseBoolCSV(linha[4])
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{centroCustoCodigo, valorMinimo, valorMaximo, colaboradorID, ativo}, nil
+}

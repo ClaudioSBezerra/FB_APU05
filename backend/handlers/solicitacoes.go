@@ -1,23 +1,25 @@
 package handlers
 
 // solicitacoes.go — Story 3.1 (Abrir Transferência com aprovação calculada,
-// FR-5/FR-10) e Story 3.2 (Abrir Inclusão SFC com aprovação calculada,
-// FR-7/FR-10).
+// FR-5/FR-10), Story 3.2 (Abrir Inclusão SFC com aprovação calculada,
+// FR-7/FR-10) e Story 3.3 (Abrir Inclusão com autorizador nominal,
+// FR-6/FR-11).
 //
 // AbrirSolicitacaoHandler é a primeira rota do FB_APU05 que não exige
 // perfil `administrador` (RequireAuth(..., "") — qualquer solicitante
 // autenticado pode abrir uma solicitação). Valida o corpo (lados batendo,
 // exercício único, CC autorizado, plano de conta — balanceamento e
-// exercício único só se aplicam a transferencia, Inclusão SFC é 1 linha
-// só), delega o cálculo do aprovador a `internal/aprovacao` (AD-1/AD-2 — o
-// handler nunca decide aprovador diretamente) e grava
+// exercício único só se aplicam a transferencia, Inclusão/Inclusão SFC são
+// 1 linha só), delega o cálculo do aprovador a `internal/aprovacao`
+// (AD-1/AD-2 — o handler nunca decide aprovador diretamente) e grava
 // `solicitacoes`+`solicitacao_lancamentos` numa única transação: qualquer
-// erro de validação ou ErrSemAlcadaCadastrada não grava nada (Boundaries
-// "Always" da spec).
+// erro de validação, ErrSemAlcadaCadastrada ou ErrAutorizadorInvalido não
+// grava nada (Boundaries "Always" da spec).
 //
-// Só tipo_solicitacao="transferencia" ou "inclusao_sfc" é aceito até agora;
-// qualquer outro valor é 400 "tipo de solicitação não suportado ainda"
-// (histórias 3.3-3.5 estendem este MESMO handler, nunca reimplementam).
+// Só tipo_solicitacao em {"transferencia", "inclusao_sfc", "inclusao"} é
+// aceito até agora; qualquer outro valor é 400 "tipo de solicitação não
+// suportado ainda" (histórias 3.4-3.5 estendem este MESMO handler, nunca
+// reimplementam).
 
 import (
 	"database/sql"
@@ -50,6 +52,11 @@ const mesConvencaoDia1 = "01"
 type abrirSolicitacaoRequest struct {
 	TipoSolicitacao string              `json:"tipo_solicitacao"`
 	Lancamentos     []lancamentoRequest `json:"lancamentos"`
+	// AutorizadorID (Story 3.3) é o colaborador_id escolhido pelo
+	// solicitante para tipo_solicitacao="inclusao" — campo no nível da
+	// solicitação, não por linha (só há 1 linha). Ignorado para os demais
+	// tipos.
+	AutorizadorID string `json:"autorizador_id"`
 }
 
 type lancamentoRequest struct {
@@ -98,12 +105,12 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Boundaries "Never" da spec: só "transferencia" (3.1) e
-		// "inclusao_sfc" (3.2) têm handler até agora — qualquer outro valor
-		// (inclusive os 3 ainda não implementados) é 400, nunca um 501/404
-		// que sugira "não existe rota" (a rota existe; o TIPO ainda não é
-		// suportado).
-		if req.TipoSolicitacao != "transferencia" && req.TipoSolicitacao != "inclusao_sfc" {
+		// Boundaries "Never" da spec: só "transferencia" (3.1),
+		// "inclusao_sfc" (3.2) e "inclusao" (3.3) têm handler até agora —
+		// qualquer outro valor (inclusive "imobilizado"/"obras", ainda não
+		// implementados) é 400, nunca um 501/404 que sugira "não existe
+		// rota" (a rota existe; o TIPO ainda não é suportado).
+		if req.TipoSolicitacao != "transferencia" && req.TipoSolicitacao != "inclusao_sfc" && req.TipoSolicitacao != "inclusao" {
 			jsonErr(w, http.StatusBadRequest, "tipo de solicitação não suportado ainda")
 			return
 		}
@@ -117,6 +124,17 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		if msgErro := validarContagemELadoPorTipo(req.TipoSolicitacao, lancamentos); msgErro != "" {
 			jsonErr(w, http.StatusBadRequest, msgErro)
 			return
+		}
+
+		// Story 3.3: Inclusão exige um autorizador_id (UUID) escolhido pelo
+		// solicitante — validado contra autorizadores_formulario mais
+		// adiante, via AutorizadorNominal (nunca aqui — este handler só
+		// checa o FORMATO do campo).
+		if req.TipoSolicitacao == "inclusao" {
+			if !uuidFormatRegexp.MatchString(req.AutorizadorID) {
+				jsonErr(w, http.StatusBadRequest, "campo 'autorizador_id' inválido")
+				return
+			}
 		}
 
 		centroCustoID, msgErro := validarMesmoCentroCusto(lancamentos)
@@ -185,9 +203,17 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		planoEsperado, rotuloTipo := "BIFC", "Transferência"
-		if req.TipoSolicitacao == "inclusao_sfc" {
+		// Mapa plano/rótulo por tipo (Story 3.3): "inclusao_sfc" é o ÚNICO
+		// tipo que usa o plano SFC (FR-7); "inclusao" (Story 3.3) usa BIFC
+		// como "transferencia", mas com rótulo próprio na mensagem de erro.
+		var planoEsperado, rotuloTipo string
+		switch req.TipoSolicitacao {
+		case "inclusao_sfc":
 			planoEsperado, rotuloTipo = "SFC", "Inclusão SFC"
+		case "inclusao":
+			planoEsperado, rotuloTipo = "BIFC", "Inclusão"
+		default:
+			planoEsperado, rotuloTipo = "BIFC", "Transferência"
 		}
 		msgErro, errServidor := validarPlanoConta(tx, lancamentos, planoEsperado, rotuloTipo)
 		if errServidor != nil {
@@ -222,11 +248,12 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		aprovadorResolvido, err := resolver.Resolve(aprovacao.Solicitacao{
-			Filial:            filial,
-			CentroCustoID:     centroCustoID,
-			CentroCustoCodigo: ccCodigo,
-			DivisaoID:         ccDivisaoID,
-			Valor:             valorTotal,
+			Filial:                 filial,
+			CentroCustoID:          centroCustoID,
+			CentroCustoCodigo:      ccCodigo,
+			DivisaoID:              ccDivisaoID,
+			Valor:                  valorTotal,
+			AutorizadorEscolhidoID: req.AutorizadorID,
 		})
 		if err != nil {
 			var semAlcada *aprovacao.ErrSemAlcadaCadastrada
@@ -234,6 +261,18 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 				jsonErr(w, http.StatusUnprocessableEntity, fmt.Sprintf(
 					"sem alçada cadastrada para o centro de custo %q (filial %q)", semAlcada.CentroCusto, semAlcada.Filial,
 				))
+				return
+			}
+			// Story 3.3: autorizador_id escolhido pelo solicitante não tem
+			// linha ativa em autorizadores_formulario cobrindo o CC/faixa de
+			// valor — 400 (não 422, Design Notes da spec: o próprio cliente
+			// enviou esse autorizador_id), mesmo formato de mensagem do
+			// sentinela (sem distinguir "ninguém cadastrado" de "pessoa
+			// errada").
+			var autorizadorInvalido *aprovacao.ErrAutorizadorInvalido
+			if errors.As(err, &autorizadorInvalido) {
+				log.Printf("[Solicitacoes] Autorizador rejeitado (CC=%s, autorizador_id=%s)", autorizadorInvalido.CentroCusto, req.AutorizadorID)
+				jsonErr(w, http.StatusBadRequest, autorizadorInvalido.Error())
 				return
 			}
 			log.Printf("[Solicitacoes] Erro ao resolver aprovador (CC=%s): %v", centroCustoID, err)
@@ -342,11 +381,12 @@ func validarLancamentosEstrutura(linhas []lancamentoRequest) ([]lancamentoValida
 }
 
 // validarContagemELadoPorTipo aplica a regra de contagem de linhas e "lado"
-// permitido específica de cada tipo_solicitacao (Code Map da spec 3.2):
+// permitido específica de cada tipo_solicitacao (Code Map da spec 3.2/3.3):
 // "transferencia" exige ao menos 2 linhas (uma de cada lado — implícito pelo
 // balanceamento, mas checado aqui cedo para uma mensagem mais clara);
-// "inclusao_sfc" não tem o conceito de "2 lados" de Transferência (Boundaries
-// "Never" da spec) e exige exatamente 1 linha com lado="destino".
+// "inclusao_sfc" e "inclusao" não têm o conceito de "2 lados" de
+// Transferência (Boundaries "Never" da spec) e exigem exatamente 1 linha com
+// lado="destino" (mesma regra para os dois, Code Map da spec 3.3).
 func validarContagemELadoPorTipo(tipo string, linhas []lancamentoValidado) string {
 	switch tipo {
 	case "transferencia":
@@ -359,6 +399,13 @@ func validarContagemELadoPorTipo(tipo string, linhas []lancamentoValidado) strin
 		}
 		if linhas[0].Lado != "destino" {
 			return `inclusão SFC exige lado="destino"`
+		}
+	case "inclusao":
+		if len(linhas) != 1 {
+			return "Inclusão aceita apenas uma linha"
+		}
+		if linhas[0].Lado != "destino" {
+			return `inclusão exige lado="destino"`
 		}
 	}
 	return ""
