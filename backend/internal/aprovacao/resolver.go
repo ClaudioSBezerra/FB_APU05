@@ -23,6 +23,11 @@ type Solicitacao struct {
 	// AutorizadorNominal (tipo_solicitacao="inclusao", Story 3.3); vazio e
 	// ignorado por ResolverCalculado (Code Map da spec 3.3).
 	AutorizadorEscolhidoID string
+	// TipoSolicitacao (Story 3.5) é só consumido por AutorizadorNominal, para
+	// decidir entre `autorizadores_formulario` (CC/faixa de valor) e
+	// `aprovadores_obra` (teto individual, sem CC/faixa) — mesmo precedente
+	// de AutorizadorEscolhidoID. Vazio e ignorado por ResolverCalculado.
+	TipoSolicitacao string
 }
 
 // Resolver é a porta única do motor de aprovação (AD-2): todo handler de
@@ -44,10 +49,9 @@ type DBTX interface {
 
 // ErrTipoNaoSuportado é devolvido por ResolverParaTipo para qualquer
 // tipo_solicitacao fora do mapeado até agora — "transferencia" (3.1),
-// "inclusao_sfc" (3.2), "inclusao" (3.3) e "imobilizado" (3.4) (Boundaries
-// "Never" da spec 3.4: "obras" ainda não tem Resolver implementado; a
-// história 3.5 estende este mapa, nunca reimplementa o dispatch
-// tipo->resolver).
+// "inclusao_sfc" (3.2), "inclusao" (3.3), "imobilizado" (3.4) e "obras"
+// (3.5) são todos mapeados; só um tipo_solicitacao fora do Glossário
+// alcançaria este sentinela.
 var ErrTipoNaoSuportado = errors.New("tipo de solicitação não suportado ainda")
 
 // ResolverParaTipo é a ÚNICA função de dispatch tipo->resolver do sistema
@@ -59,13 +63,17 @@ func ResolverParaTipo(tipo string, db DBTX) (Resolver, error) {
 		// Transferência (Epic 3 Cross-Story Dependencies) — nenhuma lógica
 		// nova neste pacote.
 		return NovoResolverCalculado(db), nil
-	case "inclusao", "imobilizado":
+	case "inclusao", "imobilizado", "obras":
 		// Story 3.3: Inclusão (plain) usa o motor de autorizador nominal —
 		// 2ª implementação de Resolver (AD-2). Story 3.4: Imobilizado
-		// reaproveita a MESMA instância/tabela (`autorizadores_formulario`)
-		// — FR-11 agrupa inclusão+imobilizado+obras sob o mesmo mecanismo
-		// nominal; `nominal.go` já é agnóstico de tipo (consulta só por
-		// CC/colaborador/faixa de valor), nenhuma parametrização nova.
+		// reaproveita a MESMA instância/tabela (`autorizadores_formulario`).
+		// Story 3.5: Obras reaproveita a MESMA instância/tipo concreto
+		// *AutorizadorNominal (AD-2 continua com exatamente 2
+		// implementações de Resolver, Design Notes da spec 3.5) — nunca um
+		// 3º tipo de Resolver; `nominal.go` decide internamente, por um
+		// branch tipo-aware em `s.TipoSolicitacao`, entre
+		// `autorizadores_formulario` (CC/faixa) e `aprovadores_obra` (teto
+		// individual).
 		return NovoAutorizadorNominal(db), nil
 	default:
 		return nil, ErrTipoNaoSuportado

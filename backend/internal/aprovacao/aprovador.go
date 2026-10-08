@@ -58,10 +58,19 @@ func (e *ErrSemAlcadaCadastrada) Error() string {
 // mensagem nunca distingue "ninguém cadastrado para este CC/faixa" de "esta
 // pessoa não é a cadastrada" — evita expor a lista de autorizadores por CC
 // via tentativa e erro.
+//
+// CentroCusto vazio ("") sinaliza o branch de Obras (Story 3.5, Design
+// Notes da spec): Obras não tem CC/faixa, só teto individual por pessoa
+// contra `aprovadores_obra` — Error() abaixo troca a mensagem para esse
+// caso, mas nunca distingue "sem cadastro" de "teto insuficiente", mesmo
+// princípio acima.
 type ErrAutorizadorInvalido struct {
 	CentroCusto string
 }
 
 func (e *ErrAutorizadorInvalido) Error() string {
+	if e.CentroCusto == "" {
+		return "autorizador selecionado não é válido para o teto de alçada desta pessoa"
+	}
 	return "autorizador selecionado não é válido para este centro de custo e faixa de valor"
 }

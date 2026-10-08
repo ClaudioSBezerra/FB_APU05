@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/lib/pq"
 )
@@ -217,6 +218,66 @@ var cadastroRegistry = map[string]cadastroTipo{
 		},
 		DecodeCSV:  decodeCSVAutorizadoresFormulario,
 		DecodeJSON: decodeJSONAutorizadoresFormulario,
+	},
+	// "locais-obra"/"subgrupos-despesa"/"obra-ordens"/"aprovadores-obra":
+	// Story 3.5 (FR-9/FR-11) — mais 4 {tipo} no MESMO registry (nenhuma rota
+	// nova, Boundaries "Never" da spec 3.5).
+	"locais-obra": {
+		Tabela:       "locais_obra",
+		CSVCabecalho: []string{"codigo", "nome"},
+		Colunas: []colunaDef{
+			{Nome: "codigo", Kind: colString},
+			{Nome: "nome", Kind: colString},
+		},
+		DecodeCSV:  decodeCSVLocaisObra,
+		DecodeJSON: decodeJSONLocaisObra,
+	},
+	"subgrupos-despesa": {
+		Tabela:       "subgrupos_despesa",
+		CSVCabecalho: []string{"codigo", "nome"},
+		Colunas: []colunaDef{
+			{Nome: "codigo", Kind: colString},
+			{Nome: "nome", Kind: colString},
+		},
+		DecodeCSV:  decodeCSVSubgruposDespesa,
+		DecodeJSON: decodeJSONSubgruposDespesa,
+	},
+	// "obra-ordens": `local_obra_codigo`/`subgrupo_despesa_codigo` (CSV) ->
+	// `local_obra_id`/`subgrupo_despesa_id` (coluna), mesmo padrão de
+	// `centros-custo` (divisao_codigo -> divisao_id). `tipo_despesa`/
+	// `tipo_faturamento` são opcionais (nuláveis), mesmo padrão de
+	// `centros-custo.filial`.
+	"obra-ordens": {
+		Tabela: "obra_ordens",
+		CSVCabecalho: []string{
+			"numero_ordem", "local_obra_codigo", "subgrupo_despesa_codigo", "tipo_despesa", "tipo_faturamento",
+		},
+		Colunas: []colunaDef{
+			{Nome: "numero_ordem", Kind: colString},
+			{Nome: "local_obra_id", Kind: colUUID},
+			{Nome: "subgrupo_despesa_id", Kind: colUUID},
+			{Nome: "tipo_despesa", Kind: colStringNulo},
+			{Nome: "tipo_faturamento", Kind: colStringNulo},
+		},
+		DecodeCSV:  decodeCSVObraOrdens,
+		DecodeJSON: decodeJSONObraOrdens,
+	},
+	// "aprovadores-obra": base do branch tipo-aware de AutorizadorNominal
+	// para `obras` (internal/aprovacao/nominal.go) — `colaborador_id`
+	// OBRIGATÓRIO (nunca null), mesmo padrão de `autorizadores-formulario`:
+	// sempre pessoa, nunca cargo (Design Notes da spec 3.5). Sem
+	// `centro_custo_codigo`/faixa — só `teto` individual por pessoa (Obras
+	// não tem CC).
+	"aprovadores-obra": {
+		Tabela:       "aprovadores_obra",
+		CSVCabecalho: []string{"colaborador_email", "teto", "ativo"},
+		Colunas: []colunaDef{
+			{Nome: "colaborador_id", Kind: colUUID},
+			{Nome: "teto", Kind: colNumerico},
+			{Nome: "ativo", Kind: colBool},
+		},
+		DecodeCSV:  decodeCSVAprovadoresObra,
+		DecodeJSON: decodeJSONAprovadoresObra,
 	},
 }
 
@@ -550,6 +611,128 @@ func decodeJSONAutorizadoresFormulario(corpo map[string]interface{}) ([]interfac
 		return nil, err
 	}
 	return []interface{}{centroCustoCodigo, valorMinimo, valorMaximo, colaboradorID, ativo}, nil
+}
+
+// validarTamanhoCampo rejeita um valor que excede max caracteres, contados
+// por rune e não por byte (mesmo padrão já fixado em Story 3.4 para
+// nome_arquivo/content_type de anexos) — aplicado aos campos de texto livre
+// dos cadastros administráveis para devolver 400 em vez de deixar o
+// Postgres rejeitar com um erro 500 de "value too long for type character
+// varying(N)".
+func validarTamanhoCampo(valor, nomeCampo string, max int) error {
+	if utf8.RuneCountInString(valor) > max {
+		return fmt.Errorf("campo '%s' excede %d caracteres", nomeCampo, max)
+	}
+	return nil
+}
+
+// decodeJSONLocaisObra/decodeJSONSubgruposDespesa (Story 3.5, FR-9/FR-11) —
+// mesmo padrão simples de decodeJSONClassesImobilizado (código + nome, sem
+// FK).
+func decodeJSONLocaisObra(corpo map[string]interface{}) ([]interface{}, error) {
+	codigo, err := extractString(corpo, "codigo")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarTamanhoCampo(codigo, "codigo", 50); err != nil {
+		return nil, err
+	}
+	nome, err := extractString(corpo, "nome")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarTamanhoCampo(nome, "nome", 255); err != nil {
+		return nil, err
+	}
+	return []interface{}{codigo, nome}, nil
+}
+
+func decodeJSONSubgruposDespesa(corpo map[string]interface{}) ([]interface{}, error) {
+	codigo, err := extractString(corpo, "codigo")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarTamanhoCampo(codigo, "codigo", 50); err != nil {
+		return nil, err
+	}
+	nome, err := extractString(corpo, "nome")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarTamanhoCampo(nome, "nome", 255); err != nil {
+		return nil, err
+	}
+	return []interface{}{codigo, nome}, nil
+}
+
+// decodeJSONObraOrdens (Story 3.5) aceita local_obra_id/subgrupo_despesa_id
+// JÁ RESOLVIDOS (UUID) no corpo de PUT — mesmo padrão de
+// decodeJSONCentrosCusto (a resolução código->id é particularidade da carga
+// CSV). tipo_despesa/tipo_faturamento são opcionais.
+func decodeJSONObraOrdens(corpo map[string]interface{}) ([]interface{}, error) {
+	numeroOrdem, err := extractString(corpo, "numero_ordem")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarTamanhoCampo(numeroOrdem, "numero_ordem", 50); err != nil {
+		return nil, err
+	}
+	localObraID, err := extractString(corpo, "local_obra_id")
+	if err != nil {
+		return nil, err
+	}
+	if !uuidFormatRegexp.MatchString(localObraID) {
+		return nil, fmt.Errorf("campo 'local_obra_id' inválido")
+	}
+	subgrupoDespesaID, err := extractString(corpo, "subgrupo_despesa_id")
+	if err != nil {
+		return nil, err
+	}
+	if !uuidFormatRegexp.MatchString(subgrupoDespesaID) {
+		return nil, fmt.Errorf("campo 'subgrupo_despesa_id' inválido")
+	}
+	tipoDespesa, err := extractStringOpcional(corpo, "tipo_despesa")
+	if err != nil {
+		return nil, err
+	}
+	if s, ok := tipoDespesa.(string); ok {
+		if err := validarTamanhoCampo(s, "tipo_despesa", 100); err != nil {
+			return nil, err
+		}
+	}
+	tipoFaturamento, err := extractStringOpcional(corpo, "tipo_faturamento")
+	if err != nil {
+		return nil, err
+	}
+	if s, ok := tipoFaturamento.(string); ok {
+		if err := validarTamanhoCampo(s, "tipo_faturamento", 100); err != nil {
+			return nil, err
+		}
+	}
+	return []interface{}{numeroOrdem, localObraID, subgrupoDespesaID, tipoDespesa, tipoFaturamento}, nil
+}
+
+// decodeJSONAprovadoresObra (Story 3.5) aceita colaborador_id JÁ RESOLVIDO
+// (UUID) no corpo de PUT — mesmo padrão OBRIGATÓRIO de
+// decodeJSONAutorizadoresFormulario (sempre pessoa, nunca cargo). Sem
+// centro_custo_codigo/faixa — só teto individual.
+func decodeJSONAprovadoresObra(corpo map[string]interface{}) ([]interface{}, error) {
+	colaboradorID, err := extractString(corpo, "colaborador_id")
+	if err != nil {
+		return nil, err
+	}
+	if !uuidFormatRegexp.MatchString(colaboradorID) {
+		return nil, fmt.Errorf("campo 'colaborador_id' inválido")
+	}
+	teto, err := extractFloat(corpo, "teto")
+	if err != nil {
+		return nil, err
+	}
+	ativo, err := extractBool(corpo, "ativo")
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{colaboradorID, teto, ativo}, nil
 }
 
 // --- extract helpers (corpo de PUT, JSON genérico) ---

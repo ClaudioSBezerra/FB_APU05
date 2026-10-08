@@ -10,6 +10,7 @@ package handlers
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -32,6 +33,8 @@ const (
 	testSolicitacaoContaBIFC           = "ca000000-0000-0000-0000-000000000004"
 	testSolicitacaoAutorizadorID       = "aa000000-0000-0000-0000-000000000001"
 	testSolicitacaoClasseImobilizadoID = "ce000000-0000-0000-0000-000000000001"
+	testObraLocalObraID                = "10000000-0000-0000-0000-000000000001"
+	testObraSubgrupoDespesaID          = "50000000-0000-0000-0000-000000000001"
 )
 
 // newSolicitacaoRequest monta uma requisição POST com claims de solicitante
@@ -92,6 +95,33 @@ func linhaImobilizadoJSON(lado, divisaoID, centroCustoID, classeImobilizadoID st
 	)
 }
 
+// corpoObras monta o corpo de uma Obras (Story 3.5, multi-linha) — análogo
+// a corpoImobilizado (autorizador_id no nível da solicitação), mas com
+// `classificacao` e `obras_linhas` no lugar de `anexos`/`lancamentos`.
+func corpoObras(autorizadorID, classificacao, linhasJSON string) string {
+	return fmt.Sprintf(
+		`{"tipo_solicitacao":"obras","autorizador_id":%q,"classificacao":%q,"obras_linhas":[%s]}`,
+		autorizadorID, classificacao, linhasJSON,
+	)
+}
+
+// linhaObraJSON monta uma linha do corpo de Obras — local de obra +
+// subgrupo de despesa + ordem de investimento + valor; `lado` é opcional
+// (string vazia = campo ausente no JSON seria mais fiel, mas omiti-lo aqui
+// simplifica os testes que não usam transferencia_saldo).
+func linhaObraJSON(lado, localObraID, subgrupoDespesaID, ordemInvestimento string, valor float64) string {
+	if lado == "" {
+		return fmt.Sprintf(
+			`{"local_obra_id":"%s","subgrupo_despesa_id":"%s","ordem_investimento":"%s","valor":%g}`,
+			localObraID, subgrupoDespesaID, ordemInvestimento, valor,
+		)
+	}
+	return fmt.Sprintf(
+		`{"lado":"%s","local_obra_id":"%s","subgrupo_despesa_id":"%s","ordem_investimento":"%s","valor":%g}`,
+		lado, localObraID, subgrupoDespesaID, ordemInvestimento, valor,
+	)
+}
+
 // anexoJSON monta um item da lista `anexos` do corpo de Imobilizado.
 func anexoJSON(nomeArquivo, contentType, conteudoBase64 string) string {
 	return fmt.Sprintf(
@@ -121,11 +151,12 @@ func sha256HexDeTeste(dados []byte) string {
 func TestAbrirSolicitacaoHandler_TipoNaoSuportado(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	// "obras" (Story 3.5) ainda não tem handler — "imobilizado" já é
-	// suportado a partir da Story 3.4, então não serve mais como exemplo de
-	// tipo não suportado (Boundaries "Never" da spec 3.4).
+	// "obras" (Story 3.5) já tem handler a partir desta story — "doacao" é
+	// um tipo_solicitacao fora do Glossário inteiro (nunca vai ter handler),
+	// mesmo papel que "obras" tinha como exemplo antes da Story 3.5
+	// (Boundaries "Never" da spec 3.4).
 	handler := AbrirSolicitacaoHandler(db)
-	req := newSolicitacaoRequest(`{"tipo_solicitacao":"obras","lancamentos":[]}`)
+	req := newSolicitacaoRequest(`{"tipo_solicitacao":"doacao","lancamentos":[]}`)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 
@@ -1320,6 +1351,501 @@ func TestAbrirSolicitacaoHandler_Imobilizado_Success(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"tipo":"pessoa"`) {
 		t.Fatalf("corpo não indica Tipo=pessoa: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// --- Story 3.5: Abrir Obras multi-linha (FR-9/FR-11) ---
+
+// TestAbrirSolicitacaoHandler_Obras_AutorizadorIDMalformado cobre a
+// checagem de FORMATO de autorizador_id (sem acesso a banco) — mesmo
+// padrão de Inclusão/Imobilizado.
+func TestAbrirSolicitacaoHandler_Obras_AutorizadorIDMalformado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoObras("nao-e-um-uuid", "inclusao",
+		linhaObraJSON("", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "campo 'autorizador_id' inválido") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_ClassificacaoInvalida cobre
+// "classificacao inválida/ausente" da I/O Matrix — validação puramente
+// estrutural, antes de qualquer acesso a banco.
+func TestAbrirSolicitacaoHandler_Obras_ClassificacaoInvalida(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, "classificacao-invalida",
+		linhaObraJSON("", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "campo 'classificacao' inválido") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_ZeroLinhas cobre "Zero linhas" da I/O
+// Matrix — obras_linhas vazio é recusado antes de qualquer acesso a banco.
+func TestAbrirSolicitacaoHandler_Obras_ZeroLinhas(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, "inclusao", "")
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "a solicitação de obras precisa de ao menos uma linha") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoSemOsDoisBlocos cobre
+// "Transferência de saldo sem os 2 blocos" da I/O Matrix — só linhas
+// lado="retirada" (nenhuma "inclusao") é recusado antes de qualquer acesso
+// a banco.
+func TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoSemOsDoisBlocos(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, classificacaoTransferenciaSaldo,
+		linhaObraJSON("retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "transferência de saldo exige ao menos uma linha de retirada e uma de inclusão") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoDesbalanceada cobre
+// "Transferência de saldo desbalanceada" da I/O Matrix — soma(retirada) !=
+// soma(inclusao), fora da tolerância de R$0,01.
+func TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoDesbalanceada(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, classificacaoTransferenciaSaldo,
+		linhaObraJSON("retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000)+","+
+			linhaObraJSON("inclusao", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 500),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "os dois lados da transferência de saldo não batem") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_LocalObraInexistente cobre
+// "local_obra_id inexistente" da I/O Matrix — UUID bem formado sem linha
+// correspondente em locais_obra.
+func TestAbrirSolicitacaoHandler_Obras_LocalObraInexistente(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, "inclusao",
+		linhaObraJSON("", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)")).
+		WithArgs(testObraLocalObraID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 1: local de obra não encontrado") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_SubgrupoDespesaInexistente cobre
+// "subgrupo_despesa_id inexistente" da I/O Matrix.
+func TestAbrirSolicitacaoHandler_Obras_SubgrupoDespesaInexistente(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, "inclusao",
+		linhaObraJSON("", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)")).
+		WithArgs(testObraLocalObraID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa WHERE id = $1)")).
+		WithArgs(testObraSubgrupoDespesaID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 1: subgrupo de despesa não encontrado") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_OrdemInexistente cobre "Ordem
+// inexistente (não é CRIAR)" da I/O Matrix.
+func TestAbrirSolicitacaoHandler_Obras_OrdemInexistente(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, "inclusao",
+		linhaObraJSON("", testObraLocalObraID, testObraSubgrupoDespesaID, "OI-999", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)")).
+		WithArgs(testObraLocalObraID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa WHERE id = $1)")).
+		WithArgs(testObraSubgrupoDespesaID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT local_obra_id, subgrupo_despesa_id FROM obra_ordens WHERE numero_ordem = $1")).
+		WithArgs("OI-999").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 1: ordem de investimento não encontrada") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_OrdemNaoCasaLocalSubgrupo cobre "Ordem
+// existe mas local/subgrupo não casam" da I/O Matrix.
+func TestAbrirSolicitacaoHandler_Obras_OrdemNaoCasaLocalSubgrupo(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const outroLocalObraID = "lo000000-0000-0000-0000-000000000099"
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, "inclusao",
+		linhaObraJSON("", testObraLocalObraID, testObraSubgrupoDespesaID, "OI-001", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)")).
+		WithArgs(testObraLocalObraID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa WHERE id = $1)")).
+		WithArgs(testObraSubgrupoDespesaID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT local_obra_id, subgrupo_despesa_id FROM obra_ordens WHERE numero_ordem = $1")).
+		WithArgs("OI-001").
+		WillReturnRows(sqlmock.NewRows([]string{"local_obra_id", "subgrupo_despesa_id"}).
+			AddRow(outroLocalObraID, testObraSubgrupoDespesaID))
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 1: ordem de investimento não pertence ao local de obra/subgrupo de despesa informado") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_OrdemCasaLocalSubgrupoCaseInsensitive
+// cobre o achado de revisão (2026-10-08): validarLocalSubgrupoOrdemObras
+// comparava local_obra_id/subgrupo_despesa_id lidos de obra_ordens contra o
+// texto literal enviado pelo cliente com !=, rejeitando um UUID idêntico
+// só porque o Postgres devolveu em outra caixa (maiúsculas) — a comparação
+// precisa ser case-insensitive (strings.EqualFold).
+func TestAbrirSolicitacaoHandler_Obras_OrdemCasaLocalSubgrupoCaseInsensitive(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const solicitacaoID = "so000000-0000-0000-0000-000000000007"
+	const autorizadorRegraID = "ar000000-0000-0000-0000-000000000005"
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, "inclusao",
+		linhaObraJSON("", testObraLocalObraID, testObraSubgrupoDespesaID, "OI-001", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)")).
+		WithArgs(testObraLocalObraID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa WHERE id = $1)")).
+		WithArgs(testObraSubgrupoDespesaID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT local_obra_id, subgrupo_despesa_id FROM obra_ordens WHERE numero_ordem = $1")).
+		WithArgs("OI-001").
+		WillReturnRows(sqlmock.NewRows([]string{"local_obra_id", "subgrupo_despesa_id"}).
+			AddRow(strings.ToUpper(testObraLocalObraID), strings.ToUpper(testObraSubgrupoDespesaID)))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM aprovadores_obra")).
+		WithArgs(testSolicitacaoAutorizadorID, 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(autorizadorRegraID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico")).
+		WithArgs("aprovadores-obra", autorizadorRegraID).
+		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT nome FROM usuarios WHERE id = $1")).
+		WithArgs(testSolicitacaoAutorizadorID).
+		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Aprovador de Obras"))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
+		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
+		WithArgs(solicitacaoID, nil, testObraLocalObraID, testObraSubgrupoDespesaID, "OI-001", 1000.0).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_AutorizadorForaDoTeto cobre
+// "Autorizador acima do teto individual" da I/O Matrix — ErrAutorizadorInvalido
+// com CentroCusto="" (teto individual, nunca CC/faixa).
+func TestAbrirSolicitacaoHandler_Obras_AutorizadorForaDoTeto(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, "inclusao",
+		linhaObraJSON("", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)")).
+		WithArgs(testObraLocalObraID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa WHERE id = $1)")).
+		WithArgs(testObraSubgrupoDespesaID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM aprovadores_obra")).
+		WithArgs(testSolicitacaoAutorizadorID, 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "autorizador selecionado não é válido para o teto de alçada desta pessoa") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_Success cobre "Envio feliz (inclusão)"
+// da I/O Matrix: classificacao="inclusao", 1 linha válida com
+// ordem_investimento="CRIAR" — 201, solicitacao_obras_linhas grava 1 linha,
+// centro_custo_id NULL, aprovador_snapshot.tipo="pessoa". Nenhuma ordem é
+// criada em obra_ordens nesta etapa (ordem_investimento="CRIAR" pula a
+// checagem de obra_ordens por completo).
+func TestAbrirSolicitacaoHandler_Obras_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const solicitacaoID = "so000000-0000-0000-0000-000000000005"
+	const autorizadorRegraID = "ar000000-0000-0000-0000-000000000003"
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, "inclusao",
+		linhaObraJSON("", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)")).
+		WithArgs(testObraLocalObraID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa WHERE id = $1)")).
+		WithArgs(testObraSubgrupoDespesaID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM aprovadores_obra")).
+		WithArgs(testSolicitacaoAutorizadorID, 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(autorizadorRegraID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico")).
+		WithArgs("aprovadores-obra", autorizadorRegraID).
+		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT nome FROM usuarios WHERE id = $1")).
+		WithArgs(testSolicitacaoAutorizadorID).
+		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Aprovador de Obras"))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
+		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
+		WithArgs(solicitacaoID, nil, testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"tipo":"pessoa"`) {
+		t.Fatalf("corpo não indica Tipo=pessoa: %s", body)
+	}
+	if !strings.Contains(body, `"centro_custo_id":null`) {
+		t.Fatalf("corpo deveria trazer centro_custo_id NULL: %s", body)
+	}
+	if !strings.Contains(body, `"classificacao":"inclusao"`) {
+		t.Fatalf("corpo deveria trazer classificacao=inclusao: %s", body)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoBalanceada_Success
+// cobre "Transferência de saldo balanceada" da I/O Matrix: linhas com lado
+// somando igual (±R$0,01) em retirada/inclusao — 201. valorTotal resolvido
+// para o aprovador é o maior dos 2 lados (1000, não 2000 = soma de ambos —
+// achado de revisão 2026-10-08: somaTotalObras dobrava o valor movimentado
+// para transferencia_saldo antes desta correção).
+func TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoBalanceada_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const solicitacaoID = "so000000-0000-0000-0000-000000000006"
+	const autorizadorRegraID = "ar000000-0000-0000-0000-000000000004"
+
+	corpo := corpoObras(testSolicitacaoAutorizadorID, classificacaoTransferenciaSaldo,
+		linhaObraJSON("retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000)+","+
+			linhaObraJSON("inclusao", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)")).
+		WithArgs(testObraLocalObraID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa WHERE id = $1)")).
+		WithArgs(testObraSubgrupoDespesaID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)")).
+		WithArgs(testObraLocalObraID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa WHERE id = $1)")).
+		WithArgs(testObraSubgrupoDespesaID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM aprovadores_obra")).
+		WithArgs(testSolicitacaoAutorizadorID, 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(autorizadorRegraID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico")).
+		WithArgs("aprovadores-obra", autorizadorRegraID).
+		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT nome FROM usuarios WHERE id = $1")).
+		WithArgs(testSolicitacaoAutorizadorID).
+		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Aprovador de Obras"))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
+		WithArgs(testAtorID, sqlmock.AnyArg(), classificacaoTransferenciaSaldo).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
+		WithArgs(solicitacaoID, "retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
+		WithArgs(solicitacaoID, "inclusao", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectativas do mock não satisfeitas: %v", err)

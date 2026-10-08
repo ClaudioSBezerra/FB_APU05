@@ -3,8 +3,8 @@ package handlers
 // solicitacoes.go — Story 3.1 (Abrir Transferência com aprovação calculada,
 // FR-5/FR-10), Story 3.2 (Abrir Inclusão SFC com aprovação calculada,
 // FR-7/FR-10), Story 3.3 (Abrir Inclusão com autorizador nominal,
-// FR-6/FR-11) e Story 3.4 (Abrir Imobilizado com anexo de cotação,
-// FR-8/FR-11).
+// FR-6/FR-11), Story 3.4 (Abrir Imobilizado com anexo de cotação,
+// FR-8/FR-11) e Story 3.5 (Abrir Obras multi-linha, FR-9/FR-11).
 //
 // AbrirSolicitacaoHandler é a primeira rota do FB_APU05 que não exige
 // perfil `administrador` (RequireAuth(..., "") — qualquer solicitante
@@ -20,10 +20,15 @@ package handlers
 // ErrSemAlcadaCadastrada ou ErrAutorizadorInvalido não grava nada
 // (Boundaries "Always" da spec).
 //
-// Só tipo_solicitacao em {"transferencia", "inclusao_sfc", "inclusao",
-// "imobilizado"} é aceito até agora; qualquer outro valor (ex. "obras") é
-// 400 "tipo de solicitação não suportado ainda" (história 3.5 estende este
-// MESMO handler, nunca reimplementa).
+// "obras" (Story 3.5) é aceito pelo MESMO handler/endpoint, mas não tem
+// nenhum dos campos de divisão/CC/conta/mês que o pipeline de
+// `lancamentos` abaixo exige — abrirSolicitacaoObras roda um pipeline de
+// validação própria (classificação + linhas por local de obra/subgrupo de
+// despesa/ordem de investimento) e grava em `solicitacao_obras_linhas`,
+// nunca em `solicitacao_lancamentos` (Boundaries "Never" da spec 3.5).
+// Qualquer tipo_solicitacao fora de {"transferencia", "inclusao_sfc",
+// "inclusao", "imobilizado", "obras"} é 400 "tipo de solicitação não
+// suportado ainda".
 
 import (
 	"database/sql"
@@ -68,6 +73,16 @@ type abrirSolicitacaoRequest struct {
 	// no nível da solicitação, exigida (len>=1) exclusivamente para
 	// tipo_solicitacao="imobilizado". Ignorado para os demais tipos.
 	Anexos []anexoRequest `json:"anexos"`
+	// Classificacao (Story 3.5) é um dos 4 valores {inclusao, fl,
+	// retirada_saldo, transferencia_saldo} — campo no nível da solicitação,
+	// obrigatório exclusivamente para tipo_solicitacao="obras". Ignorado
+	// para os demais tipos, mesmo precedente de Anexos.
+	Classificacao string `json:"classificacao"`
+	// ObrasLinhas (Story 3.5) é a lista de linhas de Obras — local de obra +
+	// subgrupo de despesa + ordem de investimento + valor, exigida
+	// (len>=1) exclusivamente para tipo_solicitacao="obras". Ignorado para
+	// os demais tipos.
+	ObrasLinhas []obraLinhaRequest `json:"obras_linhas"`
 }
 
 type lancamentoRequest struct {
@@ -109,6 +124,32 @@ type lancamentoValidado struct {
 	Valor               float64
 }
 
+// obraLinhaRequest (Story 3.5) é uma linha do corpo de Obras — local de
+// obra + subgrupo de despesa + ordem de investimento, nunca divisão/CC/
+// conta/mês (Boundaries "Never" da spec). `Lado` só é significativo quando
+// a solicitação é classificacao="transferencia_saldo" — ignorado pelas
+// outras 3 classificações (I/O Matrix da spec).
+type obraLinhaRequest struct {
+	Lado              string  `json:"lado"`
+	LocalObraID       string  `json:"local_obra_id"`
+	SubgrupoDespesaID string  `json:"subgrupo_despesa_id"`
+	OrdemInvestimento string  `json:"ordem_investimento"`
+	Valor             float64 `json:"valor"`
+}
+
+// obraLinhaValidado é uma linha de Obras já validada estruturalmente
+// (formato de UUID, ordem_investimento não vazio, valor>0) — Lado é NULL
+// (sql.NullString inválido) exceto quando classificacao="transferencia_
+// saldo", mesmo quando o cliente envia algo para as outras 3 classificações
+// (Design Notes da spec: "lado" é ignorado por completo nesse caso).
+type obraLinhaValidado struct {
+	Lado              sql.NullString
+	LocalObraID       string
+	SubgrupoDespesaID string
+	OrdemInvestimento string
+	Valor             float64
+}
+
 // AbrirSolicitacaoHandler — POST /api/solicitacoes. Registrado em main.go
 // atrás de RequireAuth(withDB(...), "") — qualquer perfil autenticado
 // (solicitante ou administrador), primeira rota do sistema sem exigir
@@ -138,12 +179,21 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Boundaries "Never" da spec: só "transferencia" (3.1),
-		// "inclusao_sfc" (3.2), "inclusao" (3.3) e "imobilizado" (3.4) têm
-		// handler até agora — qualquer outro valor (inclusive "obras",
-		// ainda não implementado) é 400, nunca um 501/404 que sugira "não
-		// existe rota" (a rota existe; o TIPO ainda não é suportado).
-		if req.TipoSolicitacao != "transferencia" && req.TipoSolicitacao != "inclusao_sfc" && req.TipoSolicitacao != "inclusao" && req.TipoSolicitacao != "imobilizado" {
+		// "inclusao_sfc" (3.2), "inclusao" (3.3), "imobilizado" (3.4) e
+		// "obras" (3.5) têm handler — qualquer outro valor é 400, nunca um
+		// 501/404 que sugira "não existe rota" (a rota existe; o TIPO ainda
+		// não é suportado).
+		if req.TipoSolicitacao != "transferencia" && req.TipoSolicitacao != "inclusao_sfc" && req.TipoSolicitacao != "inclusao" && req.TipoSolicitacao != "imobilizado" && req.TipoSolicitacao != "obras" {
 			jsonErr(w, http.StatusBadRequest, "tipo de solicitação não suportado ainda")
+			return
+		}
+
+		// Story 3.5: Obras não tem nenhum dos campos de divisão/CC/conta/
+		// mês que o pipeline de `lancamentos` abaixo exige — pipeline de
+		// validação própria, dentro do MESMO handler/endpoint (Boundaries
+		// "Never" da spec: nunca um 2º endpoint).
+		if req.TipoSolicitacao == "obras" {
+			abrirSolicitacaoObras(w, r, db, req)
 			return
 		}
 
@@ -348,14 +398,7 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		snapshot := map[string]interface{}{
-			"tipo":           aprovadorResolvido.Tipo,
-			"nome":           aprovadorResolvido.Nome,
-			"colaborador_id": aprovadorResolvido.ColaboradorID,
-			"motivo":         aprovadorResolvido.Motivo,
-			"regra_id":       aprovadorResolvido.RegraID,
-			"regra_versao":   aprovadorResolvido.RegraVersao,
-		}
+		snapshot := construirAprovadorSnapshot(aprovadorResolvido)
 		snapshotJSON, err := json.Marshal(snapshot)
 		if err != nil {
 			log.Printf("[Solicitacoes] Erro ao serializar aprovador_snapshot: %v", err)
@@ -645,6 +688,21 @@ func validarBalanceamento(linhas []lancamentoValidado) string {
 	return ""
 }
 
+// construirAprovadorSnapshot monta o `aprovador_snapshot` gravado em
+// solicitacoes a partir do Aprovador resolvido — mesmo shape para todos os
+// tipos de solicitação (lançamentos e obras), extraído para não duplicar o
+// literal entre os dois caminhos.
+func construirAprovadorSnapshot(a aprovacao.Aprovador) map[string]interface{} {
+	return map[string]interface{}{
+		"tipo":           a.Tipo,
+		"nome":           a.Nome,
+		"colaborador_id": a.ColaboradorID,
+		"motivo":         a.Motivo,
+		"regra_id":       a.RegraID,
+		"regra_versao":   a.RegraVersao,
+	}
+}
+
 func somaPorLado(linhas []lancamentoValidado, lado string) float64 {
 	var soma float64
 	for _, l := range linhas {
@@ -712,4 +770,345 @@ func validarPlanoConta(tx *sql.Tx, linhas []lancamentoValidado, planoEsperado, r
 		}
 	}
 	return "", nil
+}
+
+// --- Story 3.5: Abrir Obras multi-linha (FR-9/FR-11) ---
+
+// classificacaoTransferenciaSaldo é a única das 4 classificações de Obras
+// que exige os 2 blocos retirada/inclusão balanceados (I/O Matrix da spec);
+// as outras 3 ("inclusao", "fl", "retirada_saldo") ignoram `lado` por
+// completo (Design Notes da spec).
+const classificacaoTransferenciaSaldo = "transferencia_saldo"
+
+// classificacoesObrasValidas são os 4 valores aceitos para o campo
+// `classificacao` de uma solicitação de Obras (Design Notes da spec:
+// "retirada_saldo" é a 4ª classificação standalone; "retirada"/"inclusao"
+// são só os rótulos de `lado`, usados exclusivamente dentro de
+// "transferencia_saldo").
+var classificacoesObrasValidas = map[string]bool{
+	"inclusao":                      true,
+	"fl":                            true,
+	"retirada_saldo":                true,
+	classificacaoTransferenciaSaldo: true,
+}
+
+// abrirSolicitacaoObras é o caminho de tipo_solicitacao="obras" dentro do
+// MESMO handler/endpoint (AbrirSolicitacaoHandler nunca reimplementado,
+// Boundaries "Never" da spec) — roda um pipeline de validação próprio
+// (classificação + linhas por local de obra/subgrupo de despesa/ordem de
+// investimento, sem CC/filial/conta/mês) e grava em
+// `solicitacao_obras_linhas`, nunca em `solicitacao_lancamentos`. Qualquer
+// erro de validação ou ErrAutorizadorInvalido não grava nada (mesmo
+// invariante atômico do fluxo não-obras).
+func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, req abrirSolicitacaoRequest) {
+	// Story 3.3/3.4/3.5: autorizador_id (UUID) escolhido pelo solicitante —
+	// validado contra aprovadores_obra mais adiante, via AutorizadorNominal
+	// (nunca aqui — este handler só checa o FORMATO do campo).
+	if !uuidFormatRegexp.MatchString(req.AutorizadorID) {
+		jsonErr(w, http.StatusBadRequest, "campo 'autorizador_id' inválido")
+		return
+	}
+
+	if msgErro := validarClassificacaoObras(req.Classificacao); msgErro != "" {
+		jsonErr(w, http.StatusBadRequest, msgErro)
+		return
+	}
+
+	linhas, msgErro := validarObrasLinhasEstrutura(req.ObrasLinhas, req.Classificacao)
+	if msgErro != "" {
+		jsonErr(w, http.StatusBadRequest, msgErro)
+		return
+	}
+
+	if req.Classificacao == classificacaoTransferenciaSaldo {
+		if msgErro := validarBlocosObras(linhas); msgErro != "" {
+			jsonErr(w, http.StatusBadRequest, msgErro)
+			return
+		}
+	}
+
+	solicitanteID := GetUserIDFromContext(r)
+
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("[Solicitacoes] Erro ao iniciar transação (obras): %v", err)
+		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Boundaries "Never" da spec: Obras nunca checa CC/autorização de
+	// acesso (não existe CC para checar) — só existência de local de
+	// obra/subgrupo de despesa e, quando ordem_investimento != "CRIAR",
+	// existência da ordem + casamento com o local/subgrupo da linha.
+	msgErroLinhas, errServidor := validarLocalSubgrupoOrdemObras(tx, linhas)
+	if errServidor != nil {
+		log.Printf("[Solicitacoes] Erro ao validar local/subgrupo/ordem de obras: %v", errServidor)
+		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+		return
+	}
+	if msgErroLinhas != "" {
+		jsonErr(w, http.StatusBadRequest, msgErroLinhas)
+		return
+	}
+
+	// valorTotal para Obras é a soma de TODAS as linhas, sem distinguir
+	// lado (Code Map da spec), exceto para "transferencia_saldo" que usa o
+	// maior dos 2 lados — mesma convenção de Transferência.
+	valorTotal := somaTotalObras(linhas, req.Classificacao)
+
+	resolver, err := aprovacao.ResolverParaTipo("obras", tx)
+	if err != nil {
+		// Defensivo: o guard de tipo_solicitacao no topo do handler já
+		// filtra para os tipos suportados — este branch só seria
+		// alcançado se o guard e o dispatch do pacote aprovacao
+		// divergissem no futuro.
+		jsonErr(w, http.StatusBadRequest, "tipo de solicitação não suportado ainda")
+		return
+	}
+
+	aprovadorResolvido, err := resolver.Resolve(aprovacao.Solicitacao{
+		TipoSolicitacao:        "obras",
+		Valor:                  valorTotal,
+		AutorizadorEscolhidoID: req.AutorizadorID,
+	})
+	if err != nil {
+		// Obras nunca passa por ErrSemAlcadaCadastrada (isso é exclusivo de
+		// ResolverCalculado) — só ErrAutorizadorInvalido (teto individual,
+		// sem CC/faixa) é possível aqui.
+		var autorizadorInvalido *aprovacao.ErrAutorizadorInvalido
+		if errors.As(err, &autorizadorInvalido) {
+			log.Printf("[Solicitacoes] Autorizador de obras rejeitado (autorizador_id=%s)", req.AutorizadorID)
+			jsonErr(w, http.StatusBadRequest, autorizadorInvalido.Error())
+			return
+		}
+		log.Printf("[Solicitacoes] Erro ao resolver aprovador de obras: %v", err)
+		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+		return
+	}
+
+	snapshot := construirAprovadorSnapshot(aprovadorResolvido)
+	snapshotJSON, err := json.Marshal(snapshot)
+	if err != nil {
+		log.Printf("[Solicitacoes] Erro ao serializar aprovador_snapshot (obras): %v", err)
+		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+		return
+	}
+
+	// centro_custo_id fica NULL para obras (migration 009: CHECK XOR com
+	// classificacao torna essa relação um invariante de schema).
+	var solicitacaoID string
+	err = tx.QueryRow(`
+		INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, classificacao)
+		VALUES ('obras', $1, NULL, 'aberta', $2, 1, $3)
+		RETURNING id
+	`, solicitanteID, string(snapshotJSON), req.Classificacao).Scan(&solicitacaoID)
+	if err != nil {
+		log.Printf("[Solicitacoes] Erro ao inserir solicitacao (obras): %v", err)
+		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+		return
+	}
+
+	for _, l := range linhas {
+		if _, err := tx.Exec(`
+			INSERT INTO solicitacao_obras_linhas (solicitacao_id, lado, local_obra_id, subgrupo_despesa_id, ordem_investimento, valor)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, solicitacaoID, l.Lado, l.LocalObraID, l.SubgrupoDespesaID, l.OrdemInvestimento, l.Valor); err != nil {
+			log.Printf("[Solicitacoes] Erro ao inserir linha de obras (solicitacao=%s): %v", solicitacaoID, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("[Solicitacoes] Erro ao commitar abertura de solicitação de obras: %v", err)
+		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+		return
+	}
+
+	log.Printf("[Solicitacoes] %s abriu solicitação %s (tipo=obras, classificacao=%s, aprovador=%s/%s)",
+		solicitanteID, solicitacaoID, req.Classificacao, aprovadorResolvido.Tipo, aprovadorResolvido.Nome)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":                 solicitacaoID,
+		"tipo_solicitacao":   "obras",
+		"centro_custo_id":    nil,
+		"classificacao":      req.Classificacao,
+		"status":             "aberta",
+		"versao":             1,
+		"aprovador_snapshot": snapshot,
+	})
+}
+
+// validarClassificacaoObras checa que `classificacao` é um dos 4 valores do
+// Glossário de Obras — "campo 'classificacao' inválido" cobre tanto ausente
+// (string vazia) quanto qualquer valor fora da lista (I/O Matrix da spec).
+func validarClassificacaoObras(classificacao string) string {
+	if !classificacoesObrasValidas[classificacao] {
+		return "campo 'classificacao' inválido"
+	}
+	return ""
+}
+
+// validarObrasLinhasEstrutura valida cada linha isoladamente (formato de
+// UUID de local_obra_id/subgrupo_despesa_id, ordem_investimento não vazio,
+// valor>0) e, só para classificacao="transferencia_saldo", o campo `lado`
+// (I/O Matrix da spec: as outras 3 classificações ignoram `lado` por
+// completo — a linha validada sai sempre com Lado NULL nesse caso, mesmo
+// quando o cliente enviou algo).
+func validarObrasLinhasEstrutura(linhas []obraLinhaRequest, classificacao string) ([]obraLinhaValidado, string) {
+	if len(linhas) == 0 {
+		return nil, "a solicitação de obras precisa de ao menos uma linha"
+	}
+
+	validadas := make([]obraLinhaValidado, 0, len(linhas))
+	for i, l := range linhas {
+		n := i + 1
+
+		if !uuidFormatRegexp.MatchString(l.LocalObraID) {
+			return nil, fmt.Sprintf("linha %d: campo 'local_obra_id' inválido", n)
+		}
+		if !uuidFormatRegexp.MatchString(l.SubgrupoDespesaID) {
+			return nil, fmt.Sprintf("linha %d: campo 'subgrupo_despesa_id' inválido", n)
+		}
+		if strings.TrimSpace(l.OrdemInvestimento) == "" {
+			return nil, fmt.Sprintf("linha %d: campo 'ordem_investimento' obrigatório", n)
+		}
+		if l.Valor <= 0 {
+			return nil, fmt.Sprintf("linha %d: campo 'valor' deve ser maior que zero", n)
+		}
+
+		validada := obraLinhaValidado{
+			LocalObraID:       l.LocalObraID,
+			SubgrupoDespesaID: l.SubgrupoDespesaID,
+			OrdemInvestimento: strings.TrimSpace(l.OrdemInvestimento),
+			Valor:             l.Valor,
+		}
+
+		if classificacao == classificacaoTransferenciaSaldo {
+			if l.Lado != "retirada" && l.Lado != "inclusao" {
+				return nil, fmt.Sprintf(`linha %d: campo 'lado' deve ser 'retirada' ou 'inclusao'`, n)
+			}
+			validada.Lado = sql.NullString{String: l.Lado, Valid: true}
+		}
+
+		validadas = append(validadas, validada)
+	}
+	return validadas, ""
+}
+
+// validarBlocosObras checa, exclusivamente para classificacao=
+// "transferencia_saldo", que as linhas formam os 2 blocos (retirada e
+// inclusão) exigidos e que a soma de cada bloco bate dentro da MESMA
+// tolerância de Transferência (I/O Matrix da spec).
+func validarBlocosObras(linhas []obraLinhaValidado) string {
+	var somaRetirada, somaInclusao float64
+	var temRetirada, temInclusao bool
+	for _, l := range linhas {
+		if !l.Lado.Valid {
+			continue
+		}
+		switch l.Lado.String {
+		case "retirada":
+			somaRetirada += l.Valor
+			temRetirada = true
+		case "inclusao":
+			somaInclusao += l.Valor
+			temInclusao = true
+		}
+	}
+	if !temRetirada || !temInclusao {
+		return "transferência de saldo exige ao menos uma linha de retirada e uma de inclusão"
+	}
+	if math.Abs(somaRetirada-somaInclusao) > toleranciaBalanceamento {
+		return fmt.Sprintf(
+			"os dois lados da transferência de saldo não batem (retirada=%.2f, inclusao=%.2f) — tolerância de R$0,01",
+			somaRetirada, somaInclusao,
+		)
+	}
+	return ""
+}
+
+// validarLocalSubgrupoOrdemObras garante, dentro da MESMA transação que vai
+// gravar a solicitação, que toda linha referencia um local_obra_id/
+// subgrupo_despesa_id existente e, quando ordem_investimento != "CRIAR",
+// uma ordem já existente em obra_ordens cujo local/subgrupo casam com os da
+// linha (I/O Matrix da spec). ordem_investimento="CRIAR" pula a checagem de
+// obra_ordens por completo — nenhuma ordem é criada no SAP ou em
+// obra_ordens nesta etapa (Boundaries "Never" da spec, isso só acontece na
+// finalização, Epic 4). Devolve (msg 400, nil) para violação de regra de
+// negócio, (_, err) para erro de infraestrutura — mesmo padrão de
+// validarPlanoConta/validarClasseImobilizado.
+func validarLocalSubgrupoOrdemObras(tx *sql.Tx, linhas []obraLinhaValidado) (string, error) {
+	for i, l := range linhas {
+		n := i + 1
+
+		var existeLocal bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)`, l.LocalObraID).Scan(&existeLocal); err != nil {
+			return "", fmt.Errorf("checar local de obra %s: %w", l.LocalObraID, err)
+		}
+		if !existeLocal {
+			return fmt.Sprintf("linha %d: local de obra não encontrado", n), nil
+		}
+
+		var existeSubgrupo bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM subgrupos_despesa WHERE id = $1)`, l.SubgrupoDespesaID).Scan(&existeSubgrupo); err != nil {
+			return "", fmt.Errorf("checar subgrupo de despesa %s: %w", l.SubgrupoDespesaID, err)
+		}
+		if !existeSubgrupo {
+			return fmt.Sprintf("linha %d: subgrupo de despesa não encontrado", n), nil
+		}
+
+		if l.OrdemInvestimento == "CRIAR" {
+			continue
+		}
+
+		var ordemLocalObraID, ordemSubgrupoDespesaID string
+		err := tx.QueryRow(`
+			SELECT local_obra_id, subgrupo_despesa_id FROM obra_ordens WHERE numero_ordem = $1
+		`, l.OrdemInvestimento).Scan(&ordemLocalObraID, &ordemSubgrupoDespesaID)
+		if err == sql.ErrNoRows {
+			return fmt.Sprintf("linha %d: ordem de investimento não encontrada", n), nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("checar ordem de investimento %s: %w", l.OrdemInvestimento, err)
+		}
+		if !strings.EqualFold(ordemLocalObraID, l.LocalObraID) || !strings.EqualFold(ordemSubgrupoDespesaID, l.SubgrupoDespesaID) {
+			return fmt.Sprintf("linha %d: ordem de investimento não pertence ao local de obra/subgrupo de despesa informado", n), nil
+		}
+	}
+	return "", nil
+}
+
+// somaTotalObras soma o valor das linhas de Obras. Para as 3 classificações
+// standalone ("inclusao", "fl", "retirada_saldo") é a soma de TODAS as
+// linhas, sem distinguir lado (Code Map da spec). Para
+// "transferencia_saldo", porém, o valor de fato movimentado é o maior dos 2
+// blocos (retirada/inclusão) — mesma convenção de Transferência via
+// somaPorLado+math.Max — e não a soma das linhas dos dois lados, que
+// dobraria o valor usado para resolver a alçada do aprovador.
+func somaTotalObras(linhas []obraLinhaValidado, classificacao string) float64 {
+	if classificacao == classificacaoTransferenciaSaldo {
+		var somaRetirada, somaInclusao float64
+		for _, l := range linhas {
+			if !l.Lado.Valid {
+				continue
+			}
+			switch l.Lado.String {
+			case "retirada":
+				somaRetirada += l.Valor
+			case "inclusao":
+				somaInclusao += l.Valor
+			}
+		}
+		return math.Max(somaRetirada, somaInclusao)
+	}
+
+	var soma float64
+	for _, l := range linhas {
+		soma += l.Valor
+	}
+	return soma
 }

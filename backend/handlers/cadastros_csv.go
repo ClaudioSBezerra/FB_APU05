@@ -229,6 +229,39 @@ func resolveCentroCustoIDPorCodigo(tx *sql.Tx, codigo string) (string, error) {
 	return id, nil
 }
 
+// resolveLocalObraIDPorCodigo traduz local_obra_codigo (coluna do CSV de
+// obra-ordens, Story 3.5) para local_obra_id consultando `locais_obra`
+// dentro da MESMA transação do import — comparação case-insensitive, mesmo
+// padrão de resolveCentroCustoIDPorCodigo. Não encontrado -> rejeita a linha
+// citando a causa.
+func resolveLocalObraIDPorCodigo(tx *sql.Tx, codigo string) (string, error) {
+	var id string
+	err := tx.QueryRow(`SELECT id FROM locais_obra WHERE UPPER(codigo) = UPPER($1)`, codigo).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("local de obra com código %q não encontrado", codigo)
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// resolveSubgrupoDespesaIDPorCodigo traduz subgrupo_despesa_codigo (coluna
+// do CSV de obra-ordens, Story 3.5) para subgrupo_despesa_id consultando
+// `subgrupos_despesa` dentro da MESMA transação do import — mesmo padrão de
+// resolveLocalObraIDPorCodigo.
+func resolveSubgrupoDespesaIDPorCodigo(tx *sql.Tx, codigo string) (string, error) {
+	var id string
+	err := tx.QueryRow(`SELECT id FROM subgrupos_despesa WHERE UPPER(codigo) = UPPER($1)`, codigo).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("subgrupo de despesa com código %q não encontrado", codigo)
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 // --- DecodeCSV por tipo — devolvem valores na MESMA ordem de
 // cadastroTipo.Colunas (ver registry em cadastros.go) ---
 
@@ -532,4 +565,110 @@ func decodeCSVAutorizadoresFormulario(tx *sql.Tx, linha []string) ([]interface{}
 		return nil, err
 	}
 	return []interface{}{centroCustoCodigo, valorMinimo, valorMaximo, colaboradorID, ativo}, nil
+}
+
+// decodeCSVLocaisObra/decodeCSVSubgruposDespesa (Story 3.5, FR-9/FR-11) —
+// mesmo padrão simples de decodeCSVClassesImobilizado (código + nome, sem
+// FK).
+func decodeCSVLocaisObra(_ *sql.Tx, linha []string) ([]interface{}, error) {
+	codigo, err := campoObrigatorio(linha[0], "codigo")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarTamanhoCampo(codigo, "codigo", 50); err != nil {
+		return nil, err
+	}
+	nome, err := campoObrigatorio(linha[1], "nome")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarTamanhoCampo(nome, "nome", 255); err != nil {
+		return nil, err
+	}
+	return []interface{}{codigo, nome}, nil
+}
+
+func decodeCSVSubgruposDespesa(_ *sql.Tx, linha []string) ([]interface{}, error) {
+	codigo, err := campoObrigatorio(linha[0], "codigo")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarTamanhoCampo(codigo, "codigo", 50); err != nil {
+		return nil, err
+	}
+	nome, err := campoObrigatorio(linha[1], "nome")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarTamanhoCampo(nome, "nome", 255); err != nil {
+		return nil, err
+	}
+	return []interface{}{codigo, nome}, nil
+}
+
+// decodeCSVObraOrdens (Story 3.5) resolve local_obra_codigo/
+// subgrupo_despesa_codigo -> local_obra_id/subgrupo_despesa_id, mesmo padrão
+// de decodeCSVCentrosCusto (divisao_codigo -> divisao_id).
+// tipo_despesa/tipo_faturamento são opcionais (vazio -> NULL).
+func decodeCSVObraOrdens(tx *sql.Tx, linha []string) ([]interface{}, error) {
+	numeroOrdem, err := campoObrigatorio(linha[0], "numero_ordem")
+	if err != nil {
+		return nil, err
+	}
+	if err := validarTamanhoCampo(numeroOrdem, "numero_ordem", 50); err != nil {
+		return nil, err
+	}
+	localObraCodigo, err := campoObrigatorio(linha[1], "local_obra_codigo")
+	if err != nil {
+		return nil, err
+	}
+	localObraID, err := resolveLocalObraIDPorCodigo(tx, localObraCodigo)
+	if err != nil {
+		return nil, err
+	}
+	subgrupoDespesaCodigo, err := campoObrigatorio(linha[2], "subgrupo_despesa_codigo")
+	if err != nil {
+		return nil, err
+	}
+	subgrupoDespesaID, err := resolveSubgrupoDespesaIDPorCodigo(tx, subgrupoDespesaCodigo)
+	if err != nil {
+		return nil, err
+	}
+	tipoDespesa := parseStringOpcional(linha[3])
+	if s, ok := tipoDespesa.(string); ok {
+		if err := validarTamanhoCampo(s, "tipo_despesa", 100); err != nil {
+			return nil, err
+		}
+	}
+	tipoFaturamento := parseStringOpcional(linha[4])
+	if s, ok := tipoFaturamento.(string); ok {
+		if err := validarTamanhoCampo(s, "tipo_faturamento", 100); err != nil {
+			return nil, err
+		}
+	}
+	return []interface{}{numeroOrdem, localObraID, subgrupoDespesaID, tipoDespesa, tipoFaturamento}, nil
+}
+
+// decodeCSVAprovadoresObra (Story 3.5) resolve colaborador_email ->
+// colaborador_id (usuarios), mesmo padrão OBRIGATÓRIO de
+// decodeCSVAutorizadoresFormulario (sempre pessoa, nunca cargo). Sem
+// centro_custo_codigo/faixa — só teto individual.
+func decodeCSVAprovadoresObra(tx *sql.Tx, linha []string) ([]interface{}, error) {
+	email, err := campoObrigatorio(linha[0], "colaborador_email")
+	if err != nil {
+		return nil, err
+	}
+	colaboradorID, err := resolveColaboradorIDPorEmail(tx, email)
+	if err != nil {
+		return nil, err
+	}
+	teto, err := parseNumeroObrigatorio(linha[1])
+	if err != nil {
+		return nil, err
+	}
+	ativo, err := parseBoolCSV(linha[2])
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{colaboradorID, teto, ativo}, nil
 }

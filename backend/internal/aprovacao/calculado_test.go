@@ -248,13 +248,14 @@ func TestResolve_SemAlcadaCadastrada(t *testing.T) {
 }
 
 // TestResolverParaTipo cobre a fábrica de dispatch — "transferencia"/
-// "inclusao_sfc" (ResolverCalculado), "inclusao"/"imobilizado"
-// (AutorizadorNominal, Stories 3.3/3.4) e "obras" (ainda não suportado).
+// "inclusao_sfc" (ResolverCalculado), "inclusao"/"imobilizado"/"obras"
+// (AutorizadorNominal, Stories 3.3/3.4/3.5) e um tipo fora do Glossário
+// inteiro (ErrTipoNaoSuportado).
 func TestResolverParaTipo(t *testing.T) {
 	db, _, closeFn := newAprovacaoSQLMock(t)
 	defer closeFn()
 
-	if _, err := ResolverParaTipo("obras", db); err != ErrTipoNaoSuportado {
+	if _, err := ResolverParaTipo("doacao", db); err != ErrTipoNaoSuportado {
 		t.Fatalf("esperado ErrTipoNaoSuportado, obtido %v", err)
 	}
 	resolver, err := ResolverParaTipo("transferencia", db)
@@ -287,5 +288,17 @@ func TestResolverParaTipo(t *testing.T) {
 	}
 	if _, ok := resolverImobilizado.(*AutorizadorNominal); !ok {
 		t.Fatalf("esperado *AutorizadorNominal para 'imobilizado', obtido %T", resolverImobilizado)
+	}
+
+	// Story 3.5: "obras" mapeia para a MESMA instância/tipo concreto
+	// *AutorizadorNominal que "inclusao"/"imobilizado" — AD-2 continua com
+	// exatamente 2 implementações de Resolver, nunca um 3º tipo (Design
+	// Notes da spec 3.5).
+	resolverObras, err := ResolverParaTipo("obras", db)
+	if err != nil || resolverObras == nil {
+		t.Fatalf("esperado Resolver não-nil sem erro para 'obras', obtido resolver=%v err=%v", resolverObras, err)
+	}
+	if _, ok := resolverObras.(*AutorizadorNominal); !ok {
+		t.Fatalf("esperado *AutorizadorNominal para 'obras', obtido %T", resolverObras)
 	}
 }

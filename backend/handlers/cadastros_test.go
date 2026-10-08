@@ -1781,3 +1781,455 @@ func TestAtualizarCadastroHandler_AutorizadoresFormulario_ColaboradorIDInvalido(
 		t.Fatalf("corpo não cita o campo inválido: %s", rec.Body.String())
 	}
 }
+
+// --- Story 3.5 — "locais-obra"/"subgrupos-despesa"/"obra-ordens"/
+// "aprovadores-obra" (FR-9/FR-11) ---
+
+// TestImportarCadastroHandler_LocaisObra_Success cobre o caminho feliz de
+// "locais-obra" — mesmo padrão simples de "divisoes"/"classes-imobilizado"
+// (código + nome, sem FK).
+func TestImportarCadastroHandler_LocaisObra_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const registroID = "e0000000-0000-0000-0000-000000000001"
+	csv := "codigo;nome\n" +
+		"LO1;Obra Matriz\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_locais-obra").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta(
+		"INSERT INTO locais_obra (codigo, nome) VALUES ($1, $2) RETURNING id",
+	)).
+		WithArgs("LO1", "Obra Matriz").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(registroID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("locais-obra", registroID, `{"codigo":"LO1","nome":"Obra Matriz"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "locais-obra", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"importados":1`) {
+		t.Fatalf("corpo não indica 1 importado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_SubgruposDespesa_Success cobre o caminho
+// feliz de "subgrupos-despesa" — mesmo padrão simples de "locais-obra".
+func TestImportarCadastroHandler_SubgruposDespesa_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const registroID = "e0000000-0000-0000-0000-000000000002"
+	csv := "codigo;nome\n" +
+		"SG1;Mão de obra\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_subgrupos-despesa").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta(
+		"INSERT INTO subgrupos_despesa (codigo, nome) VALUES ($1, $2) RETURNING id",
+	)).
+		WithArgs("SG1", "Mão de obra").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(registroID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("subgrupos-despesa", registroID, `{"codigo":"SG1","nome":"Mão de obra"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "subgrupos-despesa", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"importados":1`) {
+		t.Fatalf("corpo não indica 1 importado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_ObraOrdens_Success cobre o caminho feliz de
+// "obra-ordens": local_obra_codigo/subgrupo_despesa_codigo resolvidos para
+// local_obra_id/subgrupo_despesa_id dentro da MESMA transação do import
+// (mesmo padrão de "centros-custo"/divisao_codigo), tipo_despesa/
+// tipo_faturamento preenchidos.
+func TestImportarCadastroHandler_ObraOrdens_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const localObraID = "e0000000-0000-0000-0000-000000000003"
+	const subgrupoDespesaID = "e0000000-0000-0000-0000-000000000004"
+	const registroID = "e0000000-0000-0000-0000-000000000005"
+	csv := "numero_ordem;local_obra_codigo;subgrupo_despesa_codigo;tipo_despesa;tipo_faturamento\n" +
+		"OI-001;LO1;SG1;Reforma;Direto\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_obra-ordens").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM obra_ordens)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM locais_obra WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("LO1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(localObraID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM subgrupos_despesa WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("SG1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(subgrupoDespesaID))
+	mock.ExpectQuery(regexp.QuoteMeta(
+		"INSERT INTO obra_ordens (numero_ordem, local_obra_id, subgrupo_despesa_id, tipo_despesa, tipo_faturamento) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+	)).
+		WithArgs("OI-001", localObraID, subgrupoDespesaID, "Reforma", "Direto").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(registroID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs(
+			"obra-ordens", registroID,
+			`{"local_obra_id":"`+localObraID+`","numero_ordem":"OI-001","subgrupo_despesa_id":"`+subgrupoDespesaID+`","tipo_despesa":"Reforma","tipo_faturamento":"Direto"}`,
+			testAtorID,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "obra-ordens", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"importados":1`) {
+		t.Fatalf("corpo não indica 1 importado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_ObraOrdens_LocalObraNaoEncontrado cobre
+// local_obra_codigo sem locais_obra correspondente -> nada é escrito, 400
+// citando a linha/causa (mesmo padrão de centros-custo/divisao_codigo).
+func TestImportarCadastroHandler_ObraOrdens_LocalObraNaoEncontrado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "numero_ordem;local_obra_codigo;subgrupo_despesa_codigo;tipo_despesa;tipo_faturamento\n" +
+		"OI-001;LO-INEXISTENTE;SG1;Reforma;Direto\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_obra-ordens").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM obra_ordens)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM locais_obra WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("LO-INEXISTENTE").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "obra-ordens", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 2") || !strings.Contains(rec.Body.String(), "não encontrado") {
+		t.Fatalf("corpo não cita a linha/causa da rejeição: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nenhum INSERT deveria ter sido tentado): %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_AprovadoresObra_Success cobre o caminho feliz
+// de "aprovadores-obra" — colaborador_email resolvido -> colaborador_id,
+// mesmo padrão OBRIGATÓRIO de "autorizadores-formulario", mas sem
+// centro_custo_codigo/faixa — só teto individual.
+func TestImportarCadastroHandler_AprovadoresObra_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const colaboradorID = "e0000000-0000-0000-0000-000000000006"
+	const registroID = "e0000000-0000-0000-0000-000000000007"
+	csv := "colaborador_email;teto;ativo\n" +
+		"fulano@exemplo.com;50000;true\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_aprovadores-obra").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM aprovadores_obra)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("fulano@exemplo.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(colaboradorID))
+	mock.ExpectQuery(regexp.QuoteMeta(
+		"INSERT INTO aprovadores_obra (colaborador_id, teto, ativo) VALUES ($1, $2, $3) RETURNING id",
+	)).
+		WithArgs(colaboradorID, 50000.0, true).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(registroID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs(
+			"aprovadores-obra", registroID,
+			`{"ativo":true,"colaborador_id":"`+colaboradorID+`","teto":50000}`,
+			testAtorID,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "aprovadores-obra", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"importados":1`) {
+		t.Fatalf("corpo não indica 1 importado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_AprovadoresObra_EmailNaoEncontrado cobre
+// colaborador_email sem usuarios correspondente -> nada é escrito, 400
+// citando a linha (mesmo padrão de autorizadores-formulario).
+func TestImportarCadastroHandler_AprovadoresObra_EmailNaoEncontrado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "colaborador_email;teto;ativo\n" +
+		"fulano@exemplo.com;50000;true\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_aprovadores-obra").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM aprovadores_obra)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("fulano@exemplo.com").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "aprovadores-obra", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "linha 2") || !strings.Contains(rec.Body.String(), "não encontrado") {
+		t.Fatalf("corpo não cita a linha/causa da rejeição: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nenhum INSERT deveria ter sido tentado): %v", err)
+	}
+}
+
+// TestAtualizarCadastroHandler_AprovadoresObra_ColaboradorIDAusente cobre
+// decodeJSONAprovadoresObra rejeitando corpo sem 'colaborador_id' -> 400,
+// nenhuma query tentada (mesmo padrão de autorizadores-formulario).
+func TestAtualizarCadastroHandler_AprovadoresObra_ColaboradorIDAusente(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	const registroID = "e0000000-0000-0000-0000-000000000008"
+	body := `{"teto":50000,"ativo":true}`
+	req := newCadastroRequest(http.MethodPut, "aprovadores-obra", registroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "colaborador_id") {
+		t.Fatalf("corpo não cita o campo ausente: %s", rec.Body.String())
+	}
+}
+
+// TestAtualizarCadastroHandler_AprovadoresObra_ColaboradorIDInvalido cobre
+// decodeJSONAprovadoresObra rejeitando 'colaborador_id' que não bate com o
+// formato UUID -> 400.
+func TestAtualizarCadastroHandler_AprovadoresObra_ColaboradorIDInvalido(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	const registroID = "e0000000-0000-0000-0000-000000000008"
+	body := `{"colaborador_id":"nao-e-um-uuid","teto":50000,"ativo":true}`
+	req := newCadastroRequest(http.MethodPut, "aprovadores-obra", registroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "colaborador_id") {
+		t.Fatalf("corpo não cita o campo inválido: %s", rec.Body.String())
+	}
+}
+
+// TestAtualizarCadastroHandler_LocaisObra_Success cobre o caminho feliz de
+// PUT para "locais-obra" (decodeJSONLocaisObra) — nenhum teste deste
+// arquivo exercitava PUT para este tipo antes deste (só a carga CSV via
+// ImportarCadastroHandler).
+func TestAtualizarCadastroHandler_LocaisObra_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM locais_obra WHERE id = $1 FOR UPDATE")).
+		WithArgs(testCadastroID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCadastroID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 0) + 1 FROM cadastro_historico WHERE tipo_cadastro = $1 AND registro_id = $2")).
+		WithArgs("locais-obra", testCadastroID).
+		WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(2))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE locais_obra SET codigo = $1, nome = $2, updated_at = now() WHERE id = $3")).
+		WithArgs("LO1-novo", "Local Um Renomeado", testCadastroID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("locais-obra", testCadastroID, 2, `{"codigo":"LO1-novo","nome":"Local Um Renomeado"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := AtualizarCadastroHandler(db)
+	body := `{"codigo":"LO1-novo","nome":"Local Um Renomeado"}`
+	req := newCadastroRequest(http.MethodPut, "locais-obra", testCadastroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAtualizarCadastroHandler_SubgruposDespesa_Success cobre o caminho
+// feliz de PUT para "subgrupos-despesa" (decodeJSONSubgruposDespesa) —
+// mesmo padrão de LocaisObra acima.
+func TestAtualizarCadastroHandler_SubgruposDespesa_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM subgrupos_despesa WHERE id = $1 FOR UPDATE")).
+		WithArgs(testCadastroID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCadastroID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 0) + 1 FROM cadastro_historico WHERE tipo_cadastro = $1 AND registro_id = $2")).
+		WithArgs("subgrupos-despesa", testCadastroID).
+		WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(2))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE subgrupos_despesa SET codigo = $1, nome = $2, updated_at = now() WHERE id = $3")).
+		WithArgs("SG1-novo", "Subgrupo Um Renomeado", testCadastroID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("subgrupos-despesa", testCadastroID, 2, `{"codigo":"SG1-novo","nome":"Subgrupo Um Renomeado"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := AtualizarCadastroHandler(db)
+	body := `{"codigo":"SG1-novo","nome":"Subgrupo Um Renomeado"}`
+	req := newCadastroRequest(http.MethodPut, "subgrupos-despesa", testCadastroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAtualizarCadastroHandler_ObraOrdens_Success cobre o caminho feliz de
+// PUT para "obra-ordens" (decodeJSONObraOrdens) com local_obra_id/
+// subgrupo_despesa_id já resolvidos (UUID) no corpo, mesmo padrão de
+// decodeJSONCentrosCusto.
+func TestAtualizarCadastroHandler_ObraOrdens_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const localObraID = "33333333-3333-3333-3333-333333333333"
+	const subgrupoDespesaID = "55555555-5555-5555-5555-555555555555"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM obra_ordens WHERE id = $1 FOR UPDATE")).
+		WithArgs(testCadastroID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCadastroID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 0) + 1 FROM cadastro_historico WHERE tipo_cadastro = $1 AND registro_id = $2")).
+		WithArgs("obra-ordens", testCadastroID).
+		WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(2))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE obra_ordens SET numero_ordem = $1, local_obra_id = $2, subgrupo_despesa_id = $3, tipo_despesa = $4, tipo_faturamento = $5, updated_at = now() WHERE id = $6")).
+		WithArgs("OI-001-novo", localObraID, subgrupoDespesaID, "Manutenção", "Direto", testCadastroID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("obra-ordens", testCadastroID, 2, `{"local_obra_id":"`+localObraID+`","numero_ordem":"OI-001-novo","subgrupo_despesa_id":"`+subgrupoDespesaID+`","tipo_despesa":"Manutenção","tipo_faturamento":"Direto"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := AtualizarCadastroHandler(db)
+	body := `{"numero_ordem":"OI-001-novo","local_obra_id":"` + localObraID + `","subgrupo_despesa_id":"` + subgrupoDespesaID + `","tipo_despesa":"Manutenção","tipo_faturamento":"Direto"}`
+	req := newCadastroRequest(http.MethodPut, "obra-ordens", testCadastroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAtualizarCadastroHandler_ObraOrdens_LocalObraIDInvalido cobre
+// decodeJSONObraOrdens rejeitando 'local_obra_id' que não bate com o
+// formato UUID -> 400, nenhuma query tentada (mesmo padrão de
+// AprovadoresObra_ColaboradorIDInvalido).
+func TestAtualizarCadastroHandler_ObraOrdens_LocalObraIDInvalido(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	const subgrupoDespesaID = "55555555-5555-5555-5555-555555555555"
+	body := `{"numero_ordem":"OI-001","local_obra_id":"nao-e-um-uuid","subgrupo_despesa_id":"` + subgrupoDespesaID + `","tipo_despesa":null,"tipo_faturamento":null}`
+	req := newCadastroRequest(http.MethodPut, "obra-ordens", testCadastroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "local_obra_id") {
+		t.Fatalf("corpo não cita o campo inválido: %s", rec.Body.String())
+	}
+}
+
+// TestAtualizarCadastroHandler_ObraOrdens_SubgrupoDespesaIDInvalido cobre o
+// mesmo caminho de rejeição acima, mas para 'subgrupo_despesa_id' —
+// complementa a cobertura do par de UUIDs validados por decodeJSONObraOrdens.
+func TestAtualizarCadastroHandler_ObraOrdens_SubgrupoDespesaIDInvalido(t *testing.T) {
+	handler := AtualizarCadastroHandler(nil)
+	const localObraID = "33333333-3333-3333-3333-333333333333"
+	body := `{"numero_ordem":"OI-001","local_obra_id":"` + localObraID + `","subgrupo_despesa_id":"nao-e-um-uuid","tipo_despesa":null,"tipo_faturamento":null}`
+	req := newCadastroRequest(http.MethodPut, "obra-ordens", testCadastroID, body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "subgrupo_despesa_id") {
+		t.Fatalf("corpo não cita o campo inválido: %s", rec.Body.String())
+	}
+}
