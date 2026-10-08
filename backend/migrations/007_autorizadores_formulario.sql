@@ -33,8 +33,10 @@ CREATE TABLE IF NOT EXISTS autorizadores_formulario (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Índice composto cobrindo a consulta real de AutorizadorNominal.Resolve
--- (ativo + centro_custo_codigo + colaborador_id, mais a faixa de valor) —
--- mesmo fix já aplicado a `regras_aprovacao` na Story 3.1 para a lacuna
--- idêntica (2 índices de coluna única não cobrem a busca combinada).
+-- Índice composto cobrindo as 2 colunas de igualdade da consulta real de
+-- AutorizadorNominal.Resolve (centro_custo_codigo + colaborador_id);
+-- `ativo` e a faixa de valor seguem filtrados em cima dos candidatos que
+-- este índice já restringe, não indexados por si — mesmo fix já aplicado a
+-- `regras_aprovacao` na Story 3.1 para a lacuna idêntica (2 índices de
+-- coluna única não cobrem a busca combinada).
 CREATE INDEX IF NOT EXISTS idx_autorizadores_formulario_busca ON autorizadores_formulario (centro_custo_codigo, colaborador_id);

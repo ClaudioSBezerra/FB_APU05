@@ -193,6 +193,38 @@ func TestAutorizadorNominal_ErroAoBuscarVersao(t *testing.T) {
 	}
 }
 
+// TestAutorizadorNominal_DesempateDeterministico guarda a cláusula
+// `ORDER BY valor_minimo DESC, id` da consulta principal (Review Triage Log
+// da spec 3.3: sem ela, 2 linhas ativas cobrindo o mesmo CC+colaborador+
+// faixa de valor fariam RegraID/RegraVersao não-determinísticos no
+// aprovador_snapshot de auditoria). sqlmock não executa SQL de fato — não
+// ordena linhas devolvidas por WillReturnRows — então a única forma de
+// travar esse desempate num teste de unidade é exigir que a query enviada
+// ao banco contenha a cláusula: se um refactor futuro remover o ORDER BY, o
+// regex abaixo deixa de casar e o mock falha a expectativa.
+func TestAutorizadorNominal_DesempateDeterministico(t *testing.T) {
+	db, mock, closeFn := newAprovacaoSQLMock(t)
+	defer closeFn()
+
+	mock.ExpectQuery(`FROM autorizadores_formulario[\s\S]*ORDER BY valor_minimo DESC, id[\s\S]*LIMIT 1`).
+		WithArgs("CC1", "colab-1", 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("regra-1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico")).
+		WithArgs("autorizadores-formulario", "regra-1").
+		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT nome FROM usuarios WHERE id = $1")).
+		WithArgs("colab-1").
+		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Fulano Autorizador"))
+
+	nominal := NovoAutorizadorNominal(db)
+	if _, err := nominal.Resolve(baseSolicitacaoNominal()); err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (a query perdeu o ORDER BY?): %v", err)
+	}
+}
+
 // TestAutorizadorNominal_ErroAoBuscarNome cobre a falha de nomeColaborador
 // após o match principal e a versão resolvida.
 func TestAutorizadorNominal_ErroAoBuscarNome(t *testing.T) {

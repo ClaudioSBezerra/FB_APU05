@@ -733,6 +733,27 @@ func TestAbrirSolicitacaoHandler_Inclusao_ValorInvalido(t *testing.T) {
 	}
 }
 
+func TestAbrirSolicitacaoHandler_Inclusao_ZeroLinhas(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoInclusao(testSolicitacaoAutorizadorID, "")
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Inclusão aceita apenas uma linha") {
+		t.Fatalf("corpo não cita a restrição de contagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
 func TestAbrirSolicitacaoHandler_Inclusao_MaisDeUmaLinha(t *testing.T) {
 	db, mock := newSQLMock(t)
 
