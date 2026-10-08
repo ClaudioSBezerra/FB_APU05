@@ -82,3 +82,19 @@ source_spec: `spec-3-4-abrir-imobilizado-com-anexo-de-cotacao.md`
 severity: low
 reason: Confirmado pela camada verification-gap: grep no repositório mostra que nenhuma migration (001-007 inclusive, já existentes antes desta story) é testada contra um Postgres real em nenhum lugar da suite; go test ./... só usa sqlmock. Mesmo padrão sistêmico pré-existente, não introduzido por esta story — só a constraint em si (nova) herda a lacuna já presente em todas as migrations anteriores.
 status: open
+
+### DW-9: `locais_obra`/`subgrupos_despesa` resolvem `codigo` case-insensitive (`UPPER(codigo)`) contra uma constraint UNIQUE case-sensitive, então duas linhas cujo código difere só na caixa produziriam
+origin: spec-deferred 5ea04dac0952
+location: backend/handlers/cadastros_csv.go (resolveLocalObraIDPorCodigo/resolveSubgrupoDespesaIDPorCodigo)
+source_spec: `spec-3-5-abrir-obras-multi-linha.md`
+severity: low
+reason: Confirmado por leitura (`resolveLocalObraIDPorCodigo`/ `resolveSubgrupoDespesaIDPorCodigo`, cadastros_csv.go), mas é o MESMO padrão já existente em `centros_custo`/`resolveCentroCustoIDPorCodigo` (migration 003, Story 2.1), fielmente replicado aqui — não introduzido por esta story.
+status: open
+
+### DW-10: Nenhuma checagem de positividade em `aprovadores_obra.teto` no decode CSV/JSON.
+origin: spec-deferred 6c061d679c5f
+location: backend/handlers/cadastros.go (decodeJSONAprovadoresObra), backend/handlers/cadastros_csv.go (decodeCSVAprovadoresObra)
+source_spec: `spec-3-5-abrir-obras-multi-linha.md`
+severity: low
+reason: Confirmado por leitura, mas nenhum campo numérico em todo o registry de cadastros (`valor_minimo`/`valor_maximo`/`teto` de `gerentes_aprovacao`, etc.) tem essa checagem — convenção sistêmica já estabelecida, não uma lacuna específica desta story.
+status: open
