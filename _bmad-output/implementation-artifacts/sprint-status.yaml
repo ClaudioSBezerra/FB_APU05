@@ -56,7 +56,7 @@ development_status:
   epic-3-retrospective: optional
 
   epic-4: backlog
-  4-1-assumir-solicitação-da-fila: backlog
+  4-1-assumir-solicitação-da-fila: done
   4-2-pendência-e-reabertura: backlog
   4-3-gerar-lote-despesa: backlog
   4-4-gerar-lote-obra: backlog
