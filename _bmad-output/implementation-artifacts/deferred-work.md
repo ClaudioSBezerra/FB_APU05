@@ -74,3 +74,11 @@ source_spec: `spec-3-3-abrir-inclusao-com-autorizador-nominal.md`
 severity: low
 reason: Confirmado por leitura do teste — só tipo/nome do aprovador são checados no body. Mesmo padrão em todos os testes de sucesso do arquivo, para todos os tipos (transferencia/inclusao_sfc/inclusao); não introduzido por esta story.
 status: open
+
+### DW-8: Nenhum teste exercita o CHECK `chk_lancamento_conta_xor_classe` (nem qualquer outra constraint da migration 008) contra um Postgres real — toda a cobertura é via sqlmock.
+origin: spec-deferred 4d7ca531ea7b
+location: backend/migrations/008_solicitacao_anexos_e_classe_imobilizado.sql (chk_lancamento_conta_xor_classe)
+source_spec: `spec-3-4-abrir-imobilizado-com-anexo-de-cotacao.md`
+severity: low
+reason: Confirmado pela camada verification-gap: grep no repositório mostra que nenhuma migration (001-007 inclusive, já existentes antes desta story) é testada contra um Postgres real em nenhum lugar da suite; go test ./... só usa sqlmock. Mesmo padrão sistêmico pré-existente, não introduzido por esta story — só a constraint em si (nova) herda a lacuna já presente em todas as migrations anteriores.
+status: open

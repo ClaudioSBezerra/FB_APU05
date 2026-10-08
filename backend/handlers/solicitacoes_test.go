@@ -9,6 +9,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,13 +24,14 @@ import (
 )
 
 const (
-	testSolicitacaoCentroCustoID = "cc000000-0000-0000-0000-000000000001"
-	testSolicitacaoDivisaoID     = "dd000000-0000-0000-0000-000000000002"
-	testSolicitacaoContaOrigem   = "ca000000-0000-0000-0000-000000000001"
-	testSolicitacaoContaDestino  = "ca000000-0000-0000-0000-000000000002"
-	testSolicitacaoContaSFC      = "ca000000-0000-0000-0000-000000000003"
-	testSolicitacaoContaBIFC     = "ca000000-0000-0000-0000-000000000004"
-	testSolicitacaoAutorizadorID = "aa000000-0000-0000-0000-000000000001"
+	testSolicitacaoCentroCustoID       = "cc000000-0000-0000-0000-000000000001"
+	testSolicitacaoDivisaoID           = "dd000000-0000-0000-0000-000000000002"
+	testSolicitacaoContaOrigem         = "ca000000-0000-0000-0000-000000000001"
+	testSolicitacaoContaDestino        = "ca000000-0000-0000-0000-000000000002"
+	testSolicitacaoContaSFC            = "ca000000-0000-0000-0000-000000000003"
+	testSolicitacaoContaBIFC           = "ca000000-0000-0000-0000-000000000004"
+	testSolicitacaoAutorizadorID       = "aa000000-0000-0000-0000-000000000001"
+	testSolicitacaoClasseImobilizadoID = "ce000000-0000-0000-0000-000000000001"
 )
 
 // newSolicitacaoRequest monta uma requisição POST com claims de solicitante
@@ -67,16 +71,61 @@ func linhaJSON(lado, divisaoID, centroCustoID, contaID, mes string, valor float6
 	)
 }
 
+// corpoImobilizado monta o corpo de uma Imobilizado (Story 3.4, anexo de
+// cotação) — análogo a corpoInclusao (autorizador_id no nível da
+// solicitação), mas com uma lista `anexos` adicional, também no nível da
+// solicitação.
+func corpoImobilizado(autorizadorID, lancamentosJSON, anexosJSON string) string {
+	return fmt.Sprintf(
+		`{"tipo_solicitacao":"imobilizado","autorizador_id":%q,"lancamentos":[%s],"anexos":[%s]}`,
+		autorizadorID, lancamentosJSON, anexosJSON,
+	)
+}
+
+// linhaImobilizadoJSON é o análogo de linhaJSON para Imobilizado —
+// classe_imobilizado_id no lugar de conta_id/mes (Boundaries "Never" da spec
+// 3.4: nenhum campo de fornecedor/mês é exposto para este tipo).
+func linhaImobilizadoJSON(lado, divisaoID, centroCustoID, classeImobilizadoID string, valor float64) string {
+	return fmt.Sprintf(
+		`{"lado":"%s","divisao_id":"%s","centro_custo_id":"%s","classe_imobilizado_id":"%s","valor":%g}`,
+		lado, divisaoID, centroCustoID, classeImobilizadoID, valor,
+	)
+}
+
+// anexoJSON monta um item da lista `anexos` do corpo de Imobilizado.
+func anexoJSON(nomeArquivo, contentType, conteudoBase64 string) string {
+	return fmt.Sprintf(
+		`{"nome_arquivo":%q,"content_type":%q,"conteudo_base64":%q}`,
+		nomeArquivo, contentType, conteudoBase64,
+	)
+}
+
+// testAnexoConteudo/testAnexoConteudoBase64 são reaproveitados pelos testes
+// de Imobilizado abaixo — conteúdo fixo "cotação de teste" (nunca dado real
+// de pessoa/fornecedor, Epic 3 context).
+var (
+	testAnexoConteudo       = []byte("cotação de teste — anexo válido")
+	testAnexoConteudoBase64 = base64.StdEncoding.EncodeToString(testAnexoConteudo)
+)
+
+// sha256HexDeTeste replica o cálculo de hash de internal/anexos.Salvar —
+// usado só para montar a expectativa do mock (o hash em si é sempre
+// calculado pela implementação, nunca recebido do cliente).
+func sha256HexDeTeste(dados []byte) string {
+	soma := sha256.Sum256(dados)
+	return hex.EncodeToString(soma[:])
+}
+
 // --- validações estruturais (sem DB) ---
 
 func TestAbrirSolicitacaoHandler_TipoNaoSuportado(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	// "imobilizado" (Story 3.4) ainda não tem handler — "inclusao" já é
-	// suportado a partir da Story 3.3, então não serve mais como exemplo de
-	// tipo não suportado (Boundaries "Never" da spec 3.3).
+	// "obras" (Story 3.5) ainda não tem handler — "imobilizado" já é
+	// suportado a partir da Story 3.4, então não serve mais como exemplo de
+	// tipo não suportado (Boundaries "Never" da spec 3.4).
 	handler := AbrirSolicitacaoHandler(db)
-	req := newSolicitacaoRequest(`{"tipo_solicitacao":"imobilizado","lancamentos":[]}`)
+	req := newSolicitacaoRequest(`{"tipo_solicitacao":"obras","lancamentos":[]}`)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 
@@ -409,10 +458,10 @@ func TestAbrirSolicitacaoHandler_Success(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
-		WithArgs(solicitacaoID, "origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", 1000.0).
+		WithArgs(solicitacaoID, "origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", nil, 1000.0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
-		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 1000.0).
+		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", nil, 1000.0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -631,7 +680,7 @@ func TestAbrirSolicitacaoHandler_InclusaoSFC_Success(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
-		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaSFC, "2026-10-01", 1000.0).
+		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaSFC, "2026-10-01", nil, 1000.0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -909,7 +958,7 @@ func TestAbrirSolicitacaoHandler_Inclusao_Success(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
-		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", 1000.0).
+		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaBIFC, "2026-10-01", nil, 1000.0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -929,5 +978,442 @@ func TestAbrirSolicitacaoHandler_Inclusao_Success(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// --- Story 3.4 — Abrir Imobilizado com anexo de cotação ---
+//
+// Cobre a I/O Matrix da spec 3.4: sem anexo, anexo com base64 inválido,
+// anexo sem nome, classe_imobilizado_id ausente/malformado, classe
+// inexistente, autorizador fora do CC/faixa, mais de uma linha/lado!=destino
+// e o envio feliz (201, com hash SHA-256 do anexo gravado).
+
+func TestAbrirSolicitacaoHandler_Imobilizado_SemAnexo(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoImobilizado(testSolicitacaoAutorizadorID,
+		linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, 1000),
+		"",
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Imobilizado exige ao menos um anexo de cotação") {
+		t.Fatalf("corpo não cita a exigência de anexo: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Imobilizado_AnexoBase64Invalido(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoImobilizado(testSolicitacaoAutorizadorID,
+		linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, 1000),
+		anexoJSON("cotacao.pdf", "application/pdf", "!!!nao-e-base64!!!"),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "conteúdo não é base64 válido") {
+		t.Fatalf("corpo não cita a validação de base64: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Imobilizado_AnexoSemNome(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoImobilizado(testSolicitacaoAutorizadorID,
+		linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, 1000),
+		anexoJSON("", "application/pdf", testAnexoConteudoBase64),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "campo 'nome_arquivo' obrigatório") {
+		t.Fatalf("corpo não cita a validação de nome_arquivo: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Imobilizado_ClasseImobilizadoIDMalformado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoImobilizado(testSolicitacaoAutorizadorID,
+		linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, "nao-e-um-uuid", 1000),
+		anexoJSON("cotacao.pdf", "application/pdf", testAnexoConteudoBase64),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "campo 'classe_imobilizado_id' inválido") {
+		t.Fatalf("corpo não cita a validação de classe_imobilizado_id: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+// TestAbrirSolicitacaoHandler_Imobilizado_AutorizadorIDMalformado cobre a
+// guarda de formato de autorizador_id (compartilhada com "inclusao", já
+// testada em TestAbrirSolicitacaoHandler_Inclusao_AutorizadorIDMalformado)
+// também para tipo_solicitacao="imobilizado" — até aqui só o caso de
+// violação em nível de banco ("fora do CC/faixa") tinha teste para
+// Imobilizado.
+func TestAbrirSolicitacaoHandler_Imobilizado_AutorizadorIDMalformado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoImobilizado("nao-e-um-uuid",
+		linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, 1000),
+		anexoJSON("cotacao.pdf", "application/pdf", testAnexoConteudoBase64),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "campo 'autorizador_id' inválido") {
+		t.Fatalf("corpo não cita a validação esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Imobilizado_MaisDeUmaLinha(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoImobilizado(testSolicitacaoAutorizadorID,
+		linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, 1000)+","+
+			linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, 500),
+		anexoJSON("cotacao.pdf", "application/pdf", testAnexoConteudoBase64),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Imobilizado aceita apenas uma linha") {
+		t.Fatalf("corpo não cita a restrição de contagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Imobilizado_LadoOrigemInvalido(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoImobilizado(testSolicitacaoAutorizadorID,
+		linhaImobilizadoJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, 1000),
+		anexoJSON("cotacao.pdf", "application/pdf", testAnexoConteudoBase64),
+	)
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `lado=`) || !strings.Contains(rec.Body.String(), "destino") {
+		t.Fatalf("corpo não cita a exigência de lado=destino: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Imobilizado_ValorInvalido(t *testing.T) {
+	for _, valor := range []float64{0, -100} {
+		t.Run(fmt.Sprintf("valor=%g", valor), func(t *testing.T) {
+			db, mock := newSQLMock(t)
+
+			corpo := corpoImobilizado(testSolicitacaoAutorizadorID,
+				linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, valor),
+				anexoJSON("cotacao.pdf", "application/pdf", testAnexoConteudoBase64),
+			)
+
+			handler := AbrirSolicitacaoHandler(db)
+			req := newSolicitacaoRequest(corpo)
+			rec := httptest.NewRecorder()
+			handler(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "maior que zero") {
+				t.Fatalf("corpo não cita a validação de valor esperada: %s", rec.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("expectativas do mock não satisfeitas (nada deveria tocar o banco): %v", err)
+			}
+		})
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Imobilizado_ClasseInexistente(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoImobilizado(testSolicitacaoAutorizadorID,
+		linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, 1000),
+		anexoJSON("cotacao.pdf", "application/pdf", testAnexoConteudoBase64),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo, divisao_id, filial FROM centros_custo WHERE id = $1")).
+		WithArgs(testSolicitacaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"codigo", "divisao_id", "filial"}).
+			AddRow("CC1", testSolicitacaoDivisaoID, "F1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT cc_proprio_id FROM usuarios WHERE id = $1")).
+		WithArgs(testAtorID).
+		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM classes_imobilizado WHERE id = $1")).
+		WithArgs(testSolicitacaoClasseImobilizadoID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "classe de imobilizado não encontrada") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Imobilizado_AutorizadorForaDoCCOuFaixa(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoImobilizado(testSolicitacaoAutorizadorID,
+		linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, 1000),
+		anexoJSON("cotacao.pdf", "application/pdf", testAnexoConteudoBase64),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo, divisao_id, filial FROM centros_custo WHERE id = $1")).
+		WithArgs(testSolicitacaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"codigo", "divisao_id", "filial"}).
+			AddRow("CC1", testSolicitacaoDivisaoID, "F1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT cc_proprio_id FROM usuarios WHERE id = $1")).
+		WithArgs(testAtorID).
+		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM classes_imobilizado WHERE id = $1")).
+		WithArgs(testSolicitacaoClasseImobilizadoID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testSolicitacaoClasseImobilizadoID))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario")).
+		WithArgs("CC1", testSolicitacaoAutorizadorID, 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "autorizador selecionado não é válido") {
+		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_Imobilizado_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const solicitacaoID = "so000000-0000-0000-0000-000000000004"
+	const autorizadorRegraID = "ar000000-0000-0000-0000-000000000002"
+	const anexoID = "an000000-0000-0000-0000-000000000001"
+
+	corpo := corpoImobilizado(testSolicitacaoAutorizadorID,
+		linhaImobilizadoJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoClasseImobilizadoID, 1000),
+		anexoJSON("cotacao.pdf", "application/pdf", testAnexoConteudoBase64),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo, divisao_id, filial FROM centros_custo WHERE id = $1")).
+		WithArgs(testSolicitacaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"codigo", "divisao_id", "filial"}).
+			AddRow("CC1", testSolicitacaoDivisaoID, "F1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT cc_proprio_id FROM usuarios WHERE id = $1")).
+		WithArgs(testAtorID).
+		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM classes_imobilizado WHERE id = $1")).
+		WithArgs(testSolicitacaoClasseImobilizadoID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testSolicitacaoClasseImobilizadoID))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario")).
+		WithArgs("CC1", testSolicitacaoAutorizadorID, 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(autorizadorRegraID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico")).
+		WithArgs("autorizadores-formulario", autorizadorRegraID).
+		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT nome FROM usuarios WHERE id = $1")).
+		WithArgs(testSolicitacaoAutorizadorID).
+		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Autorizador Nominal"))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
+		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, nil, nil, testSolicitacaoClasseImobilizadoID, 1000.0).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacao_anexos")).
+		WithArgs(solicitacaoID, "cotacao.pdf", "application/pdf", len(testAnexoConteudo), sha256HexDeTeste(testAnexoConteudo), testAnexoConteudo).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(anexoID))
+	mock.ExpectCommit()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"tipo":"pessoa"`) {
+		t.Fatalf("corpo não indica Tipo=pessoa: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestValidarAnexos_NomeArquivoExcede255 cobre o achado de revisão
+// (2026-10-08) sobre `nome_arquivo`/VARCHAR(255): sem esta checagem, um nome
+// maior que a coluna estourava como erro de banco (500) em vez de um 400 de
+// validação limpo.
+func TestValidarAnexos_NomeArquivoExcede255(t *testing.T) {
+	nomeLongo := strings.Repeat("a", 256)
+	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: nomeLongo, ContentType: "application/pdf", ConteudoBase64: testAnexoConteudoBase64}})
+	if !strings.Contains(msg, "'nome_arquivo' excede 255 caracteres") {
+		t.Fatalf("esperada mensagem de nome_arquivo excedendo 255 caracteres, obtido: %q", msg)
+	}
+}
+
+// TestValidarAnexos_ContentTypeExcede100 cobre o mesmo achado de revisão
+// para `content_type`/VARCHAR(100).
+func TestValidarAnexos_ContentTypeExcede100(t *testing.T) {
+	contentTypeLongo := strings.Repeat("a", 101)
+	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: "cotacao.pdf", ContentType: contentTypeLongo, ConteudoBase64: testAnexoConteudoBase64}})
+	if !strings.Contains(msg, "'content_type' excede 100 caracteres") {
+		t.Fatalf("esperada mensagem de content_type excedendo 100 caracteres, obtido: %q", msg)
+	}
+}
+
+// TestValidarAnexos_NomeArquivoComAcentosDentroDoLimite prova que a checagem
+// de 255 conta caracteres (runas), não bytes: um nome com exatamente 255
+// caracteres acentuados (multi-byte em UTF-8, portanto >255 bytes) deve ser
+// aceito, pois a coluna VARCHAR(255) do Postgres também conta caracteres.
+// Achado de revisão (pass de acompanhamento 2026-10-08): `len()` em Go mede
+// bytes, não runas.
+func TestValidarAnexos_NomeArquivoComAcentosDentroDoLimite(t *testing.T) {
+	nome255Runas := strings.Repeat("ç", 255)
+	if len(nome255Runas) <= 255 {
+		t.Fatalf("pré-condição do teste inválida: nome deveria exceder 255 bytes (tem %d)", len(nome255Runas))
+	}
+	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: nome255Runas, ContentType: "application/pdf", ConteudoBase64: testAnexoConteudoBase64}})
+	if msg != "" {
+		t.Fatalf("nome com 255 caracteres (ainda que >255 bytes) não deveria ser rejeitado, obtido: %q", msg)
+	}
+}
+
+// TestValidarLancamentosEstrutura_ValorAntesDeMesParaTiposNaoImobilizado
+// cobre o achado de revisão (pass de acompanhamento 2026-10-08) de que a
+// bifurcação por tipo introduzida pela Story 3.4 invertera a ordem de
+// checagem conta_id->valor->mes para conta_id->mes->valor nos tipos
+// não-imobilizado. Uma linha com `mes` malformado E `valor<=0`
+// simultaneamente deve continuar reportando o erro de `valor` primeiro
+// (mesma precedência de antes da Story 3.4), não o de `mes`.
+func TestValidarLancamentosEstrutura_ValorAntesDeMesParaTiposNaoImobilizado(t *testing.T) {
+	linhas := []lancamentoRequest{{
+		Lado:          "destino",
+		DivisaoID:     testSolicitacaoDivisaoID,
+		CentroCustoID: testSolicitacaoCentroCustoID,
+		ContaID:       testSolicitacaoContaDestino,
+		Mes:           "2026-10-15", // malformado: não é dia 1
+		Valor:         0,            // também inválido
+	}}
+	_, msg := validarLancamentosEstrutura(linhas, "inclusao")
+	if !strings.Contains(msg, "campo 'valor' deve ser maior que zero") {
+		t.Fatalf("esperado erro de 'valor' (precedência restaurada), obtido: %q", msg)
+	}
+}
+
+// TestValidarLancamentosEstrutura_Imobilizado_ContaIDEMesIgnorados cobre o
+// Boundary "Never" da spec 3.4 (nenhum campo de fornecedor/mês é exigido ou
+// validado para Imobilizado): mesmo que `conta_id`/`mes` venham preenchidos
+// no corpo (campos compartilhados pela mesma struct, precedente de
+// `autorizador_id` na Story 3.3), eles são ignorados — não bloqueiam a
+// validação nem são propostos para a linha validada.
+func TestValidarLancamentosEstrutura_Imobilizado_ContaIDEMesIgnorados(t *testing.T) {
+	linhas := []lancamentoRequest{{
+		Lado:                "destino",
+		DivisaoID:           testSolicitacaoDivisaoID,
+		CentroCustoID:       testSolicitacaoCentroCustoID,
+		ContaID:             "nao-e-um-uuid-e-nem-deveria-importar",
+		Mes:                 "nao-e-uma-data-e-nem-deveria-importar",
+		ClasseImobilizadoID: testSolicitacaoClasseImobilizadoID,
+		Valor:               1000,
+	}}
+	validadas, msg := validarLancamentosEstrutura(linhas, "imobilizado")
+	if msg != "" {
+		t.Fatalf("conta_id/mes malformados não deveriam bloquear Imobilizado, obtido erro: %q", msg)
+	}
+	if len(validadas) != 1 {
+		t.Fatalf("esperada 1 linha validada, obtido %d", len(validadas))
+	}
+	if validadas[0].ContaID != "" || !validadas[0].Mes.IsZero() {
+		t.Fatalf("conta_id/mes deveriam ser ignorados para Imobilizado, obtido ContaID=%q Mes=%v", validadas[0].ContaID, validadas[0].Mes)
+	}
+	if validadas[0].ClasseImobilizadoID != testSolicitacaoClasseImobilizadoID {
+		t.Fatalf("classe_imobilizado_id esperado preservado, obtido %q", validadas[0].ClasseImobilizadoID)
 	}
 }

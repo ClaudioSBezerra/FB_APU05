@@ -2,27 +2,32 @@ package handlers
 
 // solicitacoes.go — Story 3.1 (Abrir Transferência com aprovação calculada,
 // FR-5/FR-10), Story 3.2 (Abrir Inclusão SFC com aprovação calculada,
-// FR-7/FR-10) e Story 3.3 (Abrir Inclusão com autorizador nominal,
-// FR-6/FR-11).
+// FR-7/FR-10), Story 3.3 (Abrir Inclusão com autorizador nominal,
+// FR-6/FR-11) e Story 3.4 (Abrir Imobilizado com anexo de cotação,
+// FR-8/FR-11).
 //
 // AbrirSolicitacaoHandler é a primeira rota do FB_APU05 que não exige
 // perfil `administrador` (RequireAuth(..., "") — qualquer solicitante
 // autenticado pode abrir uma solicitação). Valida o corpo (lados batendo,
-// exercício único, CC autorizado, plano de conta — balanceamento e
-// exercício único só se aplicam a transferencia, Inclusão/Inclusão SFC são
-// 1 linha só), delega o cálculo do aprovador a `internal/aprovacao`
-// (AD-1/AD-2 — o handler nunca decide aprovador diretamente) e grava
-// `solicitacoes`+`solicitacao_lancamentos` numa única transação: qualquer
-// erro de validação, ErrSemAlcadaCadastrada ou ErrAutorizadorInvalido não
-// grava nada (Boundaries "Always" da spec).
+// exercício único, CC autorizado, plano de conta/classe de imobilizado,
+// anexo de cotação — balanceamento e exercício único só se aplicam a
+// transferencia; Inclusão/Inclusão SFC/Imobilizado são 1 linha só), delega
+// o cálculo do aprovador a `internal/aprovacao` (AD-1/AD-2 — o handler
+// nunca decide aprovador diretamente), o upload de anexo a
+// `internal/anexos` (AD-13 — o handler nunca grava bytes de anexo por conta
+// própria) e grava `solicitacoes`+`solicitacao_lancamentos`[+`solicitacao_
+// anexos`] numa única transação: qualquer erro de validação,
+// ErrSemAlcadaCadastrada ou ErrAutorizadorInvalido não grava nada
+// (Boundaries "Always" da spec).
 //
-// Só tipo_solicitacao em {"transferencia", "inclusao_sfc", "inclusao"} é
-// aceito até agora; qualquer outro valor é 400 "tipo de solicitação não
-// suportado ainda" (histórias 3.4-3.5 estendem este MESMO handler, nunca
-// reimplementam).
+// Só tipo_solicitacao em {"transferencia", "inclusao_sfc", "inclusao",
+// "imobilizado"} é aceito até agora; qualquer outro valor (ex. "obras") é
+// 400 "tipo de solicitação não suportado ainda" (história 3.5 estende este
+// MESMO handler, nunca reimplementa).
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,7 +37,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"fb_apu05/internal/anexos"
 	"fb_apu05/internal/aprovacao"
 )
 
@@ -53,10 +60,14 @@ type abrirSolicitacaoRequest struct {
 	TipoSolicitacao string              `json:"tipo_solicitacao"`
 	Lancamentos     []lancamentoRequest `json:"lancamentos"`
 	// AutorizadorID (Story 3.3) é o colaborador_id escolhido pelo
-	// solicitante para tipo_solicitacao="inclusao" — campo no nível da
-	// solicitação, não por linha (só há 1 linha). Ignorado para os demais
-	// tipos.
+	// solicitante para tipo_solicitacao="inclusao"/"imobilizado" — campo no
+	// nível da solicitação, não por linha (só há 1 linha). Ignorado para os
+	// demais tipos.
 	AutorizadorID string `json:"autorizador_id"`
+	// Anexos (Story 3.4) é a lista de anexos de cotação em base64 — campo
+	// no nível da solicitação, exigida (len>=1) exclusivamente para
+	// tipo_solicitacao="imobilizado". Ignorado para os demais tipos.
+	Anexos []anexoRequest `json:"anexos"`
 }
 
 type lancamentoRequest struct {
@@ -66,18 +77,36 @@ type lancamentoRequest struct {
 	ContaID       string  `json:"conta_id"`
 	Mes           string  `json:"mes"`
 	Valor         float64 `json:"valor"`
+	// ClasseImobilizadoID (Story 3.4) substitui ContaID/Mes exclusivamente
+	// para tipo_solicitacao="imobilizado" — classe de imobilizado, não
+	// conta contábil/mês de competência (Epic 3 context). Ignorado pelos
+	// demais tipos, mesmo precedente de AutorizadorID ignorado por
+	// transferencia/inclusao_sfc (Story 3.3).
+	ClasseImobilizadoID string `json:"classe_imobilizado_id"`
+}
+
+// anexoRequest (Story 3.4) é um anexo de cotação no corpo da requisição —
+// conteúdo em base64 dentro do MESMO corpo JSON (Design Notes da spec:
+// nunca multipart/novo endpoint).
+type anexoRequest struct {
+	NomeArquivo    string `json:"nome_arquivo"`
+	ContentType    string `json:"content_type"`
+	ConteudoBase64 string `json:"conteudo_base64"`
 }
 
 // lancamentoValidado é uma linha já validada estruturalmente (formato de
-// UUID, lado válido, valor>0, mês parseado) — usada tanto para a checagem
-// de balanceamento/exercício quanto para o INSERT final.
+// UUID, lado válido, valor>0, mês parseado OU classe de imobilizado) — usada
+// tanto para a checagem de balanceamento/exercício quanto para o INSERT
+// final. ContaID/Mes e ClasseImobilizadoID são mutuamente exclusivos
+// (preenchido um ou outro conforme o tipo_solicitacao).
 type lancamentoValidado struct {
-	Lado          string
-	DivisaoID     string
-	CentroCustoID string
-	ContaID       string
-	Mes           time.Time
-	Valor         float64
+	Lado                string
+	DivisaoID           string
+	CentroCustoID       string
+	ContaID             string
+	Mes                 time.Time
+	ClasseImobilizadoID string
+	Valor               float64
 }
 
 // AbrirSolicitacaoHandler — POST /api/solicitacoes. Registrado em main.go
@@ -92,7 +121,10 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		// 15MiB (não 1MiB): anexos de cotação em base64 (Story 3.4) inflam
+		// ~33% o payload de um upload direto; demais tipos continuam bem
+		// abaixo do novo teto.
+		r.Body = http.MaxBytesReader(w, r.Body, 15<<20)
 		corpo, err := io.ReadAll(r.Body)
 		if err != nil {
 			jsonErr(w, http.StatusBadRequest, "não foi possível ler o corpo da requisição")
@@ -106,16 +138,16 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Boundaries "Never" da spec: só "transferencia" (3.1),
-		// "inclusao_sfc" (3.2) e "inclusao" (3.3) têm handler até agora —
-		// qualquer outro valor (inclusive "imobilizado"/"obras", ainda não
-		// implementados) é 400, nunca um 501/404 que sugira "não existe
-		// rota" (a rota existe; o TIPO ainda não é suportado).
-		if req.TipoSolicitacao != "transferencia" && req.TipoSolicitacao != "inclusao_sfc" && req.TipoSolicitacao != "inclusao" {
+		// "inclusao_sfc" (3.2), "inclusao" (3.3) e "imobilizado" (3.4) têm
+		// handler até agora — qualquer outro valor (inclusive "obras",
+		// ainda não implementado) é 400, nunca um 501/404 que sugira "não
+		// existe rota" (a rota existe; o TIPO ainda não é suportado).
+		if req.TipoSolicitacao != "transferencia" && req.TipoSolicitacao != "inclusao_sfc" && req.TipoSolicitacao != "inclusao" && req.TipoSolicitacao != "imobilizado" {
 			jsonErr(w, http.StatusBadRequest, "tipo de solicitação não suportado ainda")
 			return
 		}
 
-		lancamentos, msgErro := validarLancamentosEstrutura(req.Lancamentos)
+		lancamentos, msgErro := validarLancamentosEstrutura(req.Lancamentos, req.TipoSolicitacao)
 		if msgErro != "" {
 			jsonErr(w, http.StatusBadRequest, msgErro)
 			return
@@ -126,13 +158,27 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Story 3.3: Inclusão exige um autorizador_id (UUID) escolhido pelo
-		// solicitante — validado contra autorizadores_formulario mais
-		// adiante, via AutorizadorNominal (nunca aqui — este handler só
-		// checa o FORMATO do campo).
-		if req.TipoSolicitacao == "inclusao" {
+		// Story 3.3/3.4: Inclusão e Imobilizado exigem um autorizador_id
+		// (UUID) escolhido pelo solicitante — validado contra
+		// autorizadores_formulario mais adiante, via AutorizadorNominal
+		// (nunca aqui — este handler só checa o FORMATO do campo).
+		if req.TipoSolicitacao == "inclusao" || req.TipoSolicitacao == "imobilizado" {
 			if !uuidFormatRegexp.MatchString(req.AutorizadorID) {
 				jsonErr(w, http.StatusBadRequest, "campo 'autorizador_id' inválido")
+				return
+			}
+		}
+
+		// Story 3.4: Imobilizado exige ao menos 1 anexo de cotação —
+		// validação puramente estrutural (sem acesso a banco), mesma faixa
+		// das demais checagens de formato acima do tx.Begin(). anexosParaSalvar
+		// fica vazio para os demais tipos (Anexos é ignorado por eles).
+		var anexosParaSalvar []anexos.ArquivoDecodificado
+		if req.TipoSolicitacao == "imobilizado" {
+			var msgErroAnexo string
+			anexosParaSalvar, msgErroAnexo = validarAnexos(req.Anexos)
+			if msgErroAnexo != "" {
+				jsonErr(w, http.StatusBadRequest, msgErroAnexo)
 				return
 			}
 		}
@@ -206,24 +252,46 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		// Mapa plano/rótulo por tipo (Story 3.3): "inclusao_sfc" é o ÚNICO
 		// tipo que usa o plano SFC (FR-7); "inclusao" (Story 3.3) usa BIFC
 		// como "transferencia", mas com rótulo próprio na mensagem de erro.
-		var planoEsperado, rotuloTipo string
-		switch req.TipoSolicitacao {
-		case "inclusao_sfc":
-			planoEsperado, rotuloTipo = "SFC", "Inclusão SFC"
-		case "inclusao":
-			planoEsperado, rotuloTipo = "BIFC", "Inclusão"
-		default:
-			planoEsperado, rotuloTipo = "BIFC", "Transferência"
+		// Imobilizado (Story 3.4) pula este bloco inteiramente — é classe de
+		// imobilizado, não conta contábil, então não existe plano a checar
+		// (Code Map da spec 3.4).
+		if req.TipoSolicitacao != "imobilizado" {
+			var planoEsperado, rotuloTipo string
+			switch req.TipoSolicitacao {
+			case "inclusao_sfc":
+				planoEsperado, rotuloTipo = "SFC", "Inclusão SFC"
+			case "inclusao":
+				planoEsperado, rotuloTipo = "BIFC", "Inclusão"
+			default:
+				planoEsperado, rotuloTipo = "BIFC", "Transferência"
+			}
+			msgErro, errServidor := validarPlanoConta(tx, lancamentos, planoEsperado, rotuloTipo)
+			if errServidor != nil {
+				log.Printf("[Solicitacoes] Erro ao checar plano de conta: %v", errServidor)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+			if msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
 		}
-		msgErro, errServidor := validarPlanoConta(tx, lancamentos, planoEsperado, rotuloTipo)
-		if errServidor != nil {
-			log.Printf("[Solicitacoes] Erro ao checar plano de conta: %v", errServidor)
-			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
-			return
-		}
-		if msgErro != "" {
-			jsonErr(w, http.StatusBadRequest, msgErro)
-			return
+
+		// Story 3.4: Imobilizado valida classe_imobilizado_id contra
+		// classes_imobilizado (cadastro já administrável desde o Epic 2) —
+		// mesmo padrão de validarPlanoConta: (msg, nil) para violação de
+		// regra de negócio, (_, err) para erro de infraestrutura (500).
+		if req.TipoSolicitacao == "imobilizado" {
+			msgErroClasse, errServidorClasse := validarClasseImobilizado(tx, lancamentos)
+			if errServidorClasse != nil {
+				log.Printf("[Solicitacoes] Erro ao checar classe de imobilizado: %v", errServidorClasse)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+			if msgErroClasse != "" {
+				jsonErr(w, http.StatusBadRequest, msgErroClasse)
+				return
+			}
 		}
 
 		// Os 2 lados batem dentro de uma tolerância de R$0,01 (não
@@ -235,9 +303,9 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		resolver, err := aprovacao.ResolverParaTipo(req.TipoSolicitacao, tx)
 		if err != nil {
 			// Defensivo: o guard de tipo_solicitacao acima já filtra para
-			// "transferencia"/"inclusao_sfc" — este branch só seria
-			// alcançado se o guard e o dispatch do pacote aprovacao
-			// divergissem no futuro.
+			// "transferencia"/"inclusao_sfc"/"inclusao"/"imobilizado" —
+			// este branch só seria alcançado se o guard e o dispatch do
+			// pacote aprovacao divergissem no futuro.
 			jsonErr(w, http.StatusBadRequest, "tipo de solicitação não suportado ainda")
 			return
 		}
@@ -308,13 +376,39 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		for _, l := range lancamentos {
+			// Story 3.4: Imobilizado grava classe_imobilizado_id em vez de
+			// conta_id/mes (ambos NULL nesse caso) — mesmo invariante do
+			// CHECK XOR da migration 008. Para os demais tipos, o inverso
+			// (classe_imobilizado_id NULL).
+			var contaID, mes, classeImobilizadoID sql.NullString
+			if req.TipoSolicitacao == "imobilizado" {
+				classeImobilizadoID = sql.NullString{String: l.ClasseImobilizadoID, Valid: true}
+			} else {
+				contaID = sql.NullString{String: l.ContaID, Valid: true}
+				mes = sql.NullString{String: l.Mes.Format(dataISOFormato), Valid: true}
+			}
+
 			if _, err := tx.Exec(`
-				INSERT INTO solicitacao_lancamentos (solicitacao_id, lado, divisao_id, centro_custo_id, conta_id, mes, valor)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
-			`, solicitacaoID, l.Lado, l.DivisaoID, l.CentroCustoID, l.ContaID, l.Mes.Format(dataISOFormato), l.Valor); err != nil {
+				INSERT INTO solicitacao_lancamentos (solicitacao_id, lado, divisao_id, centro_custo_id, conta_id, mes, classe_imobilizado_id, valor)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			`, solicitacaoID, l.Lado, l.DivisaoID, l.CentroCustoID, contaID, mes, classeImobilizadoID, l.Valor); err != nil {
 				log.Printf("[Solicitacoes] Erro ao inserir lançamento (lado=%s): %v", l.Lado, err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
+			}
+		}
+
+		// Story 3.4: anexos de cotação são gravados na MESMA transação —
+		// solicitação+lançamento+anexos, tudo ou nada (Boundaries "Always"
+		// da spec). Upload passa exclusivamente por internal/anexos (AD-13)
+		// — nenhuma outra lógica de persistência de anexo aqui.
+		if req.TipoSolicitacao == "imobilizado" {
+			for _, a := range anexosParaSalvar {
+				if _, err := anexos.Salvar(tx, solicitacaoID, a.NomeArquivo, a.ContentType, a.Dados); err != nil {
+					log.Printf("[Solicitacoes] Erro ao salvar anexo (solicitacao=%s): %v", solicitacaoID, err)
+					jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+					return
+				}
 			}
 		}
 
@@ -341,11 +435,15 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // validarLancamentosEstrutura valida cada linha isoladamente (lado válido,
-// UUIDs bem formados, valor>0, mês no formato YYYY-MM-01). A contagem de
-// linhas e a regra de "lado" permitido são tipo-aware e ficam em
-// validarContagemELadoPorTipo, chamada logo depois desta (Code Map da
-// spec 3.2).
-func validarLancamentosEstrutura(linhas []lancamentoRequest) ([]lancamentoValidado, string) {
+// UUIDs bem formados, valor>0, e mês no formato YYYY-MM-01 OU classe de
+// imobilizado, conforme o tipo). A contagem de linhas e a regra de "lado"
+// permitido são tipo-aware e ficam em validarContagemELadoPorTipo, chamada
+// logo depois desta (Code Map da spec 3.2). `tipo` (Story 3.4) decide entre
+// as duas trilhas mutuamente exclusivas: "imobilizado" valida
+// ClasseImobilizadoID (formato UUID) em vez de ContaID/Mes — pula
+// parseMesCompetencia/checagem de conta_id por completo; os demais tipos
+// seguem com o comportamento inalterado (ContaID/Mes).
+func validarLancamentosEstrutura(linhas []lancamentoRequest, tipo string) ([]lancamentoValidado, string) {
 	validadas := make([]lancamentoValidado, 0, len(linhas))
 	for i, l := range linhas {
 		n := i + 1
@@ -358,24 +456,42 @@ func validarLancamentosEstrutura(linhas []lancamentoRequest) ([]lancamentoValida
 		if !uuidFormatRegexp.MatchString(l.CentroCustoID) {
 			return nil, fmt.Sprintf("linha %d: campo 'centro_custo_id' inválido", n)
 		}
-		if !uuidFormatRegexp.MatchString(l.ContaID) {
-			return nil, fmt.Sprintf("linha %d: campo 'conta_id' inválido", n)
-		}
-		if l.Valor <= 0 {
-			return nil, fmt.Sprintf("linha %d: campo 'valor' deve ser maior que zero", n)
-		}
-		mes, err := parseMesCompetencia(l.Mes)
-		if err != nil {
-			return nil, fmt.Sprintf("linha %d: %v", n, err)
-		}
-		validadas = append(validadas, lancamentoValidado{
+		validada := lancamentoValidado{
 			Lado:          l.Lado,
 			DivisaoID:     l.DivisaoID,
 			CentroCustoID: l.CentroCustoID,
-			ContaID:       l.ContaID,
-			Mes:           mes,
 			Valor:         l.Valor,
-		})
+		}
+
+		if tipo == "imobilizado" {
+			if !uuidFormatRegexp.MatchString(l.ClasseImobilizadoID) {
+				return nil, fmt.Sprintf("linha %d: campo 'classe_imobilizado_id' inválido", n)
+			}
+			validada.ClasseImobilizadoID = l.ClasseImobilizadoID
+		} else {
+			if !uuidFormatRegexp.MatchString(l.ContaID) {
+				return nil, fmt.Sprintf("linha %d: campo 'conta_id' inválido", n)
+			}
+			validada.ContaID = l.ContaID
+		}
+
+		// `valor` é checado antes de `mes` para preservar, para os tipos
+		// não-imobilizado, a mesma ordem de checagem (conta_id -> valor ->
+		// mes) anterior à Story 3.4 (Review Triage Log 2026-10-08: a
+		// bifurcação por tipo havia invertido valor/mes).
+		if l.Valor <= 0 {
+			return nil, fmt.Sprintf("linha %d: campo 'valor' deve ser maior que zero", n)
+		}
+
+		if tipo != "imobilizado" {
+			mes, err := parseMesCompetencia(l.Mes)
+			if err != nil {
+				return nil, fmt.Sprintf("linha %d: %v", n, err)
+			}
+			validada.Mes = mes
+		}
+
+		validadas = append(validadas, validada)
 	}
 	return validadas, ""
 }
@@ -384,9 +500,10 @@ func validarLancamentosEstrutura(linhas []lancamentoRequest) ([]lancamentoValida
 // permitido específica de cada tipo_solicitacao (Code Map da spec 3.2/3.3):
 // "transferencia" exige ao menos 2 linhas (uma de cada lado — implícito pelo
 // balanceamento, mas checado aqui cedo para uma mensagem mais clara);
-// "inclusao_sfc" e "inclusao" não têm o conceito de "2 lados" de
-// Transferência (Boundaries "Never" da spec) e exigem exatamente 1 linha com
-// lado="destino" (mesma regra para os dois, Code Map da spec 3.3).
+// "inclusao_sfc", "inclusao" e "imobilizado" (Story 3.4) não têm o conceito
+// de "2 lados" de Transferência (Boundaries "Never" da spec) e exigem
+// exatamente 1 linha com lado="destino" (mesma regra para os três, Code Map
+// da spec 3.3/3.4).
 func validarContagemELadoPorTipo(tipo string, linhas []lancamentoValidado) string {
 	switch tipo {
 	case "transferencia":
@@ -407,8 +524,70 @@ func validarContagemELadoPorTipo(tipo string, linhas []lancamentoValidado) strin
 		if linhas[0].Lado != "destino" {
 			return `inclusão exige lado="destino"`
 		}
+	case "imobilizado":
+		if len(linhas) != 1 {
+			return "Imobilizado aceita apenas uma linha"
+		}
+		if linhas[0].Lado != "destino" {
+			return `Imobilizado exige lado="destino"`
+		}
 	}
 	return ""
+}
+
+// validarAnexos aplica a parte puramente estrutural (sem acesso a banco) da
+// I/O Matrix de anexo (Story 3.4): lista vazia é recusada, cada item exige
+// nome_arquivo não vazio e conteudo_base64 decodificável e não vazio.
+// Devolve os anexos já decodificados para anexos.Salvar gravar dentro da
+// mesma transação mais adiante (Boundaries "Always" da spec: solicitação +
+// lançamento + anexos, tudo ou nada).
+func validarAnexos(itens []anexoRequest) ([]anexos.ArquivoDecodificado, string) {
+	if len(itens) == 0 {
+		return nil, "Imobilizado exige ao menos um anexo de cotação"
+	}
+
+	decodificados := make([]anexos.ArquivoDecodificado, 0, len(itens))
+	for i, a := range itens {
+		n := i + 1
+		if strings.TrimSpace(a.NomeArquivo) == "" {
+			return nil, fmt.Sprintf("anexo %d: campo 'nome_arquivo' obrigatório", n)
+		}
+		if utf8.RuneCountInString(a.NomeArquivo) > 255 {
+			return nil, fmt.Sprintf("anexo %d: campo 'nome_arquivo' excede 255 caracteres", n)
+		}
+		if utf8.RuneCountInString(a.ContentType) > 100 {
+			return nil, fmt.Sprintf("anexo %d: campo 'content_type' excede 100 caracteres", n)
+		}
+		dados, err := base64.StdEncoding.DecodeString(a.ConteudoBase64)
+		if err != nil || len(dados) == 0 {
+			return nil, fmt.Sprintf("anexo %d: conteúdo não é base64 válido", n)
+		}
+		decodificados = append(decodificados, anexos.ArquivoDecodificado{
+			NomeArquivo: a.NomeArquivo,
+			ContentType: a.ContentType,
+			Dados:       dados,
+		})
+	}
+	return decodificados, ""
+}
+
+// validarClasseImobilizado garante que toda linha de Imobilizado referencia
+// uma classe_imobilizado_id existente em classes_imobilizado (cadastro já
+// administrável desde o Epic 2) — mesmo padrão de validarPlanoConta: (msg,
+// nil) para violação de regra de negócio, (_, err) para erro de
+// infraestrutura que o chamador deve traduzir como 500.
+func validarClasseImobilizado(tx *sql.Tx, linhas []lancamentoValidado) (string, error) {
+	for i, l := range linhas {
+		var id string
+		err := tx.QueryRow(`SELECT id FROM classes_imobilizado WHERE id = $1`, l.ClasseImobilizadoID).Scan(&id)
+		if err == sql.ErrNoRows {
+			return fmt.Sprintf("linha %d: classe de imobilizado não encontrada", i+1), nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("checar classe de imobilizado %s: %w", l.ClasseImobilizadoID, err)
+		}
+	}
+	return "", nil
 }
 
 // parseMesCompetencia exige o formato YYYY-MM-DD com dia fixo 01 —

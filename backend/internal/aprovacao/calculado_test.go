@@ -248,13 +248,13 @@ func TestResolve_SemAlcadaCadastrada(t *testing.T) {
 }
 
 // TestResolverParaTipo cobre a fábrica de dispatch — "transferencia"/
-// "inclusao_sfc" (ResolverCalculado), "inclusao" (AutorizadorNominal, Story
-// 3.3) e "imobilizado"/"obras" (ainda não suportados).
+// "inclusao_sfc" (ResolverCalculado), "inclusao"/"imobilizado"
+// (AutorizadorNominal, Stories 3.3/3.4) e "obras" (ainda não suportado).
 func TestResolverParaTipo(t *testing.T) {
 	db, _, closeFn := newAprovacaoSQLMock(t)
 	defer closeFn()
 
-	if _, err := ResolverParaTipo("imobilizado", db); err != ErrTipoNaoSuportado {
+	if _, err := ResolverParaTipo("obras", db); err != ErrTipoNaoSuportado {
 		t.Fatalf("esperado ErrTipoNaoSuportado, obtido %v", err)
 	}
 	resolver, err := ResolverParaTipo("transferencia", db)
@@ -276,5 +276,16 @@ func TestResolverParaTipo(t *testing.T) {
 	}
 	if _, ok := resolverInclusao.(*AutorizadorNominal); !ok {
 		t.Fatalf("esperado *AutorizadorNominal para 'inclusao', obtido %T", resolverInclusao)
+	}
+
+	// Story 3.4: "imobilizado" mapeia para a MESMA instância/tipo concreto
+	// *AutorizadorNominal que "inclusao" — nenhuma tabela/motor próprio
+	// (Design Notes da spec 3.4).
+	resolverImobilizado, err := ResolverParaTipo("imobilizado", db)
+	if err != nil || resolverImobilizado == nil {
+		t.Fatalf("esperado Resolver não-nil sem erro para 'imobilizado', obtido resolver=%v err=%v", resolverImobilizado, err)
+	}
+	if _, ok := resolverImobilizado.(*AutorizadorNominal); !ok {
+		t.Fatalf("esperado *AutorizadorNominal para 'imobilizado', obtido %T", resolverImobilizado)
 	}
 }

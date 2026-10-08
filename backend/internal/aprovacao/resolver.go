@@ -44,9 +44,10 @@ type DBTX interface {
 
 // ErrTipoNaoSuportado é devolvido por ResolverParaTipo para qualquer
 // tipo_solicitacao fora do mapeado até agora — "transferencia" (3.1),
-// "inclusao_sfc" (3.2) e "inclusao" (3.3) (Boundaries "Never" da spec 3.3:
-// "imobilizado"/"obras" ainda não têm Resolver implementado; histórias 3.4-
-// 3.5 estendem este mapa, nunca reimplementam o dispatch tipo->resolver).
+// "inclusao_sfc" (3.2), "inclusao" (3.3) e "imobilizado" (3.4) (Boundaries
+// "Never" da spec 3.4: "obras" ainda não tem Resolver implementado; a
+// história 3.5 estende este mapa, nunca reimplementa o dispatch
+// tipo->resolver).
 var ErrTipoNaoSuportado = errors.New("tipo de solicitação não suportado ainda")
 
 // ResolverParaTipo é a ÚNICA função de dispatch tipo->resolver do sistema
@@ -58,9 +59,13 @@ func ResolverParaTipo(tipo string, db DBTX) (Resolver, error) {
 		// Transferência (Epic 3 Cross-Story Dependencies) — nenhuma lógica
 		// nova neste pacote.
 		return NovoResolverCalculado(db), nil
-	case "inclusao":
+	case "inclusao", "imobilizado":
 		// Story 3.3: Inclusão (plain) usa o motor de autorizador nominal —
-		// 2ª implementação de Resolver (AD-2).
+		// 2ª implementação de Resolver (AD-2). Story 3.4: Imobilizado
+		// reaproveita a MESMA instância/tabela (`autorizadores_formulario`)
+		// — FR-11 agrupa inclusão+imobilizado+obras sob o mesmo mecanismo
+		// nominal; `nominal.go` já é agnóstico de tipo (consulta só por
+		// CC/colaborador/faixa de valor), nenhuma parametrização nova.
 		return NovoAutorizadorNominal(db), nil
 	default:
 		return nil, ErrTipoNaoSuportado
