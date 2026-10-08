@@ -8,7 +8,18 @@ services:
       - "8081:8081"
     environment:
       - PORT=8081
+      # DATABASE_URL: só o runner de migrations usa esta conexão (role
+      # owner/superuser do Postgres do container `db` — REVOKE não tem
+      # efeito sobre ela, Design Notes da Story 4.1).
       - DATABASE_URL=postgres://${DB_USER:-fb_apu05}:${DB_PASSWORD:-fb_apu05}@db:5432/${DB_NAME:-fb_apu05}?sslmode=disable
+      # DATABASE_URL_APP/DATABASE_URL_PRIVILEGIADA (Story 4.1, AD-4): as
+      # roles fb_apu05_app/fb_apu05_privilegiado são criadas pela migration
+      # 010 com senha dev default "changeme" (texto estático — não lê
+      # DB_APP_PASSWORD/DB_PRIVILEGIADA_PASSWORD; mudar essas vars aqui NÃO
+      # rotaciona a senha da role no Postgres por si só, precisa de um
+      # ALTER ROLE manual em sincronia).
+      - DATABASE_URL_APP=postgres://fb_apu05_app:${DB_APP_PASSWORD:-changeme}@db:5432/${DB_NAME:-fb_apu05}?sslmode=disable
+      - DATABASE_URL_PRIVILEGIADA=postgres://fb_apu05_privilegiado:${DB_PRIVILEGIADA_PASSWORD:-changeme}@db:5432/${DB_NAME:-fb_apu05}?sslmode=disable
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-dev-key-change-me}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}

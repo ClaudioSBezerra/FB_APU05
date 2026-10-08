@@ -20,6 +20,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -93,4 +94,21 @@ func GetUserIDFromContext(r *http.Request) string {
 	}
 	userID, _ := claims["user_id"].(string)
 	return userID
+}
+
+// jsonErrConflitoVersao escreve o envelope de conflito de lock otimista da
+// Story 4.1 (I/O Matrix da spec): {"erro":{"codigo":"conflito_versao",
+// "mensagem":string,"versao_atual":int}} — formato aninhado "erro",
+// deliberadamente distinto do jsonErr "error" flat já existente (fica ao
+// lado, nunca o substitui: nenhum chamador de jsonErr precisa mudar).
+func jsonErrConflitoVersao(w http.ResponseWriter, versaoAtual int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"erro": map[string]interface{}{
+			"codigo":       "conflito_versao",
+			"mensagem":     "a solicitação já foi assumida ou não está mais aberta",
+			"versao_atual": versaoAtual,
+		},
+	})
 }
