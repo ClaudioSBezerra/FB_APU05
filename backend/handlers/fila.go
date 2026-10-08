@@ -56,7 +56,7 @@ func ListarFilaHandler(db *sql.DB) http.HandlerFunc {
 			SELECT id, tipo_solicitacao, centro_custo_id, status, versao, created_at
 			FROM solicitacoes
 			WHERE status = 'aberta'
-			ORDER BY created_at ASC
+			ORDER BY created_at ASC, id ASC
 			LIMIT $1 OFFSET $2
 		`, tamanho, (pagina-1)*tamanho)
 		if err != nil {

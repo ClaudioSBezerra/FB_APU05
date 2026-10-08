@@ -10,6 +10,11 @@ ALTER TABLE solicitacoes ADD COLUMN IF NOT EXISTS administrador_id UUID REFERENC
 
 CREATE INDEX IF NOT EXISTS idx_solicitacoes_administrador_id ON solicitacoes (administrador_id);
 
+-- A listagem da fila (ListarFilaHandler) filtra `status = 'aberta'` e
+-- ordena por `created_at` — mesmo padrão das colunas de FK já indexadas
+-- nesta tabela (migration 006: solicitante_id, centro_custo_id).
+CREATE INDEX IF NOT EXISTS idx_solicitacoes_status_created_at ON solicitacoes (status, created_at);
+
 -- (b) Separação de roles (AD-4) — backstop TÉCNICO, não convenção de code
 -- review. Por que a role atual (POSTGRES_USER/DATABASE_URL) não serve para
 -- o lado restrito: ela é owner das tabelas e, no Postgres, owners (e

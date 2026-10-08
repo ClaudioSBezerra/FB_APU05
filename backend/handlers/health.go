@@ -14,22 +14,36 @@ type HealthResponse struct {
 
 var (
 	dbErrMu sync.RWMutex
-	dbErr   error
+	dbErrs  = map[string]error{}
 )
 
-// SetDBError registra o último erro de conexão com o banco (ou nil quando
-// conectado) para que HealthHandler possa refletir o estado real — chamado
-// pelo ciclo de vida da conexão em main.go (initDBAsync).
-func SetDBError(err error) {
+// SetDBError registra o último erro de conexão (ou nil quando conectado)
+// para a conexão identificada por `name`, para que HealthHandler possa
+// refletir o estado real — chamado pelo ciclo de vida de CADA conexão em
+// main.go (initDBAsync, connectWithRetry para dbApp/dbPrivileged). Uma
+// entrada por conexão (nunca uma flag única compartilhada): main.go sobe 3
+// pools de conexão em goroutines independentes, e uma flag única deixaria
+// o sucesso de uma mascarar a falha de outra, quebrando o gate de deploy
+// do AD-10 (/api/health precisa refletir falha de QUALQUER uma das 3).
+func SetDBError(name string, err error) {
 	dbErrMu.Lock()
 	defer dbErrMu.Unlock()
-	dbErr = err
+	if err == nil {
+		delete(dbErrs, name)
+	} else {
+		dbErrs[name] = err
+	}
 }
 
 func getDBError() error {
 	dbErrMu.RLock()
 	defer dbErrMu.RUnlock()
-	return dbErr
+	for _, err := range dbErrs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // HealthHandler responde GET /api/health — health-check de processo usado

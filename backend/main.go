@@ -91,12 +91,12 @@ func connectWithRetry(envVar, rotulo string, maxOpenConns int) *sql.DB {
 				conn.SetMaxIdleConns(15)
 				conn.SetConnMaxLifetime(15 * time.Minute)
 				fmt.Printf("Successfully connected to the database (%s)!\n", rotulo)
-				handlers.SetDBError(nil)
+				handlers.SetDBError(rotulo, nil)
 				return conn
 			}
 			_ = conn.Close()
 		}
-		handlers.SetDBError(fmt.Errorf("%s: attempt %d: %v", rotulo, attempt, err))
+		handlers.SetDBError(rotulo, fmt.Errorf("%s: attempt %d: %v", rotulo, attempt, err))
 		fmt.Printf("Failed to connect to database (%s, attempt %d): %v. Retrying in 5s...\n", rotulo, attempt, err)
 		time.Sleep(5 * time.Second)
 	}
@@ -161,7 +161,7 @@ func initDBAsync() {
 					db = conn
 					dbErr = nil
 					dbMutex.Unlock()
-					handlers.SetDBError(nil)
+					handlers.SetDBError("migrations", nil)
 
 					fmt.Println("Successfully connected to the database!")
 					onDBConnected()
@@ -175,7 +175,7 @@ func initDBAsync() {
 			dbMutex.Lock()
 			dbErr = fmt.Errorf("attempt %d: %v", attempt, err)
 			dbMutex.Unlock()
-			handlers.SetDBError(dbErr)
+			handlers.SetDBError("migrations", dbErr)
 
 			fmt.Printf("Failed to connect to database (attempt %d): %v. Retrying in 5s...\n", attempt, err)
 			time.Sleep(5 * time.Second)
