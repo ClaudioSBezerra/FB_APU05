@@ -146,3 +146,11 @@ source_spec: `spec-4-5-finalizar-solicitacao.md`
 severity: medium
 reason: Mesmo padrão em TODAS as demais escritas do repositório (fila.Assumir/MarcarPendencia/Comentar, exportacao.GerarLoteDespesa/GerarLoteObra) — nenhuma usa BeginTx(ctx,...)/ExecContext; convenção já estabelecida em todo o backend, não um risco novo desta story.
 status: open
+
+### DW-17: Nenhum teste no repositório (antigo ou novo) exercita RequireAuth(next, "") com um perfil diferente de "administrador" — o comportamento "rota aberta a qualquer perfil autenticado" que esta story
+origin: spec-deferred 7d011ed179d8
+location: backend/handlers/middleware_test.go
+source_spec: `spec-5-1-visualizar-painel-consolidado-de-solicitacoes.md`
+severity: low
+reason: `painel_test.go` chama ObterPainelHandler diretamente, sem passar pelo middleware; `middleware_test.go` só cobre perfilExigido não vazio ("administrador"). A lógica foi verificada por leitura (middleware.go: `if perfilExigido != ""`) e está correta — mas o caminho perfilExigido="" já existia antes desta story (usado por POST /api/solicitacoes) e middleware.go não foi tocado neste diff, então a lacuna de teste é anterior a esta story, não introduzida por ela.
+status: open
