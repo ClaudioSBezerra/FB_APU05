@@ -16,6 +16,7 @@ package exportacao
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 )
 
 // ExportadorSAP é a interface única de exportação SAP (AD-3). v1 só
@@ -38,6 +39,18 @@ type ExportadorSAP interface {
 	// de Aviso de verba duplicada de GerarLoteDespesa (Design Notes da spec
 	// 4.4: atribuído explicitamente à Story 4.3).
 	GerarLoteObra(db *sql.DB, solicitacaoIDs []string, administradorID, chaveIdempotencia string) (Lote, []Bloqueio, error)
+
+	// Finalizar (Story 4.5, FR-14) encerra a solicitação numa ÚNICA
+	// transação pela conexão PRIVILEGIADA (AD-5: mesma linha/lock de
+	// `solicitacoes` que GerarLoteDespesa/GerarLoteObra já usam): muda
+	// `status` via lock otimista (`finalizada_sucesso`/`finalizada_erro`),
+	// migra as linhas `exportacoes_sap` da solicitação de `GERADO` para
+	// `FINALIZADO`, e — só quando `resultado="sucesso"` — resolve cada
+	// linha de Obras `ordem_investimento='CRIAR'` criando a ordem real em
+	// `obra_ordens` a partir do `numero_ordem` informado em `ordensCriadas`
+	// (Intent/Boundaries da spec 4.5: nunca gerado/inventado pelo backend).
+	// Qualquer falha recusa a operação INTEIRA — nenhuma escrita parcial.
+	Finalizar(db *sql.DB, solicitacaoID string, versaoLida int, administradorID, resultado string, ordensCriadas []OrdemCriada) (Solicitacao, error)
 }
 
 // Bloqueio é uma solicitação do lote Obra que NÃO entrou no arquivo nem em
@@ -67,6 +80,30 @@ type Lote struct {
 type Aviso struct {
 	Codigo              string
 	SolicitacoesEmRisco []string
+}
+
+// OrdemCriada (Story 4.5) é 1 item de `ordens_criadas` no corpo de
+// Finalizar — o par (linha de Obras `ordem_investimento='CRIAR'`,
+// `numero_ordem` real informado pelo administrador) que resolve essa
+// linha. `NumeroOrdem` nunca é gerado/inventado por este pacote (Intent da
+// spec): vem sempre do corpo, de onde o handler já o leu com TrimSpace
+// aplicado.
+type OrdemCriada struct {
+	LinhaID     string
+	NumeroOrdem string
+}
+
+// Solicitacao (Story 4.5) é a projeção mínima devolvida por Finalizar — só
+// os campos que o handler HTTP precisa para montar a resposta (mesma
+// projeção mínima duplicada por pacote de fila.Solicitacao, Code Map da
+// spec: cada pacote de domínio isolado tem a sua própria, nunca importa a
+// de outro).
+type Solicitacao struct {
+	ID              string
+	TipoSolicitacao string
+	Status          string
+	AdministradorID string
+	Versao          int
 }
 
 // Sentinelas traduzidos pelo handler HTTP (handlers/exportacao.go) nos
@@ -104,4 +141,36 @@ var (
 	// ErrExercicioMisto -> 400: as linhas das solicitações do lote (que têm
 	// `mes` preenchido) caem em mais de um exercício orçamentário (ano).
 	ErrExercicioMisto = errors.New("exportacao: solicitações com exercícios orçamentários diferentes")
+
+	// ErrNaoExportada -> 409 (Story 4.5): nenhuma linha `exportacoes_sap`
+	// com `status='GERADO'` existe para a solicitação — Finalizar exige
+	// recálculo server-side de exportação prévia (Boundaries "Always" da
+	// spec 4.5); a operação inteira é recusada (rollback), nenhuma escrita
+	// parcial.
+	ErrNaoExportada = errors.New("exportacao: solicitação ainda não foi exportada")
+
+	// ErrOrdensCriadasInvalidas -> 400 (Story 4.5): `ordensCriadas` não
+	// corresponde 1:1 às linhas `solicitacao_obras_linhas` com
+	// `ordem_investimento='CRIAR'` da solicitação (falta linha CRIAR, sobra
+	// `linha_id` extra, ou aponta linha que não é CRIAR/não é desta
+	// solicitação) — I/O Matrix da spec 4.5.
+	ErrOrdensCriadasInvalidas = errors.New("exportacao: ordens_criadas não corresponde às linhas 'CRIAR' desta solicitação")
+
+	// ErrOrdemJaExiste -> 409 (Story 4.5): o `numero_ordem` informado já
+	// existe em `obra_ordens` (`UNIQUE obra_ordens.numero_ordem`, migration
+	// 009) — detectado pela violação de unicidade do Postgres, nunca por
+	// um SELECT prévio (evita corrida entre a checagem e o INSERT).
+	ErrOrdemJaExiste = errors.New("exportacao: numero_ordem já existe")
 )
+
+// ErrConflitoVersao (Story 4.5) é devolvido por Finalizar quando o UPDATE
+// condicional de `solicitacoes` afeta 0 linhas mas a solicitação EXISTE —
+// mesma forma/motivo de fila.ErrConflitoVersao (outro administrador já
+// mudou a versão, ou o status já não é 'em_atendimento').
+type ErrConflitoVersao struct {
+	VersaoAtual int
+}
+
+func (e *ErrConflitoVersao) Error() string {
+	return fmt.Sprintf("exportacao: conflito de versão: versão atual é %d", e.VersaoAtual)
+}

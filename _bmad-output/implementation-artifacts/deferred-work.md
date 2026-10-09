@@ -130,3 +130,19 @@ source_spec: `spec-4-4-gerar-lote-obra.md`
 severity: medium
 reason: GerarLoteDespesa (internal/exportacao/vba.go, Story 4.3) tem exatamente o mesmo formato de loop — não é um risco novo desta story.
 status: open
+
+### DW-15: lerFinalizarRequest não tem teste para corpo malformado, erro de io.ReadAll, ou overflow do MaxBytesReader de 1 MiB.
+origin: spec-deferred 6b48adf9d851
+location: backend/handlers/finalizar.go (lerFinalizarRequest)
+source_spec: `spec-4-5-finalizar-solicitacao.md`
+severity: low
+reason: Mesmo padrão já presente, sem teste, em TODOS os demais lerXRequest do pacote handlers (lerPendenciaOuComentarioRequest, lerGerarLoteDespesaRequest, lerGerarLoteObraRequest — confirmado por grep, nenhum testa corpo malformado); não é um risco novo desta story.
+status: open
+
+### DW-16: ExportadorVBA.Finalizar nunca propaga o context.Context da requisição HTTP para a transação (sem BeginTx(ctx,...)/...Context) — uma requisição cancelada/com timeout no cliente não cancela a transação
+origin: spec-deferred 0cb0d913d23a
+location: backend/internal/exportacao/finalizar.go (Finalizar)
+source_spec: `spec-4-5-finalizar-solicitacao.md`
+severity: medium
+reason: Mesmo padrão em TODAS as demais escritas do repositório (fila.Assumir/MarcarPendencia/Comentar, exportacao.GerarLoteDespesa/GerarLoteObra) — nenhuma usa BeginTx(ctx,...)/ExecContext; convenção já estabelecida em todo o backend, não um risco novo desta story.
+status: open

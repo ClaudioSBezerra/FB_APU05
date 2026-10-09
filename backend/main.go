@@ -388,6 +388,16 @@ func main() {
 	// real no SAP para uma linha 'CRIAR' (só na finalização).
 	http.HandleFunc("POST /api/solicitacoes/lote-obra", handlers.RequireAuth(withPrivilegedDB(handlers.GerarLoteObraHandler), "administrador"))
 
+	// Finalizar solicitação (Story 4.5, Epic 4, FR-14/AD-3/AD-5) — terceira
+	// rota de internal/exportacao: encerra a solicitação já exportada
+	// (lote Despesa ou Obra), mudando `status` para `finalizada_sucesso`/
+	// `finalizada_erro` via lock otimista, migrando `exportacoes_sap` de
+	// GERADO para FINALIZADO e, só quando o resultado é sucesso, criando a
+	// ordem real em `obra_ordens` para cada linha de Obras 'CRIAR' — tudo
+	// numa única transação pela conexão PRIVILEGIADA (mesma conexão de
+	// internal/fila/GerarLote*).
+	http.HandleFunc("POST /api/solicitacoes/{id}/finalizar", handlers.RequireAuth(withPrivilegedDB(handlers.FinalizarSolicitacaoHandler), "administrador"))
+
 	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
 		var allowedClientIDs []string
 		for _, id := range strings.Split(os.Getenv("IAM_ALLOWED_CLIENT_IDS"), ",") {

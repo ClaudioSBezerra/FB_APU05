@@ -60,7 +60,7 @@ development_status:
   4-2-pendência-e-reabertura: done
   4-3-gerar-lote-despesa: awaiting-operator
   4-4-gerar-lote-obra: awaiting-operator
-  4-5-finalizar-solicitação: backlog
+  4-5-finalizar-solicitação: done
   epic-4-retrospective: optional
 
   epic-5: backlog
