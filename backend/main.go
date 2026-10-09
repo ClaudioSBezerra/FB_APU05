@@ -398,6 +398,14 @@ func main() {
 	// internal/fila/GerarLote*).
 	http.HandleFunc("POST /api/solicitacoes/{id}/finalizar", handlers.RequireAuth(withPrivilegedDB(handlers.FinalizarSolicitacaoHandler), "administrador"))
 
+	// Painel consolidado (Story 5.1, Epic 5, FR-17, AD-1/AD-14) — único
+	// handler de "Painéis e Indicadores": só leitura (withDB, conexão
+	// GERAL), lê exclusivamente de painel_snapshots (migration 015), nunca
+	// agrega solicitacoes/tabelas relacionadas direto. Aberta a qualquer
+	// usuário autenticado (RequireAuth(..., "") — nenhuma AC pede restrição
+	// a administrador, mesmo padrão de POST /api/solicitacoes).
+	http.HandleFunc("GET /api/paineis/{painel}", handlers.RequireAuth(withDB(handlers.ObterPainelHandler), ""))
+
 	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
 		var allowedClientIDs []string
 		for _, id := range strings.Split(os.Getenv("IAM_ALLOWED_CLIENT_IDS"), ",") {

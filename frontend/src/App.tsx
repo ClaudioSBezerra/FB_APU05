@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import Login from '@/pages/Login'
 import AuthCallback from '@/pages/AuthCallback'
 import AuthError from '@/pages/AuthError'
+import PainelConsolidado from '@/pages/PainelConsolidado'
 
 type HealthResponse = {
   status: string
@@ -76,6 +77,7 @@ function App() {
       <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/auth/error" element={<AuthError />} />
       <Route path="/" element={<Home />} />
+      <Route path="/painel" element={<PainelConsolidado />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
