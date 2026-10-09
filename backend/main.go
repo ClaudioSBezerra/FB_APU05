@@ -368,6 +368,16 @@ func main() {
 	http.HandleFunc("POST /api/solicitacoes/{id}/comentarios", handlers.RequireAuth(withPrivilegedDB(handlers.ComentarSolicitacaoHandler), ""))
 	http.HandleFunc("GET /api/solicitacoes/{id}", handlers.RequireAuth(withDB(handlers.ObterSolicitacaoHandler), ""))
 
+	// Gerar lote Despesa (Story 4.3, Epic 4, FR-15/AD-3) — primeira rota de
+	// internal/exportacao: recalcula elegibilidade (dono=sessão,
+	// status=em_atendimento), valida exercício único e risco de "verba
+	// duplicada", grava exportacoes_sap pela conexão PRIVILEGIADA (AD-4,
+	// mesma conexão de internal/fila) e monta o .xlsm via ZIP/XML
+	// reescrevendo um template fixo (AD-12). Nunca finaliza a solicitação
+	// (Story 4.5, backlog) nem aceita tipo_solicitacao="obras" (Lote-Obra é
+	// a Story 4.4).
+	http.HandleFunc("POST /api/solicitacoes/lote-despesa", handlers.RequireAuth(withPrivilegedDB(handlers.GerarLoteDespesaHandler), "administrador"))
+
 	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
 		var allowedClientIDs []string
 		for _, id := range strings.Split(os.Getenv("IAM_ALLOWED_CLIENT_IDS"), ",") {
