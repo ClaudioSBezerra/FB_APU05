@@ -355,6 +355,19 @@ func main() {
 	http.HandleFunc("GET /api/fila/solicitacoes", handlers.RequireAuth(withDB(handlers.ListarFilaHandler), "administrador"))
 	http.HandleFunc("POST /api/solicitacoes/{id}/assumir", handlers.RequireAuth(withPrivilegedDB(handlers.AssumirSolicitacaoHandler), "administrador"))
 
+	// Pendência e reabertura (Story 4.2, Epic 4) — 2 novas escritas em
+	// status/versao de `solicitacoes`, mesma linha/lock do AD-4:
+	// MarcarPendenciaHandler (administrador dono, em_atendimento->pendente) e
+	// ComentarSolicitacaoHandler (qualquer perfil autenticado pode chamar;
+	// só o solicitante dono tem o comentário aceito, fila.ErrNaoAutorizado ->
+	// 403 para os demais — por isso RequireAuth(..., "") aqui, não
+	// "administrador"). ObterSolicitacaoHandler é só leitura (withDB) —
+	// expõe o histórico de solicitacao_comentarios e a versao atual a quem
+	// é dono da solicitação (solicitante OU administrador).
+	http.HandleFunc("POST /api/solicitacoes/{id}/pendencia", handlers.RequireAuth(withPrivilegedDB(handlers.MarcarPendenciaHandler), "administrador"))
+	http.HandleFunc("POST /api/solicitacoes/{id}/comentarios", handlers.RequireAuth(withPrivilegedDB(handlers.ComentarSolicitacaoHandler), ""))
+	http.HandleFunc("GET /api/solicitacoes/{id}", handlers.RequireAuth(withDB(handlers.ObterSolicitacaoHandler), ""))
+
 	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
 		var allowedClientIDs []string
 		for _, id := range strings.Split(os.Getenv("IAM_ALLOWED_CLIENT_IDS"), ",") {

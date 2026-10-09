@@ -98,3 +98,11 @@ source_spec: `spec-3-5-abrir-obras-multi-linha.md`
 severity: low
 reason: Confirmado por leitura, mas nenhum campo numérico em todo o registry de cadastros (`valor_minimo`/`valor_maximo`/`teto` de `gerentes_aprovacao`, etc.) tem essa checagem — convenção sistêmica já estabelecida, não uma lacuna específica desta story.
 status: open
+
+### DW-11: Os testes de internal/fila.Comentar/MarcarPendencia usam sqlmock, que nunca executa o SQL real contra um Postgres — o CASE de reabertura (o mecanismo central desta story) nunca é verificado contra um
+origin: spec-deferred 089ac1442a6f
+location: backend/internal/fila/fila.go (Comentar, MarcarPendencia)
+source_spec: `spec-4-2-pendencia-e-reabertura.md`
+severity: medium
+reason: mock.ExpectQuery(...).WillReturnRows(...) fixa o resultado pós-transição independente do texto SQL executado; um CASE invertido (ex. fechar ativas em vez de reabrir encerradas) passaria TestComentar_ReabreDePendente, TestComentar_StatusJaAtivoPermanece e o teste de handler equivalente sem detecção. Resolver isso exige o primeiro arcabouço de teste de integração com Postgres real do repositório (nenhuma feature/migration tem isso hoje) — mesma categoria já deferida no triage log da Story 4.1 para a ACL real do AD-4. SQL conferido manualmente por leitura nesta passada: válido e correto.
+status: open

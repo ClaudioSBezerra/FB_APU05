@@ -12,6 +12,13 @@ package handlers
 // AssumirSolicitacaoHandler roda na conexão PRIVILEGIADA (withPrivilegedDB
 // — role fb_apu05_privilegiado, única com GRANT UPDATE nessas colunas,
 // AD-4) e delega inteiramente a internal/fila.Assumir.
+//
+// Story 4.2 (Pendência e reabertura) continua esse mesmo Writer path único
+// em handlers/pendencia.go (MarcarPendenciaHandler/ComentarSolicitacaoHandler
+// -> internal/fila.MarcarPendencia/Comentar, mesma conexão PRIVILEGIADA) e
+// adiciona ObterSolicitacaoHandler (só leitura, withDB) — nenhuma lógica
+// nova aqui neste arquivo, só esta nota para quem procurar o Writer path
+// completo de `solicitacoes` a partir deste cabeçalho.
 
 import (
 	"database/sql"

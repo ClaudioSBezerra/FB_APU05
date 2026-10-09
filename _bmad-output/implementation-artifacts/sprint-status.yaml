@@ -57,7 +57,7 @@ development_status:
 
   epic-4: backlog
   4-1-assumir-solicitação-da-fila: done
-  4-2-pendência-e-reabertura: backlog
+  4-2-pendência-e-reabertura: done
   4-3-gerar-lote-despesa: backlog
   4-4-gerar-lote-obra: backlog
   4-5-finalizar-solicitação: backlog
