@@ -8,7 +8,24 @@ review_loop_iteration: 0
 followup_review_recommended: false
 context: ['{project-root}/_bmad-output/planning-artifacts/architecture/architecture-FB_APU05-2026-10-06/ARCHITECTURE-SPINE.md']
 warnings: ['oversized']
-deferred: []
+deferred:
+  - summary: >-
+      Nenhum teste no repositório (antigo ou novo) exercita RequireAuth(next,
+      "") com um perfil diferente de "administrador" — o comportamento
+      "rota aberta a qualquer perfil autenticado" que esta story assume
+      como Boundary e que a diferencia de ListarFilaHandler.
+    evidence: |-
+      `painel_test.go` chama ObterPainelHandler diretamente, sem passar
+      pelo middleware; `middleware_test.go` só cobre perfilExigido não
+      vazio ("administrador"). A lógica foi verificada por leitura
+      (middleware.go: `if perfilExigido != ""`) e está correta — mas o
+      caminho perfilExigido="" já existia antes desta story (usado por
+      POST /api/solicitacoes) e middleware.go não foi tocado neste diff,
+      então a lacuna de teste é anterior a esta story, não introduzida
+      por ela.
+    location: >-
+      backend/handlers/middleware_test.go
+    severity: low
 ---
 
 <intent-contract>
@@ -89,6 +106,25 @@ deferred: []
 **Manual checks (if no CLI):**
 - `docker-compose up` e confirmar que `015_painel_snapshots.sql` roda sem erro; inserir manualmente algumas linhas de teste em `painel_snapshots` e confirmar que `/painel` no frontend renderiza os 3 agrupamentos.
 
+## Review Triage Log
+
+### 2026-10-09 — Review pass
+- verdicts: 13 findings — high 0, medium 0, low 7, false 6, maybe-false 0
+- findings:
+  - `[false]` `[reject]` Frontmatter `status` ficou `in-review` enquanto o `## Auto Run Result` já existente afirma "Status final `done`" — artefato da própria transição de status exigida por esta passagem de revisão (status muda para `in-review` antes do diff ser gerado); o Finalize desta mesma passagem reescreve `## Auto Run Result` e volta `status` para `done`, resolvendo a aparente contradição.
+  - `[false]` `[reject]` `deferred: []` vazio apesar de Boundaries/Design Notes documentarem itens fora de escopo (job de preenchimento de `painel_snapshots`, indicadores futuros) — a chave `deferred` registra achados de revisão não resolvidos, não exclusões de escopo já deliberadas e justificadas (PRD §7.3, Questão Aberta 14); são Boundaries, não deferimentos.
+  - `[low]` `[patch]` Nenhum ponto de navegação para `/painel` — `Home` não tinha link para a nova página, só acessível digitando a URL. Corrigido: adicionado link "Ver painel consolidado de solicitações" em `frontend/src/App.tsx` (`Home`).
+  - `[low]` `[reject]` Query de `painel_snapshots` sem `LIMIT` — preocupação hipotética de volume futuro sem dano demonstrado na escala atual/previsível de centros de custo; o fix (paginação) adicionaria complexidade não pedida por nenhuma AC.
+  - `[low]` `[patch]` `toLocaleString()` do timestamp sem locale explícito, inconsistente com o restante da página (texto fixo em PT-BR). Corrigido: `toLocaleString('pt-BR')` em `frontend/src/pages/PainelConsolidado.tsx`.
+  - `[false]` `[reject]` Possível atualização de estado após unmount no `useEffect` de fetch (sem abort/cleanup) — verificado que é exatamente o mesmo padrão do `useEffect` de `fetch('/api/health')` em `Home` (`frontend/src/App.tsx`), que também não tem cleanup; convenção já estabelecida no código-base, não introduzida por esta story.
+  - `[low]` `[reject]` Branch `r.Method != http.MethodGet` em `ObterPainelHandler` é código morto (rota já registrada só para GET) — verificado que o mesmo padrão já existe em `ListarFilaHandler` (`backend/handlers/fila.go`), padrão que o Code Map desta spec instruiu replicar exatamente; convenção consistente, não vale corrigir isoladamente aqui.
+  - `[low]` `[defer]` Nenhum teste no repositório (`painel_test.go` chama o handler direto, sem passar pelo middleware) exercita `RequireAuth(next, "")` com um perfil não administrador — o comportamento "aberta a qualquer perfil autenticado" que este Boundary assume. Ver item correspondente em `deferred:` no frontmatter.
+  - `[false]` `[reject]` Erro de `json.NewEncoder(w).Encode(...)` ignorado no caminho de sucesso sem log — verificado que o padrão `_ = json.NewEncoder(w).Encode(...)` é idêntico em todos os outros handlers do código-base (fila.go, pendencia.go, auth.go, cadastros.go, etc.); convenção universal e deliberada, não introduzida por esta story.
+  - `[low]` `[defer]` `middleware_test.go` só cobre `perfilExigido` não vazio ("administrador"), nunca o caminho `perfilExigido=""` que esta rota usa — mesma causa raiz do item acima (grupo), ver `deferred:` no frontmatter.
+  - `[false]` `[reject]` `PainelConsolidado.tsx` não tem nenhuma cobertura de teste executada — verificado (e já reconhecido no próprio `## Auto Run Result` desta spec) que não existe nenhum runner de teste de componente frontend em todo o projeto; limitação pré-existente, não introduzida por esta story.
+  - `[low]` `[defer]` (mesma causa raiz dos dois itens `defer` acima) Nenhuma rota exercitada ponta-a-ponta confirma que um perfil não administrador recebe 200 (não 403) em `/api/paineis/consolidado` via `RequireAuth`. Ver item correspondente em `deferred:` no frontmatter.
+  - `[false]` `[reject]` Dependência da migration 015 em `ALTER DEFAULT PRIVILEGES` da migration 010 (sem `GRANT` explícito) seria uma suposição não verificada — verificado por leitura de `migrations/010_assumir_fila.sql`: o comentário ali documenta explicitamente que o comando (sem `FOR ROLE`) vincula à role que executa todas as migrations via `DATABASE_URL`, e confirmado que as migrations 011 e 012 já criaram tabelas novas contando com exatamente o mesmo mecanismo, sem problema relatado.
+
 ## Auto Run Result
 
 **Recuperação manual (2026-10-09) — sessão bmad-loop interrompida por stall (limite de uso) antes de rodar sua própria revisão ou commitar.** Implementação já estava completa ao parar (primeira story do projeto a tocar o frontend além do scaffold de login); nenhum patch de código foi necessário. Verificação própria cobriu:
@@ -99,3 +135,16 @@ deferred: []
 Esta é a última story do backlog (Epic 5 é o último epic). Status final `done`.
 
 **Riscos residuais:** nenhum novo. O job que calcula/preenche `painel_snapshots` continua fora do escopo (decisão de negócio/arquitetura aberta, PRD §7.3) — em produção, o painel mostrará os 3 arrays vazios até essa decisão ser tomada, comportamento correto e já testado.
+
+**Passagem de revisão de acompanhamento (2026-10-09) — bmad-build-auto, re-despacho sobre spec `done`.** A recuperação manual anterior já tinha a implementação completa e verificada, mas nunca passou pela revisão em camadas (blind-hunter, edge-case-hunter, verification-gap, intent-alignment); esta passagem supre essa lacuna.
+
+- **Resumo da mudança implementada:** nenhuma mudança de comportamento novo — apenas dois ajustes de polish no frontend identificados pela revisão (ver abaixo). O escopo da story (endpoint `GET /api/paineis/{painel}`, tabela `painel_snapshots`, página `PainelConsolidado`) permanece como implementado na passagem anterior.
+- **Arquivos alterados nesta passagem:**
+  - `frontend/src/App.tsx` — adiciona link "Ver painel consolidado de solicitações" em `Home`, único ponto de navegação até então ausente para `/painel`.
+  - `frontend/src/pages/PainelConsolidado.tsx` — `toLocaleString()` do timestamp passa a fixar `'pt-BR'`, consistente com o restante da página.
+- **Revisão (4 camadas, 13 achados no total — ver `## Review Triage Log`):** 2 `patch` aplicados (ambos `low`: link de navegação ausente; locale do timestamp), 3 `defer` (todos `low`, mesma causa raiz: ausência de teste executado para `RequireAuth(..., "")` com perfil não administrador nesta rota — pré-existente, não introduzida por esta story; registrado em `deferred:` no frontmatter), 8 `reject` (6 `false` após verificação direta no código, 2 `low` rejeitados por seguirem convenção já estabelecida no código-base sem dano demonstrado). Nenhum `intent_gap` nem `bad_spec` — nenhum retrabalho de spec ou código central foi necessário.
+- **Recomendação de revisão de acompanhamento:** `false` — nenhum `patch` desta passagem foi `high` (ambos foram `low`), e esta já é uma passagem de acompanhamento (`followup_pass`), então convergência foi atingida.
+- **Verificação executada (após os 2 patches):**
+  - Backend: `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./... -count=1` — todos OK (sem alteração de arquivos backend nesta passagem, apenas confirmação de que nada regrediu).
+  - Frontend: `npx tsc --noEmit` (sem erros), `npm run build` (sucesso), `npm run lint` (0 erros, mesmo warning pré-existente em `AuthContext.tsx`).
+- **Riscos residuais:** nenhum novo além do já registrado em `deferred:` (lacuna de teste pré-existente para `RequireAuth` com perfil vazio) e do risco de negócio já conhecido (job de preenchimento de `painel_snapshots` fora de escopo, PRD §7.3).

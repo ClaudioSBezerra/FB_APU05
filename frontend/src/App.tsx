@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import Login from '@/pages/Login'
 import AuthCallback from '@/pages/AuthCallback'
@@ -57,6 +57,9 @@ function Home() {
           <p>
             Logado como <strong>{user.email}</strong> ({user.perfil})
           </p>
+          <Link to="/painel" className="text-xs text-primary underline hover:no-underline">
+            Ver painel consolidado de solicitações
+          </Link>
           <button
             type="button"
             onClick={logout}

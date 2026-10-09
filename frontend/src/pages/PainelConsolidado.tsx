@@ -101,7 +101,7 @@ function PainelConsolidado() {
         <div className="flex w-full max-w-3xl flex-col gap-4" data-testid="painel-consolidado">
           <p className="text-xs text-muted-foreground">
             {painel.gerado_em
-              ? `Dados calculados em ${new Date(painel.gerado_em).toLocaleString()}`
+              ? `Dados calculados em ${new Date(painel.gerado_em).toLocaleString('pt-BR')}`
               : 'Ainda não há snapshot calculado para este painel.'}
           </p>
           <ListaAgrupamento titulo="Por tipo de solicitação" itens={painel.por_tipo} />
