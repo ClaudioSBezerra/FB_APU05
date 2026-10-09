@@ -44,8 +44,19 @@ const abaSAPExportNome = "SAP Export"
 // "SAP Export" a partir de `linhas` e devolve o novo `.xlsm` pronto para
 // download. Falha se o template não tiver uma planilha "SAP Export" (erro
 // de configuração/ativo externo — Design Notes da spec; não é um dos
-// sentinelas de negócio traduzidos pelo handler).
+// sentinelas de negócio traduzidos pelo handler). Wrapper fino (Story 4.4)
+// sobre `montarXLSMComLinhas` — zero mudança de assinatura/comportamento
+// desta função nem dos testes existentes (xlsm_test.go).
 func montarXLSM(templateBytes []byte, linhas []linhaExportacao) ([]byte, error) {
+	return montarXLSMComLinhas(templateBytes, montarSheetDataXML(linhas))
+}
+
+// montarXLSMComLinhas (Story 4.4) é o núcleo antes exclusivo de montarXLSM,
+// generalizado para receber o `<sheetData>` já montado em XML (em vez de
+// `[]linhaExportacao`) — reaproveitado tanto por montarXLSM (lote Despesa)
+// quanto por ExportadorVBA.GerarLoteObra (via montarSheetDataXMLObra,
+// obra.go), já que as duas planilhas têm layouts de coluna diferentes.
+func montarXLSMComLinhas(templateBytes []byte, sheetDataXML string) ([]byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(templateBytes), int64(len(templateBytes)))
 	if err != nil {
 		return nil, fmt.Errorf("xlsm: abrir template: %w", err)
@@ -71,7 +82,7 @@ func montarXLSM(templateBytes []byte, linhas []linhaExportacao) ([]byte, error) 
 			// para o arquivo novo.
 			continue
 		case f.Name == caminhoAba:
-			if err := escreverAbaReescrita(zw, f, linhas); err != nil {
+			if err := escreverAbaReescrita(zw, f, sheetDataXML); err != nil {
 				return nil, err
 			}
 		case f.Name == "xl/workbook.xml":
@@ -175,10 +186,12 @@ func extrairTargetDoRelationship(relsXML, rid string) (string, error) {
 }
 
 // escreverAbaReescrita substitui o conteúdo de `<sheetData>` da planilha
-// "SAP Export" pelas linhas calculadas a partir de `linhas` — todo o resto
-// do XML da planilha (formatação, larguras de coluna, etc.) é preservado
-// como está no template.
-func escreverAbaReescrita(zw *zip.Writer, f *zip.File, linhas []linhaExportacao) error {
+// "SAP Export" pelo XML já pronto em `sheetDataXML` (Story 4.4: recebe o
+// `<sheetData>` pronto em vez de `[]linhaExportacao`, já que lotes Despesa
+// e Obra montam esse XML com helpers diferentes — montarSheetDataXML vs.
+// montarSheetDataXMLObra) — todo o resto do XML da planilha (formatação,
+// larguras de coluna, etc.) é preservado como está no template.
+func escreverAbaReescrita(zw *zip.Writer, f *zip.File, sheetDataXML string) error {
 	rc, err := f.Open()
 	if err != nil {
 		return fmt.Errorf("xlsm: abrir planilha %q: %w", abaSAPExportNome, err)
@@ -196,7 +209,7 @@ func escreverAbaReescrita(zw *zip.Writer, f *zip.File, linhas []linhaExportacao)
 
 	var reescrito bytes.Buffer
 	reescrito.Write(conteudo[:loc[0]])
-	reescrito.WriteString(montarSheetDataXML(linhas))
+	reescrito.WriteString(sheetDataXML)
 	reescrito.Write(conteudo[loc[1]:])
 
 	w, err := zw.CreateHeader(&zip.FileHeader{Name: f.Name, Method: zip.Deflate, Modified: f.Modified})
@@ -263,6 +276,43 @@ func montarSheetDataXML(linhas []linhaExportacao) string {
 			formatarMesExportacao(l.Mes),
 			formatarValorExportacao(l.Valor),
 			l.Lado,
+			l.SolicitanteNome,
+		}
+		fmt.Fprintf(&sb, `<row r="%d">`, numeroLinha)
+		for coluna, valor := range colunas {
+			ref := fmt.Sprintf("%s%d", colunaParaLetra(coluna), numeroLinha)
+			sb.WriteString(`<c r="`)
+			sb.WriteString(ref)
+			sb.WriteString(`" t="inlineStr"><is><t>`)
+			sb.WriteString(escaparTextoXML(valor))
+			sb.WriteString(`</t></is></c>`)
+		}
+		sb.WriteString("</row>")
+	}
+	sb.WriteString("</sheetData>")
+	return sb.String()
+}
+
+// montarSheetDataXMLObra (Story 4.4) monta o `<sheetData>` do lote Obra —
+// mesmos helpers de montarSheetDataXML (colunaParaLetra/escaparTextoXML/
+// formatarValorExportacao, já genéricos), layout de colunas próprio
+// (melhor-esforço, mesma ressalva de confirmação da Story 4.3): tipo_
+// solicitacao="obras"/solicitacao_id/classificacao/local_obra_codigo/
+// subgrupo_codigo/ordem_investimento/valor/lado/solicitante_nome.
+func montarSheetDataXMLObra(linhas []linhaExportacaoObra) string {
+	var sb strings.Builder
+	sb.WriteString("<sheetData>")
+	for i, l := range linhas {
+		numeroLinha := i + 1
+		colunas := []string{
+			l.TipoSolicitacao,
+			l.SolicitacaoID,
+			l.Classificacao,
+			l.LocalObraCodigo,
+			l.SubgrupoCodigo,
+			l.OrdemInvestimento,
+			formatarValorExportacao(l.Valor),
+			l.Lado.String,
 			l.SolicitanteNome,
 		}
 		fmt.Fprintf(&sb, `<row r="%d">`, numeroLinha)

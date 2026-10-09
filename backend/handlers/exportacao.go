@@ -34,6 +34,14 @@ import (
 // devolve exportacao.ErrTemplateAusente -> 503.
 const exportTemplateLoteDespesaDefault = "internal/exportacao/templates/lote_despesa.xlsm"
 
+// exportTemplateLoteObraDefault (Story 4.4) é o caminho padrão do template
+// `.xlsm` PRÓPRIO do lote Obra quando EXPORT_TEMPLATE_LOTE_OBRA não está
+// definida — mesma ressalva de ativo externo ausente do repositório
+// (Design Notes da spec 4.4). Sem ele neste caminho (nem em outro apontado
+// pela env var), GerarLoteObra devolve exportacao.ErrTemplateAusente ->
+// 503, só quando há pelo menos 1 solicitação incluível.
+const exportTemplateLoteObraDefault = "internal/exportacao/templates/lote_obra.xlsm"
+
 // gerarLoteDespesaRequest é o corpo de POST /api/solicitacoes/lote-despesa.
 // `administrador_id` NUNCA vem do corpo (Boundaries "Always" da spec:
 // sempre de GetUserIDFromContext, mesmo princípio dos demais handlers de
@@ -52,6 +60,62 @@ func exportTemplateLoteDespesaPath() string {
 		return caminho
 	}
 	return exportTemplateLoteDespesaDefault
+}
+
+// gerarLoteObraRequest é o corpo de POST /api/solicitacoes/lote-obra.
+// `administrador_id` NUNCA vem do corpo (mesmo princípio de
+// gerarLoteDespesaRequest). Sem o campo de aviso de verba duplicada — não
+// existe para o lote Obra (Design Notes da spec 4.4).
+type gerarLoteObraRequest struct {
+	SolicitacaoIDs    []string `json:"solicitacao_ids"`
+	ChaveIdempotencia string   `json:"chave_idempotencia"`
+}
+
+// exportTemplateLoteObraPath resolve o caminho do template a partir de
+// EXPORT_TEMPLATE_LOTE_OBRA, com o default acima quando a env var está
+// vazia/ausente.
+func exportTemplateLoteObraPath() string {
+	if caminho := os.Getenv("EXPORT_TEMPLATE_LOTE_OBRA"); caminho != "" {
+		return caminho
+	}
+	return exportTemplateLoteObraDefault
+}
+
+// lerGerarLoteObraRequest lê e valida estruturalmente o corpo (400 se
+// `solicitacao_ids` vazio, `chave_idempotencia` vazia, ou algum id não é
+// UUID) — mesma validação de lerGerarLoteDespesaRequest, sem o campo de
+// aviso; nenhuma validação de elegibilidade/negócio aqui, delegada
+// inteiramente a internal/exportacao.
+func lerGerarLoteObraRequest(w http.ResponseWriter, r *http.Request) (gerarLoteObraRequest, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	corpo, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "não foi possível ler o corpo da requisição")
+		return gerarLoteObraRequest{}, false
+	}
+
+	var req gerarLoteObraRequest
+	if err := json.Unmarshal(corpo, &req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "corpo da requisição inválido")
+		return gerarLoteObraRequest{}, false
+	}
+
+	if len(req.SolicitacaoIDs) == 0 {
+		jsonErr(w, http.StatusBadRequest, "campo 'solicitacao_ids' é obrigatório e não pode ser vazio")
+		return gerarLoteObraRequest{}, false
+	}
+	for _, id := range req.SolicitacaoIDs {
+		if !uuidFormatRegexp.MatchString(id) {
+			jsonErr(w, http.StatusBadRequest, "campo 'solicitacao_ids' contém um id em formato inválido")
+			return gerarLoteObraRequest{}, false
+		}
+	}
+	if strings.TrimSpace(req.ChaveIdempotencia) == "" {
+		jsonErr(w, http.StatusBadRequest, "campo 'chave_idempotencia' é obrigatório e não pode ser vazio")
+		return gerarLoteObraRequest{}, false
+	}
+
+	return req, true
 }
 
 // lerGerarLoteDespesaRequest lê e valida estruturalmente o corpo (400 se
@@ -106,7 +170,10 @@ func tratarErroExportacao(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, exportacao.ErrChaveIdempotenciaConflitante):
 		jsonErr(w, http.StatusConflict, "esta chave de idempotência já foi usada com um conjunto diferente de solicitações")
 	case errors.Is(err, exportacao.ErrTipoNaoElegivel):
-		jsonErr(w, http.StatusBadRequest, "solicitações do tipo 'obras' não fazem parte do lote de despesa")
+		// Mensagem genérica (Story 4.4): este sentinela cobre as duas
+		// direções — tipo='obras' no lote Despesa E tipo!='obras' no lote
+		// Obra (ver doc-comment de ErrTipoNaoElegivel).
+		jsonErr(w, http.StatusBadRequest, "uma ou mais solicitações não são do tipo elegível para este lote")
 	case errors.Is(err, exportacao.ErrExercicioMisto):
 		jsonErr(w, http.StatusBadRequest, "as solicitações selecionadas têm exercícios orçamentários diferentes")
 	case errors.Is(err, exportacao.ErrTemplateAusente):
@@ -163,6 +230,75 @@ func GerarLoteDespesaHandler(db *sql.DB) http.HandlerFunc {
 			"arquivo_nome":           "lote_despesa_" + lote.LoteID + ".xlsm",
 			"arquivo_base64":         base64.StdEncoding.EncodeToString(lote.ArquivoBytes),
 			"solicitacoes_incluidas": lote.SolicitacoesIncluidas,
+		})
+	}
+}
+
+// bloqueadosParaJSON converte []exportacao.Bloqueio no formato de resposta
+// HTTP — nunca nil (um slice vazio serializa como `[]`, nunca `null`),
+// mesmo quando nenhuma solicitação foi bloqueada.
+func bloqueadosParaJSON(bloqueados []exportacao.Bloqueio) []map[string]interface{} {
+	resp := make([]map[string]interface{}, 0, len(bloqueados))
+	for _, b := range bloqueados {
+		resp = append(resp, map[string]interface{}{
+			"solicitacao_id": b.SolicitacaoID,
+			"motivo":         b.Motivo,
+		})
+	}
+	return resp
+}
+
+// GerarLoteObraHandler — POST /api/solicitacoes/lote-obra (Story 4.4).
+// Nunca recalcula elegibilidade, monta o `.xlsm` ou grava `exportacoes_sap`
+// aqui — tudo delegado a internal/exportacao.ExportadorVBA.GerarLoteObra
+// (mesmo princípio de GerarLoteDespesaHandler).
+func GerarLoteObraHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		req, ok := lerGerarLoteObraRequest(w, r)
+		if !ok {
+			return
+		}
+
+		administradorID := GetUserIDFromContext(r)
+
+		exportador := exportacao.ExportadorVBA{TemplatePathObra: exportTemplateLoteObraPath()}
+		lote, bloqueados, err := exportador.GerarLoteObra(db, req.SolicitacaoIDs, administradorID, req.ChaveIdempotencia)
+		if err != nil {
+			if tratarErroExportacao(w, err) {
+				return
+			}
+			log.Printf("[Exportacao] Erro ao gerar lote de obra (administrador=%s): %v", administradorID, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if lote.LoteID == "" {
+			// Todo o lote bloqueado (I/O Matrix da spec 4.4) — sem
+			// lote_id/arquivo_*, nada foi gravado em exportacoes_sap.
+			log.Printf("[Exportacao] %s gerou lote de obra inteiramente bloqueado (%d solicitações bloqueadas, administrador=%s)", administradorID, len(bloqueados), administradorID)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"solicitacoes_incluidas": []string{},
+				"bloqueados":             bloqueadosParaJSON(bloqueados),
+			})
+			return
+		}
+
+		log.Printf("[Exportacao] %s gerou lote de obra %s (%d solicitações, %d bloqueadas)", administradorID, lote.LoteID, len(lote.SolicitacoesIncluidas), len(bloqueados))
+
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"lote_id":                lote.LoteID,
+			"arquivo_nome":           "lote_obra_" + lote.LoteID + ".xlsm",
+			"arquivo_base64":         base64.StdEncoding.EncodeToString(lote.ArquivoBytes),
+			"solicitacoes_incluidas": lote.SolicitacoesIncluidas,
+			"bloqueados":             bloqueadosParaJSON(bloqueados),
 		})
 	}
 }

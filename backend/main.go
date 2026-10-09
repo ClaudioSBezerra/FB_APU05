@@ -378,6 +378,16 @@ func main() {
 	// a Story 4.4).
 	http.HandleFunc("POST /api/solicitacoes/lote-despesa", handlers.RequireAuth(withPrivilegedDB(handlers.GerarLoteDespesaHandler), "administrador"))
 
+	// Gerar lote Obra (Story 4.4, Epic 4, FR-15/AD-3) — segunda rota de
+	// internal/exportacao: mesmo princípio de GerarLoteDespesaHandler
+	// (recalcula elegibilidade, grava exportacoes_sap pela conexão
+	// PRIVILEGIADA, monta o .xlsm via ZIP/XML, AD-12), mas uma solicitação
+	// sem nenhuma linha com ordem de investimento já existente no SAP
+	// (todas 'CRIAR') entra em `bloqueados` em vez de abortar o lote
+	// inteiro. Nunca finaliza a solicitação (Story 4.5) nem cria a ordem
+	// real no SAP para uma linha 'CRIAR' (só na finalização).
+	http.HandleFunc("POST /api/solicitacoes/lote-obra", handlers.RequireAuth(withPrivilegedDB(handlers.GerarLoteObraHandler), "administrador"))
+
 	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
 		var allowedClientIDs []string
 		for _, id := range strings.Split(os.Getenv("IAM_ALLOWED_CLIENT_IDS"), ",") {

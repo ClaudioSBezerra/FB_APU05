@@ -106,3 +106,27 @@ source_spec: `spec-4-2-pendencia-e-reabertura.md`
 severity: medium
 reason: mock.ExpectQuery(...).WillReturnRows(...) fixa o resultado pós-transição independente do texto SQL executado; um CASE invertido (ex. fechar ativas em vez de reabrir encerradas) passaria TestComentar_ReabreDePendente, TestComentar_StatusJaAtivoPermanece e o teste de handler equivalente sem detecção. Resolver isso exige o primeiro arcabouço de teste de integração com Postgres real do repositório (nenhuma feature/migration tem isso hoje) — mesma categoria já deferida no triage log da Story 4.1 para a ACL real do AD-4. SQL conferido manualmente por leitura nesta passada: válido e correto.
 status: open
+
+### DW-12: GerarLoteObra não deduplica solicitacao_ids repetidos no mesmo pedido — uma solicitação repetida é lida/validada 2x e entra 2x em linhas/ solicitacoes_incluidas (duplicando linhas no .xlsm e no array
+origin: spec-deferred 53d511f334ed
+location: backend/internal/exportacao/obra.go (GerarLoteObra)
+source_spec: `spec-4-4-gerar-lote-obra.md`
+severity: medium
+reason: Mesmo formato de loop sem deduplicação já existe, idêntico, em GerarLoteDespesa (internal/exportacao/vba.go, Story 4.3, já revisada e aceita) — não é um risco novo introduzido por esta story, mesma categoria pré-existente.
+status: open
+
+### DW-13: Nenhuma re-checagem de status/dono sob lock entre a validação por solicitação (fora de transação) e a transação de escrita de gravarLoteObra (janela TOCTOU).
+origin: spec-deferred da88e5062ea9
+location: backend/internal/exportacao/obra.go (GerarLoteObra)
+source_spec: `spec-4-4-gerar-lote-obra.md`
+severity: medium
+reason: GerarLoteDespesa (internal/exportacao/vba.go, Story 4.3) tem exatamente a mesma forma — valida fora da transação, grava em transação separada — não é um risco novo desta story.
+status: open
+
+### DW-14: GerarLoteObra faz 2 round-trips sequenciais ao banco por solicitacao_id, sem lote/paginação nem teto explícito (só o limite indireto de 1 MB do corpo da requisição).
+origin: spec-deferred ec3c5b5907dc
+location: backend/internal/exportacao/obra.go (GerarLoteObra)
+source_spec: `spec-4-4-gerar-lote-obra.md`
+severity: medium
+reason: GerarLoteDespesa (internal/exportacao/vba.go, Story 4.3) tem exatamente o mesmo formato de loop — não é um risco novo desta story.
+status: open

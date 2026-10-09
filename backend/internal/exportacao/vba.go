@@ -28,11 +28,15 @@ import (
 
 // ExportadorVBA é a implementação v1 de ExportadorSAP (AD-3) — manipula o
 // `.xlsm` como arquivo ZIP/XML (xlsm.go, AD-12), nunca via biblioteca
-// externa de OOXML. TemplatePath aponta para o `.xlsm` base (AD-12) —
-// resolvido pelo chamador (handlers/exportacao.go) a partir de
-// EXPORT_TEMPLATE_LOTE_DESPESA.
+// externa de OOXML. TemplatePath aponta para o `.xlsm` base do lote
+// Despesa (AD-12) — resolvido pelo chamador (handlers/exportacao.go) a
+// partir de EXPORT_TEMPLATE_LOTE_DESPESA. TemplatePathObra (Story 4.4) é o
+// template PRÓPRIO do lote Obra (EXPORT_TEMPLATE_LOTE_OBRA) — campo novo,
+// não reaproveita/renomeia TemplatePath (Design Notes da spec 4.4: evita
+// qualquer mudança em vba_test.go da Story 4.3, já revisada).
 type ExportadorVBA struct {
-	TemplatePath string
+	TemplatePath     string
+	TemplatePathObra string
 }
 
 // linhaExportacao é uma linha de `solicitacao_lancamentos` já resolvida

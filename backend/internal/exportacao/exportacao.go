@@ -27,6 +27,27 @@ import (
 // elicitação da Story 4.3, Boundaries "Always" da spec).
 type ExportadorSAP interface {
 	GerarLoteDespesa(db *sql.DB, solicitacaoIDs []string, administradorID, chaveIdempotencia string, ignorarAvisoVerbaDuplicada bool) (Lote, *Aviso, error)
+
+	// GerarLoteObra (Story 4.4) recalcula elegibilidade por solicitação
+	// (dono=sessão, status=em_atendimento, tipo_solicitacao='obras') e
+	// descarta individualmente as linhas com `ordem_investimento='CRIAR'`
+	// (obra.go) — quando nenhuma linha de uma solicitação sobra, ela entra
+	// em `[]Bloqueio` com motivo em vez de abortar o lote inteiro
+	// (Boundaries "Always" da spec 4.4; diferente de uma falha de
+	// dono/status/tipo, que ainda aborta tudo). Não existe aqui o conceito
+	// de Aviso de verba duplicada de GerarLoteDespesa (Design Notes da spec
+	// 4.4: atribuído explicitamente à Story 4.3).
+	GerarLoteObra(db *sql.DB, solicitacaoIDs []string, administradorID, chaveIdempotencia string) (Lote, []Bloqueio, error)
+}
+
+// Bloqueio é uma solicitação do lote Obra que NÃO entrou no arquivo nem em
+// `exportacoes_sap` por não ter sobrado nenhuma linha válida (todas as
+// linhas da solicitação tinham `ordem_investimento='CRIAR'`) — tolerado
+// por solicitação em vez de abortar o lote inteiro (Boundaries "Always" da
+// spec 4.4, I/O Matrix "Solicitação só com linha(s) CRIAR").
+type Bloqueio struct {
+	SolicitacaoID string
+	Motivo        string
 }
 
 // Lote é o resultado de uma geração bem-sucedida (sem aviso pendente) —
@@ -74,10 +95,11 @@ var (
 	// `solicitacao_ids` diferente do atual.
 	ErrChaveIdempotenciaConflitante = errors.New("exportacao: chave de idempotência já usada com um conjunto diferente de solicitações")
 
-	// ErrTipoNaoElegivel -> 400: alguma solicitação do lote tem
-	// `tipo_solicitacao='obras'` (Lote-Obra é a Story 4.4, Boundaries
-	// "Never" desta spec).
-	ErrTipoNaoElegivel = errors.New("exportacao: tipo de solicitação não é elegível para o lote de despesa")
+	// ErrTipoNaoElegivel -> 400: cobre as duas direções (Story 4.4) —
+	// no lote Despesa (GerarLoteDespesa), alguma solicitação do lote tem
+	// `tipo_solicitacao='obras'`; no lote Obra (GerarLoteObra), alguma
+	// solicitação do lote tem `tipo_solicitacao` != 'obras'.
+	ErrTipoNaoElegivel = errors.New("exportacao: tipo de solicitação não é elegível para este lote")
 
 	// ErrExercicioMisto -> 400: as linhas das solicitações do lote (que têm
 	// `mes` preenchido) caem em mais de um exercício orçamentário (ano).

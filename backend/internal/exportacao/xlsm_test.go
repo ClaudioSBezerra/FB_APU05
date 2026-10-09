@@ -256,3 +256,56 @@ func TestMontarXLSM_PlanilhaSAPExportAusente(t *testing.T) {
 		t.Fatalf("esperava erro para template sem a planilha \"SAP Export\"")
 	}
 }
+
+// TestMontarSheetDataXMLObra_LayoutDeColunas cobre o layout melhor-esforço
+// de montarSheetDataXMLObra (Story 4.4, Design Notes da spec): tipo_
+// solicitacao/solicitacao_id/classificacao/local_obra_codigo/
+// subgrupo_codigo/ordem_investimento/valor/lado/solicitante_nome, cada
+// coluna passando por escaparTextoXML.
+func TestMontarSheetDataXMLObra_LayoutDeColunas(t *testing.T) {
+	linhas := []linhaExportacaoObra{{
+		TipoSolicitacao:   "obras",
+		SolicitacaoID:     "11111111-1111-1111-1111-111111111111",
+		SolicitanteNome:   `Fulano & "Beltrano"`,
+		Classificacao:     "transferencia_saldo",
+		LocalObraCodigo:   "LO1",
+		SubgrupoCodigo:    "SG1",
+		OrdemInvestimento: "9999",
+		Valor:             250.5,
+		Lado:              sql.NullString{String: "retirada", Valid: true},
+	}}
+
+	resultado := montarSheetDataXMLObra(linhas)
+
+	for _, esperado := range []string{
+		"<sheetData>", "</sheetData>",
+		"obras", "11111111-1111-1111-1111-111111111111", "transferencia_saldo",
+		"LO1", "SG1", "9999", "250.50", "retirada", "Fulano", "&amp;",
+	} {
+		if !strings.Contains(resultado, esperado) {
+			t.Fatalf("montarSheetDataXMLObra não contém %q: %s", esperado, resultado)
+		}
+	}
+}
+
+// TestMontarSheetDataXMLObra_LadoNuloDevolveVazio cobre o caso de uma
+// linha sem `lado` (classificação != transferencia_saldo, migration 009) —
+// a coluna correspondente deve ficar vazia, nunca gerar erro/"<nil>".
+func TestMontarSheetDataXMLObra_LadoNuloDevolveVazio(t *testing.T) {
+	linhas := []linhaExportacaoObra{{
+		TipoSolicitacao:   "obras",
+		SolicitacaoID:     "11111111-1111-1111-1111-111111111111",
+		SolicitanteNome:   "Fulano",
+		Classificacao:     "inclusao",
+		LocalObraCodigo:   "LO1",
+		SubgrupoCodigo:    "SG1",
+		OrdemInvestimento: "9999",
+		Valor:             10,
+		Lado:              sql.NullString{Valid: false},
+	}}
+
+	resultado := montarSheetDataXMLObra(linhas)
+	if strings.Contains(resultado, "<nil>") {
+		t.Fatalf("lado nulo não deveria aparecer como \"<nil>\": %s", resultado)
+	}
+}

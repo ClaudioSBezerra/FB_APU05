@@ -1,0 +1,13 @@
+-- Story 4.4 — Gerar lote Obra (Epic 4, FR-15, AD-3/AD-4/AD-12).
+--
+-- internal/exportacao (ExportadorVBA.GerarLoteObra) precisa ler estas 3
+-- tabelas pela conexão PRIVILEGIADA para recalcular elegibilidade e montar
+-- o `.xlsm` do lote Obra: linhas de `solicitacao_obras_linhas` + os
+-- códigos de negócio de `locais_obra`/`subgrupos_despesa` que entram na
+-- planilha "SAP Export" (nunca os UUIDs internos, Design Notes da spec).
+-- `usuarios` já foi concedido a fb_apu05_privilegiado pela migration 012
+-- (Story 4.3) e não precisa ser repetido aqui; `solicitacoes` já tinha
+-- SELECT concedido pela migration 010; `exportacoes_sap` já tinha
+-- SELECT/INSERT/UPDATE concedido pela migration 012 — mesma tabela,
+-- reaproveitada sem alteração de schema (Code Map da spec).
+GRANT SELECT ON solicitacao_obras_linhas, locais_obra, subgrupos_despesa TO fb_apu05_privilegiado;

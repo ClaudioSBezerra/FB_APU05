@@ -267,6 +267,247 @@ func TestGerarLoteDespesaHandler_Sucesso(t *testing.T) {
 	}
 }
 
+// --- Lote Obra (Story 4.4) ---
+
+const (
+	testExportObraSolicitacaoID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	testExportObraLoteID        = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+)
+
+// newGerarLoteObraRequest monta POST /api/solicitacoes/lote-obra com
+// claims de administrador já injetadas — mesmo padrão de
+// newGerarLoteDespesaRequest.
+func newGerarLoteObraRequest(corpo string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/api/solicitacoes/lote-obra", strings.NewReader(corpo))
+	claims := jwt.MapClaims{"user_id": testExportAdministradorID, "perfil": "administrador"}
+	ctx := context.WithValue(req.Context(), ClaimsContextKey, claims)
+	return req.WithContext(ctx)
+}
+
+// escreverTemplateXLSMObraDeTeste é o análogo de escreverTemplateXLSMDeTeste
+// para EXPORT_TEMPLATE_LOTE_OBRA.
+func escreverTemplateXLSMObraDeTeste(t *testing.T) {
+	t.Helper()
+	caminho := filepath.Join(t.TempDir(), "template_obra.xlsm")
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	escrever := func(nome, conteudo string) {
+		w, err := zw.CreateHeader(&zip.FileHeader{Name: nome, Method: zip.Deflate})
+		if err != nil {
+			t.Fatalf("erro ao criar %s no template sintético: %v", nome, err)
+		}
+		if _, err := w.Write([]byte(conteudo)); err != nil {
+			t.Fatalf("erro ao escrever %s no template sintético: %v", nome, err)
+		}
+	}
+	escrever("xl/workbook.xml", `<workbook><sheets><sheet name="SAP Export" sheetId="1" r:id="rId1"/></sheets></workbook>`)
+	escrever("xl/_rels/workbook.xml.rels", `<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`)
+	escrever("xl/worksheets/sheet1.xml", `<worksheet><sheetData></sheetData></worksheet>`)
+	escrever("xl/vbaProject.bin", "vba-bytes")
+	if err := zw.Close(); err != nil {
+		t.Fatalf("erro ao finalizar template sintético: %v", err)
+	}
+
+	if err := os.WriteFile(caminho, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("erro ao gravar template sintético: %v", err)
+	}
+	t.Setenv("EXPORT_TEMPLATE_LOTE_OBRA", caminho)
+}
+
+func TestGerarLoteObraHandler_SolicitacaoIDsVazio(t *testing.T) {
+	db, _ := newSQLMock(t)
+	rec := httptest.NewRecorder()
+	GerarLoteObraHandler(db)(rec, newGerarLoteObraRequest(`{"solicitacao_ids":[],"chave_idempotencia":"x"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, esperado 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGerarLoteObraHandler_IDFormatoInvalido(t *testing.T) {
+	db, _ := newSQLMock(t)
+	rec := httptest.NewRecorder()
+	corpo := `{"solicitacao_ids":["nao-e-um-uuid"],"chave_idempotencia":"x"}`
+	GerarLoteObraHandler(db)(rec, newGerarLoteObraRequest(corpo))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, esperado 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGerarLoteObraHandler_NaoEncontrada(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT s.tipo_solicitacao, s.status, s.administrador_id, s.classificacao, u.nome")).
+		WithArgs(testExportObraSolicitacaoID).
+		WillReturnError(sql.ErrNoRows)
+
+	rec := httptest.NewRecorder()
+	corpo := `{"solicitacao_ids":["` + testExportObraSolicitacaoID + `"],"chave_idempotencia":"` + testExportChave + `"}`
+	GerarLoteObraHandler(db)(rec, newGerarLoteObraRequest(corpo))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, esperado 404 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
+func TestGerarLoteObraHandler_TipoDiferenteDeObras(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT s.tipo_solicitacao, s.status, s.administrador_id, s.classificacao, u.nome")).
+		WithArgs(testExportObraSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "administrador_id", "classificacao", "nome"}).
+			AddRow("transferencia", "em_atendimento", testExportAdministradorID, nil, "Fulano"))
+
+	rec := httptest.NewRecorder()
+	corpo := `{"solicitacao_ids":["` + testExportObraSolicitacaoID + `"],"chave_idempotencia":"` + testExportChave + `"}`
+	GerarLoteObraHandler(db)(rec, newGerarLoteObraRequest(corpo))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, esperado 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
+func TestGerarLoteObraHandler_TemplateAusente(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	t.Setenv("EXPORT_TEMPLATE_LOTE_OBRA", filepath.Join(t.TempDir(), "nao-existe.xlsm"))
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT s.tipo_solicitacao, s.status, s.administrador_id, s.classificacao, u.nome")).
+		WithArgs(testExportObraSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "administrador_id", "classificacao", "nome"}).
+			AddRow("obras", "em_atendimento", testExportAdministradorID, "inclusao", "Fulano"))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_obras_linhas sol")).
+		WithArgs(testExportObraSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"lado", "local_obra_codigo", "subgrupo_codigo", "ordem_investimento", "valor"}).
+			AddRow(nil, "LO1", "SG1", "9999", 100.0))
+
+	rec := httptest.NewRecorder()
+	corpo := `{"solicitacao_ids":["` + testExportObraSolicitacaoID + `"],"chave_idempotencia":"` + testExportChave + `"}`
+	GerarLoteObraHandler(db)(rec, newGerarLoteObraRequest(corpo))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, esperado 503 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
+// TestGerarLoteObraHandler_Sucesso cobre o envelope 200 com lote_id/
+// arquivo_base64/solicitacoes_incluidas/bloqueados:[] quando há ao menos 1
+// solicitação incluída.
+func TestGerarLoteObraHandler_Sucesso(t *testing.T) {
+	db, mock := newSQLMock(t)
+	escreverTemplateXLSMObraDeTeste(t)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT s.tipo_solicitacao, s.status, s.administrador_id, s.classificacao, u.nome")).
+		WithArgs(testExportObraSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "administrador_id", "classificacao", "nome"}).
+			AddRow("obras", "em_atendimento", testExportAdministradorID, "inclusao", "Fulano"))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_obras_linhas sol")).
+		WithArgs(testExportObraSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"lado", "local_obra_codigo", "subgrupo_codigo", "ordem_investimento", "valor"}).
+			AddRow(nil, "LO1", "SG1", "9999", 100.0))
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT lote_id FROM exportacoes_sap WHERE administrador_id = $1 AND chave_idempotencia = $2 LIMIT 1")).
+		WithArgs(testExportAdministradorID, testExportChave).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT gen_random_uuid()")).
+		WillReturnRows(sqlmock.NewRows([]string{"gen_random_uuid"}).AddRow(testExportObraLoteID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO exportacoes_sap (lote_id, solicitacao_id, administrador_id, chave_idempotencia)")).
+		WithArgs(testExportObraLoteID, testExportObraSolicitacaoID, testExportAdministradorID, testExportChave).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT lote_id FROM exportacoes_sap WHERE administrador_id = $1 AND chave_idempotencia = $2 LIMIT 1")).
+		WithArgs(testExportAdministradorID, testExportChave).
+		WillReturnRows(sqlmock.NewRows([]string{"lote_id"}).AddRow(testExportObraLoteID))
+	mock.ExpectCommit()
+
+	rec := httptest.NewRecorder()
+	corpo := `{"solicitacao_ids":["` + testExportObraSolicitacaoID + `"],"chave_idempotencia":"` + testExportChave + `"}`
+	GerarLoteObraHandler(db)(rec, newGerarLoteObraRequest(corpo))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, esperado 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("resposta não é JSON válido: %v", err)
+	}
+	if resp["lote_id"] != testExportObraLoteID {
+		t.Fatalf("lote_id = %v, esperado %q", resp["lote_id"], testExportObraLoteID)
+	}
+	if resp["arquivo_base64"] == nil || resp["arquivo_base64"] == "" {
+		t.Fatalf("arquivo_base64 ausente/vazio: %+v", resp)
+	}
+	incluidas, ok := resp["solicitacoes_incluidas"].([]interface{})
+	if !ok || len(incluidas) != 1 || incluidas[0] != testExportObraSolicitacaoID {
+		t.Fatalf("solicitacoes_incluidas inesperado: %+v", resp["solicitacoes_incluidas"])
+	}
+	bloqueados, ok := resp["bloqueados"].([]interface{})
+	if !ok || len(bloqueados) != 0 {
+		t.Fatalf("bloqueados deveria ser [] : %+v", resp["bloqueados"])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
+// TestGerarLoteObraHandler_TodoLoteBloqueado cobre "Todo o lote bloqueado"
+// da I/O Matrix: resposta 200 sem lote_id/arquivo_base64, só
+// solicitacoes_incluidas:[] e bloqueados preenchido.
+func TestGerarLoteObraHandler_TodoLoteBloqueado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT s.tipo_solicitacao, s.status, s.administrador_id, s.classificacao, u.nome")).
+		WithArgs(testExportObraSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "administrador_id", "classificacao", "nome"}).
+			AddRow("obras", "em_atendimento", testExportAdministradorID, "inclusao", "Fulano"))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_obras_linhas sol")).
+		WithArgs(testExportObraSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"lado", "local_obra_codigo", "subgrupo_codigo", "ordem_investimento", "valor"}).
+			AddRow(nil, "LO1", "SG1", "CRIAR", 100.0))
+
+	rec := httptest.NewRecorder()
+	corpo := `{"solicitacao_ids":["` + testExportObraSolicitacaoID + `"],"chave_idempotencia":"` + testExportChave + `"}`
+	GerarLoteObraHandler(db)(rec, newGerarLoteObraRequest(corpo))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, esperado 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("resposta não é JSON válido: %v", err)
+	}
+	if _, temLoteID := resp["lote_id"]; temLoteID {
+		t.Fatalf("resposta não deveria ter lote_id quando tudo é bloqueado: %+v", resp)
+	}
+	if _, temArquivo := resp["arquivo_base64"]; temArquivo {
+		t.Fatalf("resposta não deveria ter arquivo_base64 quando tudo é bloqueado: %+v", resp)
+	}
+	incluidas, ok := resp["solicitacoes_incluidas"].([]interface{})
+	if !ok || len(incluidas) != 0 {
+		t.Fatalf("solicitacoes_incluidas deveria ser [] : %+v", resp["solicitacoes_incluidas"])
+	}
+	bloqueados, ok := resp["bloqueados"].([]interface{})
+	if !ok || len(bloqueados) != 1 {
+		t.Fatalf("bloqueados inesperado: %+v", resp["bloqueados"])
+	}
+	bloqueio, ok := bloqueados[0].(map[string]interface{})
+	if !ok || bloqueio["solicitacao_id"] != testExportObraSolicitacaoID {
+		t.Fatalf("bloqueio inesperado: %+v", bloqueados[0])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
 func TestGerarLoteDespesaHandler_AvisoVerbaDuplicada(t *testing.T) {
 	db, mock := newSQLMock(t)
 
