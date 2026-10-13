@@ -52,7 +52,6 @@ services:
       - api
     networks:
       - fb_net
-      - coolify
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.fb-apu05-web.rule=Host(`controladoria.fbtax.cloud`)"
@@ -85,8 +84,6 @@ services:
 networks:
   fb_net:
     driver: bridge
-  coolify:
-    external: true
 
 volumes:
   postgres_data_prod:
