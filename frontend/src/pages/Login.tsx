@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { buildLoginUrl, fetchIAMConfig } from '@/lib/keycloak/buildLoginUrl';
 
@@ -208,6 +208,9 @@ const Login = () => {
             >
               {submitting ? 'Entrando...' : 'Entrar'}
             </button>
+            <Link to="/esqueci-senha" className="text-center text-xs text-primary underline hover:no-underline">
+              Esqueci minha senha
+            </Link>
           </form>
         )}
       </div>

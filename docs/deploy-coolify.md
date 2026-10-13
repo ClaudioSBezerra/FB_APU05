@@ -30,6 +30,11 @@ Preencher a partir de `.env.production.example` (na raiz do repo) —
 gerar `JWT_SECRET`/`ENCRYPTION_KEY`/`DB_PASSWORD`/`DB_APP_PASSWORD`/
 `DB_PRIVILEGIADA_PASSWORD` novos, nunca reaproveitar os de dev.
 
+`SMTP_*` é opcional: só é usado por "esqueci minha senha" do login local
+(`POST /api/auth/forgot-password`). Sem `SMTP_PASSWORD`, o resto do app
+sobe normal — esse endpoint específico responde 500 se alguém tentar
+usá-lo antes do SMTP estar configurado.
+
 ## Persistent Storage
 
 Adicionar um volume persistente para o serviço `db` apontando para

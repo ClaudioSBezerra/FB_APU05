@@ -26,6 +26,15 @@ services:
       - IAM_REDIRECT_URI=${IAM_REDIRECT_URI:-}
       - IAM_ALLOWED_CLIENT_IDS=${IAM_ALLOWED_CLIENT_IDS:-}
       - IAM_SCOPES=${IAM_SCOPES:-}
+      # SMTP (recuperação de senha do login local — ForgotPasswordHandler) —
+      # deixe em branco para desabilitar: sem SMTP_PASSWORD, o endpoint
+      # responde 500 só quando alguém de fato pede redefinição (o resto do
+      # app sobe normalmente sem isso).
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
     depends_on:
       db:
         condition: service_healthy

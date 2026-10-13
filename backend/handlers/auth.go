@@ -22,6 +22,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+
+	"fb_apu05/services"
 )
 
 // --- Structs ---
@@ -256,6 +258,11 @@ func LoginHandler(db *sql.DB) http.HandlerFunc {
 
 		start := time.Now()
 
+		if !LoginRL.Allow(GetClientIP(r)) {
+			jsonErr(w, http.StatusTooManyRequests, "Muitas tentativas de login. Tente novamente mais tarde.")
+			return
+		}
+
 		var req LoginRequest
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -286,6 +293,245 @@ func LoginHandler(db *sql.DB) http.HandlerFunc {
 
 		log.Printf("[Login] Login local: %s", user.Email)
 		finishLogin(db, w, r, user, start)
+	}
+}
+
+// ForgotPasswordRequest é o corpo de POST /api/auth/forgot-password.
+type ForgotPasswordRequest struct {
+	Email string `json:"email"`
+}
+
+// ForgotPasswordHandler gera um token de redefinição (1h) e envia por
+// e-mail (services.SendPasswordResetEmail) — mesmo padrão do FB_APU02
+// (handlers/auth.go, ForgotPasswordHandler). Só se aplica a contas com
+// password_hash definido (login local); uma conta só-SSO não tem senha
+// pra redefinir, mas a resposta é a mesma mensagem genérica de sucesso
+// independente disso — nunca revela se o e-mail existe/tem senha local
+// (evita enumeração de contas).
+func ForgotPasswordHandler(db *sql.DB) http.HandlerFunc {
+	const genericMsg = "Se o e-mail estiver cadastrado, você receberá um link de redefinição em instantes."
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req ForgotPasswordRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "Corpo da requisição inválido")
+			return
+		}
+		if req.Email == "" {
+			jsonErr(w, http.StatusBadRequest, "Informe o e-mail")
+			return
+		}
+
+		if !ForgotPasswordRL.Allow(req.Email) {
+			jsonErr(w, http.StatusTooManyRequests, "Muitas solicitações de recuperação. Tente novamente mais tarde.")
+			return
+		}
+
+		var userID string
+		var passwordHash sql.NullString
+		err := db.QueryRow(`SELECT id, password_hash FROM usuarios WHERE LOWER(email) = LOWER($1)`, req.Email).
+			Scan(&userID, &passwordHash)
+		if err == sql.ErrNoRows || !passwordHash.Valid {
+			// E-mail inexistente OU conta só-SSO (sem password_hash): mesma
+			// resposta genérica, sem token gerado nem e-mail enviado.
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": genericMsg})
+			return
+		}
+		if err != nil {
+			log.Printf("[ForgotPassword] Erro ao buscar usuário %s: %v", req.Email, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		tokenBytes := make([]byte, 32)
+		if _, err := rand.Read(tokenBytes); err != nil {
+			log.Fatalf("FATAL: crypto/rand.Read failed generating token de reset de senha: %v", err)
+		}
+		token := hex.EncodeToString(tokenBytes)
+
+		if _, err = db.Exec(`
+			INSERT INTO verification_tokens (user_id, token, type, expires_at)
+			VALUES ($1, $2, 'password_reset', $3)
+		`, userID, token, time.Now().Add(1*time.Hour)); err != nil {
+			log.Printf("[ForgotPassword] Erro ao criar token para %s: %v", req.Email, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		if err := services.SendPasswordResetEmail(req.Email, token); err != nil {
+			log.Printf("[ForgotPassword] Falha ao enviar e-mail para %s: %v", req.Email, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro ao enviar e-mail de recuperação")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": genericMsg})
+	}
+}
+
+// ResetPasswordRequest é o corpo de POST /api/auth/reset-password.
+type ResetPasswordRequest struct {
+	Token           string `json:"token"`
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirm_password"`
+}
+
+// ResetPasswordHandler troca a senha usando o token emitido por
+// ForgotPasswordHandler — mesma validação (match, mínimo 8 caracteres,
+// token não usado/não expirado) do FB_APU02.
+func ResetPasswordHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if !ResetPasswordRL.Allow(GetClientIP(r)) {
+			jsonErr(w, http.StatusTooManyRequests, "Muitas tentativas. Tente novamente mais tarde.")
+			return
+		}
+
+		var req ResetPasswordRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "Corpo da requisição inválido")
+			return
+		}
+		if req.Password != req.ConfirmPassword {
+			jsonErr(w, http.StatusBadRequest, "As senhas não coincidem")
+			return
+		}
+		if len(req.Password) < 8 {
+			jsonErr(w, http.StatusBadRequest, "A senha deve ter no mínimo 8 caracteres")
+			return
+		}
+
+		var userID string
+		var expiresAt time.Time
+		err := db.QueryRow(`
+			SELECT user_id, expires_at FROM verification_tokens
+			WHERE token = $1 AND type = 'password_reset' AND used = false
+		`, req.Token).Scan(&userID, &expiresAt)
+		if err == sql.ErrNoRows {
+			jsonErr(w, http.StatusNotFound, "Token inválido ou já utilizado")
+			return
+		}
+		if err != nil {
+			log.Printf("[ResetPassword] Erro no banco: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		if time.Now().After(expiresAt) {
+			jsonErr(w, http.StatusGone, "Token expirado. Solicite uma nova recuperação de senha")
+			return
+		}
+
+		hash, err := HashPassword(req.Password)
+		if err != nil {
+			log.Printf("[ResetPassword] Erro ao gerar hash: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		tx, err := db.Begin()
+		if err != nil {
+			log.Printf("[ResetPassword] Erro ao iniciar transação: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		if _, err = tx.Exec(`UPDATE usuarios SET password_hash = $1, updated_at = now() WHERE id = $2`, hash, userID); err != nil {
+			log.Printf("[ResetPassword] Erro ao atualizar senha de %s: %v", userID, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		if _, err = tx.Exec(`UPDATE verification_tokens SET used = true WHERE token = $1`, req.Token); err != nil {
+			log.Printf("[ResetPassword] Erro ao marcar token como usado: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			log.Printf("[ResetPassword] Erro ao commitar: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		log.Printf("[ResetPassword] Senha redefinida com sucesso para usuário %s", userID)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"message": "Senha redefinida com sucesso. Você já pode fazer login com a nova senha.",
+		})
+	}
+}
+
+// ChangePasswordRequest é o corpo de POST /api/auth/change-password.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// ChangePasswordHandler permite a um usuário autenticado trocar a própria
+// senha (exige a senha atual) — registrado atrás de RequireAuth(..., "")
+// em main.go (qualquer perfil, só a própria conta). Diferente de
+// ResetPasswordHandler: não envolve e-mail/token, só a sessão já válida.
+func ChangePasswordHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		userID := GetUserIDFromContext(r)
+		if !ChangePasswordRL.Allow(userID) {
+			jsonErr(w, http.StatusTooManyRequests, "Muitas tentativas. Tente novamente mais tarde.")
+			return
+		}
+
+		var req ChangePasswordRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "Corpo da requisição inválido")
+			return
+		}
+		if len(req.NewPassword) < 8 {
+			jsonErr(w, http.StatusBadRequest, "A nova senha deve ter no mínimo 8 caracteres")
+			return
+		}
+
+		var hash sql.NullString
+		if err := db.QueryRow(`SELECT password_hash FROM usuarios WHERE id = $1`, userID).Scan(&hash); err != nil {
+			log.Printf("[ChangePassword] Erro ao buscar usuário %s: %v", userID, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		if !hash.Valid || !CheckPasswordHash(req.CurrentPassword, hash.String) {
+			jsonErr(w, http.StatusUnauthorized, "Senha atual incorreta")
+			return
+		}
+
+		newHash, err := HashPassword(req.NewPassword)
+		if err != nil {
+			log.Printf("[ChangePassword] Erro ao gerar hash: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		if _, err = db.Exec(`UPDATE usuarios SET password_hash = $1, updated_at = now() WHERE id = $2`, newHash, userID); err != nil {
+			log.Printf("[ChangePassword] Erro ao salvar senha de %s: %v", userID, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		log.Printf("[ChangePassword] Senha alterada com sucesso para usuário %s", userID)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "Senha alterada com sucesso"})
 	}
 }
 

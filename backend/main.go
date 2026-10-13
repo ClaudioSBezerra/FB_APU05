@@ -320,6 +320,9 @@ func main() {
 	// autocadastro público — por isso esta rota em si é pública (login, não
 	// criação de conta).
 	http.HandleFunc("POST /api/auth/login", withDB(handlers.LoginHandler))
+	http.HandleFunc("POST /api/auth/forgot-password", withDB(handlers.ForgotPasswordHandler))
+	http.HandleFunc("POST /api/auth/reset-password", withDB(handlers.ResetPasswordHandler))
+	http.HandleFunc("POST /api/auth/change-password", handlers.RequireAuth(withDB(handlers.ChangePasswordHandler), ""))
 
 	// Bootstrap e proteção do administrador (Story 1.3, FR-2) — concede/
 	// revoga perfil `administrador` e ativa/desativa usuários. Primeira rota

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,21 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
+
+// newLoginRequest monta um POST com um X-Forwarded-For único por teste —
+// sem isso, todas as chamadas de teste compartilhariam a mesma chave de
+// LoginRL (GetClientIP cai no RemoteAddr padrão de httptest, igual em toda
+// *http.Request criada por httptest.NewRequest) e testes depois do 5º
+// começariam a tomar 429 do rate limiter em vez do status que o teste
+// realmente quer exercitar.
+var loginTestIPCounter int
+
+func newLoginRequest(body string) *http.Request {
+	loginTestIPCounter++
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", loginTestIPCounter%255+1))
+	return req
+}
 
 // sqlmockRowsUsuarioComSenha monta a linha que fetchUserForLocalLogin espera
 // (id, email, nome, perfil, created_at, password_hash) — hash=nil simula uma
@@ -38,9 +54,8 @@ func TestLoginHandler_RejectsWrongMethod(t *testing.T) {
 
 func TestLoginHandler_RejectsInvalidBody(t *testing.T) {
 	handler := LoginHandler(nil)
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader("{not json"))
 	rec := httptest.NewRecorder()
-	handler(rec, req)
+	handler(rec, newLoginRequest("{not json"))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d", rec.Code)
@@ -55,9 +70,8 @@ func TestLoginHandler_RejectsMissingFields(t *testing.T) {
 	}
 	for _, body := range cases {
 		handler := LoginHandler(nil)
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
 		rec := httptest.NewRecorder()
-		handler(rec, req)
+		handler(rec, newLoginRequest(body))
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("body=%s: esperado 400, obtido %d", body, rec.Code)
@@ -74,9 +88,8 @@ func TestLoginHandler_UnknownEmail_GenericError(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 
 	handler := LoginHandler(db)
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"naoexiste@fortesbezerra.com.br","password":"qualquer123"}`))
 	rec := httptest.NewRecorder()
-	handler(rec, req)
+	handler(rec, newLoginRequest(`{"email":"naoexiste@fortesbezerra.com.br","password":"qualquer123"}`))
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("esperado 401, obtido %d (body=%s)", rec.Code, rec.Body.String())
@@ -97,9 +110,8 @@ func TestLoginHandler_SSOOnlyAccount_GenericError(t *testing.T) {
 		WillReturnRows(rows)
 
 	handler := LoginHandler(db)
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"sso@fortesbezerra.com.br","password":"qualquer123"}`))
 	rec := httptest.NewRecorder()
-	handler(rec, req)
+	handler(rec, newLoginRequest(`{"email":"sso@fortesbezerra.com.br","password":"qualquer123"}`))
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("esperado 401 (conta só-SSO, sem password_hash), obtido %d (body=%s)", rec.Code, rec.Body.String())
@@ -119,9 +131,8 @@ func TestLoginHandler_WrongPassword_GenericError(t *testing.T) {
 		WillReturnRows(rows)
 
 	handler := LoginHandler(db)
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"local@fortesbezerra.com.br","password":"senha-errada"}`))
 	rec := httptest.NewRecorder()
-	handler(rec, req)
+	handler(rec, newLoginRequest(`{"email":"local@fortesbezerra.com.br","password":"senha-errada"}`))
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("esperado 401, obtido %d (body=%s)", rec.Code, rec.Body.String())
@@ -141,9 +152,8 @@ func TestLoginHandler_CorrectPassword_Succeeds(t *testing.T) {
 		WillReturnRows(rows)
 
 	handler := LoginHandler(db)
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"local@fortesbezerra.com.br","password":"senha-correta-123"}`))
 	rec := httptest.NewRecorder()
-	handler(rec, req)
+	handler(rec, newLoginRequest(`{"email":"local@fortesbezerra.com.br","password":"senha-correta-123"}`))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())

@@ -5,6 +5,9 @@ import Login from '@/pages/Login'
 import AuthCallback from '@/pages/AuthCallback'
 import AuthError from '@/pages/AuthError'
 import PainelConsolidado from '@/pages/PainelConsolidado'
+import ForgotPassword from '@/pages/ForgotPassword'
+import ResetPassword from '@/pages/ResetPassword'
+import ChangePassword from '@/pages/ChangePassword'
 
 type HealthResponse = {
   status: string
@@ -60,6 +63,9 @@ function Home() {
           <Link to="/painel" className="text-xs text-primary underline hover:no-underline">
             Ver painel consolidado de solicitações
           </Link>
+          <Link to="/alterar-senha" className="text-xs text-primary underline hover:no-underline">
+            Alterar senha
+          </Link>
           <button
             type="button"
             onClick={logout}
@@ -77,6 +83,9 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/esqueci-senha" element={<ForgotPassword />} />
+      <Route path="/reset-senha" element={<ResetPassword />} />
+      <Route path="/alterar-senha" element={<ChangePassword />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/auth/error" element={<AuthError />} />
       <Route path="/" element={<Home />} />
