@@ -1,0 +1,93 @@
+services:
+  # Backend (Go) — roda as migrations sozinho no boot (ver main.go,
+  # onDBConnected); não existe comando de migrate externo a chamar.
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: fb_apu05-api-prod
+    restart: always
+    expose:
+      - "8081"
+    environment:
+      - PORT=8081
+      - DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}?sslmode=disable
+      - DATABASE_URL_APP=postgres://fb_apu05_app:${DB_APP_PASSWORD}@db:5432/${DB_NAME}?sslmode=disable
+      - DATABASE_URL_PRIVILEGIADA=postgres://fb_apu05_privilegiado:${DB_PRIVILEGIADA_PASSWORD}@db:5432/${DB_NAME}?sslmode=disable
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - COOKIE_SECURE=true
+      - APP_URL=${APP_URL}
+      - ALLOWED_ORIGINS=${APP_URL}
+      # SSO Keycloak (AD-6) — deixe em branco no Coolify se ainda não houver
+      # IdP configurado; o backend sobe normalmente com SSO desabilitado.
+      - IAM_BASE_URL=${IAM_BASE_URL:-}
+      - IAM_CLIENT_ID=${IAM_CLIENT_ID:-}
+      - IAM_REDIRECT_URI=${IAM_REDIRECT_URI:-}
+      - IAM_ALLOWED_CLIENT_IDS=${IAM_ALLOWED_CLIENT_IDS:-}
+      - IAM_SCOPES=${IAM_SCOPES:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - fb_net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend (build estático + nginx) — único serviço exposto ao domínio;
+  # proxya /api internamente para o container `api` (ver frontend/nginx.conf).
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: fb_apu05-web-prod
+    restart: always
+    expose:
+      - "80"
+    depends_on:
+      - api
+    networks:
+      - fb_net
+      - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fb-apu05-web.rule=Host(`controladoria.fbtax.cloud`)"
+      - "traefik.http.routers.fb-apu05-web.entrypoints=websecure"
+      - "traefik.http.routers.fb-apu05-web.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.fb-apu05-web.middlewares=fb-apu05-compress"
+      - "traefik.http.middlewares.fb-apu05-compress.compress=true"
+      - "traefik.http.services.fb-apu05-web.loadbalancer.server.port=80"
+
+  # Banco de Dados
+  db:
+    image: postgres:15-alpine
+    container_name: fb_apu05-db-prod
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    networks:
+      - fb_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  fb_net:
+    driver: bridge
+  coolify:
+    external: true
+
+volumes:
+  postgres_data_prod:
+    driver: local
