@@ -56,7 +56,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.fb-apu05-web.rule=Host(`controladoria.fbtax.cloud`)"
-      - "traefik.http.routers.fb-apu05-web.entrypoints=websecure"
+      - "traefik.http.routers.fb-apu05-web.entrypoints=https"
       - "traefik.http.routers.fb-apu05-web.tls.certresolver=letsencrypt"
       - "traefik.http.routers.fb-apu05-web.middlewares=fb-apu05-compress"
       - "traefik.http.middlewares.fb-apu05-compress.compress=true"
