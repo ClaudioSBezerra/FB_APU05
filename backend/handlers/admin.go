@@ -375,3 +375,62 @@ func isUniqueViolation(err error) bool {
 	pqErr, ok := err.(*pq.Error)
 	return ok && pqErr.Code.Name() == "unique_violation"
 }
+
+// UsuarioListItem é um item de GET /api/admin/usuarios — nunca inclui
+// password_hash.
+type UsuarioListItem struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Nome      string `json:"nome"`
+	Perfil    string `json:"perfil"`
+	Ativo     bool   `json:"ativo"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ListarUsuariosHandler — GET /api/admin/usuarios, paginado (pagina/tamanho,
+// AD-14) — lista para a tela de gestão de usuários do frontend. Mesma
+// convenção de paginação dos demais endpoints de listagem (paginacaoDaQuery,
+// cadastros.go).
+func ListarUsuariosHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		pagina, tamanho := paginacaoDaQuery(r)
+
+		rows, err := db.Query(`
+			SELECT id, email, nome, perfil, ativo, created_at
+			FROM usuarios ORDER BY created_at, id LIMIT $1 OFFSET $2
+		`, tamanho, (pagina-1)*tamanho)
+		if err != nil {
+			log.Printf("[Admin] Erro ao listar usuários: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		defer rows.Close()
+
+		items := make([]UsuarioListItem, 0)
+		for rows.Next() {
+			var item UsuarioListItem
+			if err := rows.Scan(&item.ID, &item.Email, &item.Nome, &item.Perfil, &item.Ativo, &item.CreatedAt); err != nil {
+				log.Printf("[Admin] Erro ao ler usuário: %v", err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+			items = append(items, item)
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("[Admin] Erro ao iterar usuários: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"items": items, "pagina": pagina, "tamanho": tamanho,
+		})
+	}
+}

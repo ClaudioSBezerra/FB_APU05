@@ -333,6 +333,7 @@ func main() {
 	// Criação de conta local — só um administrador pode criar (login local,
 	// ver acima); nenhum usuário solicitante tem rota equivalente.
 	http.HandleFunc("POST /api/admin/usuarios", handlers.RequireAuth(withDB(handlers.CreateUsuarioLocalHandler), "administrador"))
+	http.HandleFunc("GET /api/admin/usuarios", handlers.RequireAuth(withDB(handlers.ListarUsuariosHandler), "administrador"))
 
 	// Cadastros administráveis (Story 2.1, FR-16) — 5 rotas genéricas
 	// parametrizadas por {tipo} (um dos 7 cadastros mestres do Epic 2, mais
