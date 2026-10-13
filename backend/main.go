@@ -307,18 +307,29 @@ func main() {
 		}
 	}
 
-	// SSO Keycloak (AD-6) — único fluxo de login do FB_APU05 (sem cadastro de
-	// usuário/senha separado). Config exposta em runtime (não build-time) via
-	// /api/auth/sso/config, replicando o padrão já validado em produção no
-	// FB_APU02 (ver spec Code Map da Story 1.2).
+	// SSO Keycloak (AD-6) — fluxo de login preferencial do FB_APU05. Config
+	// exposta em runtime (não build-time) via /api/auth/sso/config,
+	// replicando o padrão já validado em produção no FB_APU02 (ver spec Code
+	// Map da Story 1.2).
 	http.HandleFunc("/api/auth/sso/config", handlers.SSOConfigHandler())
 	http.HandleFunc("/api/auth/logout", withDB(handlers.LogoutHandler))
+
+	// Login local (e-mail+senha) — alternativa ao SSO quando IAM_BASE_URL não
+	// está configurado (deploy sem Keycloak ainda pronto). Contas locais só
+	// são criadas por um administrador (POST /api/admin/usuarios abaixo), sem
+	// autocadastro público — por isso esta rota em si é pública (login, não
+	// criação de conta).
+	http.HandleFunc("POST /api/auth/login", withDB(handlers.LoginHandler))
 
 	// Bootstrap e proteção do administrador (Story 1.3, FR-2) — concede/
 	// revoga perfil `administrador` e ativa/desativa usuários. Primeira rota
 	// do FB_APU05 protegida por RequireAuth (fecha o gap deixado pela Story
 	// 1.2: a tokenBlacklist nunca era lida em lugar nenhum até aqui).
 	http.HandleFunc("PATCH /api/admin/usuarios/{id}", handlers.RequireAuth(withDB(handlers.AdminUpdateUsuarioHandler), "administrador"))
+
+	// Criação de conta local — só um administrador pode criar (login local,
+	// ver acima); nenhum usuário solicitante tem rota equivalente.
+	http.HandleFunc("POST /api/admin/usuarios", handlers.RequireAuth(withDB(handlers.CreateUsuarioLocalHandler), "administrador"))
 
 	// Cadastros administráveis (Story 2.1, FR-16) — 5 rotas genéricas
 	// parametrizadas por {tipo} (um dos 7 cadastros mestres do Epic 2, mais

@@ -1,11 +1,13 @@
 package handlers
 
-// Funções compartilhadas de autenticação (AD-6/AD-9) — hoje o único fluxo de
-// login do FB_APU05 é via SSO Keycloak (ver auth_sso.go); fetchUserByEmail,
-// finishLogin e GenerateToken existem aqui, separadas do handler SSO, porque
-// qualquer fluxo de login futuro (se algum dia existir) reaproveita a mesma
-// emissão de token/refresh cookie — mesmo padrão já validado em produção no
-// FB_APU02 (replicado literalmente, sem reinventar o fluxo — ver spec Code Map).
+// Funções compartilhadas de autenticação (AD-6/AD-9) — dois fluxos de login
+// levam ao mesmo finishLogin: SSO Keycloak (auth_sso.go, auto-provisiona
+// 'solicitante' no primeiro login) e login local e-mail+senha (LoginHandler
+// abaixo, usado quando IAM_BASE_URL não está configurado — contas locais só
+// são criadas por um administrador, admin.go/CreateUsuarioLocalHandler).
+// fetchUserByEmail/finishLogin/GenerateToken ficam aqui, compartilhadas pelos
+// dois — mesmo padrão de emissão de token/refresh cookie já validado em
+// produção no FB_APU02 (ver spec Code Map).
 
 import (
 	"crypto/rand"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // --- Structs ---
@@ -162,6 +165,20 @@ func jsonErr(w http.ResponseWriter, status int, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
+// HashPassword/CheckPasswordHash: mesmo custo (14) e biblioteca do FB_APU02
+// (golang.org/x/crypto/bcrypt) — usados só pelo login local (LoginHandler) e
+// pela criação de conta local pelo administrador (admin.go,
+// CreateUsuarioLocalHandler). Contas auto-provisionadas via SSO Keycloak
+// nunca têm password_hash setado (NULL).
+func HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	return string(bytes), err
+}
+
+func CheckPasswordHash(password, hash string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+}
+
 // --- Shared logic ---
 
 // fetchUserByEmail busca um usuário por e-mail — comparação case-insensitive
@@ -200,6 +217,76 @@ func finishLogin(db *sql.DB, w http.ResponseWriter, r *http.Request, user User, 
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(AuthResponse{Token: token, User: user})
+}
+
+// LoginRequest é o corpo de POST /api/auth/login.
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// fetchUserForLocalLogin busca um usuário por e-mail igual fetchUserByEmail,
+// mas também devolve password_hash (NULL para contas só-SSO) — separado de
+// fetchUserByEmail (usada pelo fluxo Keycloak) para não misturar a coluna de
+// senha num caminho de código que nunca precisa dela.
+func fetchUserForLocalLogin(db *sql.DB, email string) (user User, passwordHash sql.NullString, err error) {
+	err = db.QueryRow(`
+		SELECT id, email, nome, perfil, created_at, password_hash
+		FROM usuarios WHERE LOWER(email) = LOWER($1)
+	`, email).Scan(&user.ID, &user.Email, &user.Nome, &user.Perfil, &user.CreatedAt, &passwordHash)
+	return
+}
+
+// LoginHandler autentica por e-mail+senha — alternativa ao SSO Keycloak
+// quando este não está configurado (ver Login.tsx: a tela só mostra este
+// caminho se SSOConfigHandler responder enabled=false). Contas locais só são
+// criadas por um administrador (admin.go, CreateUsuarioLocalHandler) — não
+// existe autocadastro público aqui (decisão de escopo, diferente do
+// RegisterHandler do FB_APU02).
+//
+// Mensagem de erro idêntica para "e-mail não encontrado", "conta sem senha
+// local definida (só SSO)" e "senha errada" — evita enumeração de contas,
+// mesmo padrão do FB_APU02 (LoginHandler, fetchUserByEmail).
+func LoginHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		start := time.Now()
+
+		var req LoginRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "Corpo da requisição inválido")
+			return
+		}
+		if req.Email == "" || req.Password == "" {
+			jsonErr(w, http.StatusBadRequest, "Informe e-mail e senha")
+			return
+		}
+
+		const genericErr = "E-mail ou senha inválidos"
+
+		user, passwordHash, err := fetchUserForLocalLogin(db, req.Email)
+		if err == sql.ErrNoRows {
+			jsonErr(w, http.StatusUnauthorized, genericErr)
+			return
+		}
+		if err != nil {
+			log.Printf("[Login] Erro ao buscar usuário %s: %v", req.Email, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		if !passwordHash.Valid || !CheckPasswordHash(req.Password, passwordHash.String) {
+			jsonErr(w, http.StatusUnauthorized, genericErr)
+			return
+		}
+
+		log.Printf("[Login] Login local: %s", user.Email)
+		finishLogin(db, w, r, user, start)
+	}
 }
 
 // LogoutHandler encerra a sessão: coloca o access token atual na blacklist

@@ -26,6 +26,9 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
+
+	"github.com/lib/pq"
 )
 
 // uuidFormatRegexp valida o formato (não a existência) de um UUID vindo do
@@ -245,4 +248,130 @@ func writeUsuarioJSON(w http.ResponseWriter, id, perfil string, ativo bool) {
 		"perfil": perfil,
 		"ativo":  ativo,
 	})
+}
+
+// CreateUsuarioLocalRequest é o corpo de POST /api/admin/usuarios.
+type CreateUsuarioLocalRequest struct {
+	Email  string `json:"email"`
+	Nome   string `json:"nome"`
+	Senha  string `json:"senha"`
+	Perfil string `json:"perfil"`
+}
+
+// CreateUsuarioLocalHandler cria uma conta local (e-mail+senha) — a única
+// forma de provisionar um usuário quando SSO Keycloak não está configurado
+// (sem IAM_BASE_URL, não existe auto-provisionamento via auth_sso.go).
+// Decisão de escopo: só um administrador cria contas locais, não existe
+// autocadastro público (diferente do RegisterHandler do FB_APU02) — por
+// isso este handler fica atrás de RequireAuth(..., "administrador"), igual
+// AdminUpdateUsuarioHandler.
+func CreateUsuarioLocalHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var req CreateUsuarioLocalRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "corpo da requisição inválido")
+			return
+		}
+
+		req.Email = strings.TrimSpace(req.Email)
+		if req.Email == "" || !strings.Contains(req.Email, "@") {
+			jsonErr(w, http.StatusBadRequest, "e-mail inválido")
+			return
+		}
+		if req.Nome == "" {
+			jsonErr(w, http.StatusBadRequest, "nome é obrigatório")
+			return
+		}
+		// Mesma política de senha do FB_APU02 (RegisterHandler): mínimo 8
+		// caracteres.
+		if len(req.Senha) < 8 {
+			jsonErr(w, http.StatusBadRequest, "a senha deve ter no mínimo 8 caracteres")
+			return
+		}
+		if req.Perfil == "" {
+			req.Perfil = "solicitante"
+		}
+		if req.Perfil != "administrador" && req.Perfil != "solicitante" {
+			jsonErr(w, http.StatusBadRequest, "perfil deve ser 'administrador' ou 'solicitante'")
+			return
+		}
+
+		hash, err := HashPassword(req.Senha)
+		if err != nil {
+			log.Printf("[Admin] Erro ao gerar hash de senha: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		atorID := GetUserIDFromContext(r)
+
+		tx, err := db.Begin()
+		if err != nil {
+			log.Printf("[Admin] Erro ao iniciar transação: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		var novoID string
+		err = tx.QueryRow(`
+			INSERT INTO usuarios (email, nome, perfil, password_hash)
+			VALUES ($1, $2, $3, $4)
+			RETURNING id
+		`, req.Email, req.Nome, req.Perfil, hash).Scan(&novoID)
+		if err != nil {
+			// Violação do índice único idx_usuarios_email_lower (migration 001)
+			// — e-mail já cadastrado (local ou auto-provisionado via SSO).
+			if isUniqueViolation(err) {
+				jsonErr(w, http.StatusConflict, "já existe um usuário com esse e-mail")
+				return
+			}
+			log.Printf("[Admin] Erro ao criar usuário local %s: %v", req.Email, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		if _, err = tx.Exec(`
+			INSERT INTO usuarios_auditoria
+				(ator_id, usuario_alvo_id, acao, perfil_novo, ativo_novo)
+			VALUES ($1, $2, 'usuario_criado', $3, true)
+		`, atorID, novoID, req.Perfil); err != nil {
+			log.Printf("[Admin] Erro ao gravar auditoria de criação para %s: %v", novoID, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		if err := tx.Commit(); err != nil {
+			log.Printf("[Admin] Erro ao commitar criação de usuário: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		log.Printf("[Admin] %s criou usuário local %s (perfil=%s)", atorID, req.Email, req.Perfil)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":     novoID,
+			"email":  req.Email,
+			"nome":   req.Nome,
+			"perfil": req.Perfil,
+			"ativo":  true,
+		})
+	}
+}
+
+// isUniqueViolation reconhece violação de UNIQUE do Postgres — mesmo padrão
+// de errorMsgAmigavel (cadastros.go): type-assert para *pq.Error e checa o
+// nome do código SQLSTATE, nunca por texto da mensagem.
+func isUniqueViolation(err error) bool {
+	pqErr, ok := err.(*pq.Error)
+	return ok && pqErr.Code.Name() == "unique_violation"
 }

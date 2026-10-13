@@ -55,10 +55,17 @@ npm run dev
 
 ## Primeiro acesso administrativo
 
-Não existe cadastro de usuário separado (AD-6/AD-7): o login via SSO corporativo
-cria automaticamente o registro em `usuarios` no primeiro acesso de cada
-pessoa, sempre com perfil `solicitante`. Para promover a primeira pessoa a
-`administrador`:
+Dois caminhos de login coexistem (AD-6/AD-7): SSO Keycloak (preferencial,
+sem cadastro separado) e login local e-mail+senha (fallback para quando
+`IAM_BASE_URL` não está configurado — a tela de login troca sozinha entre os
+dois, ver `SSOConfigHandler`/`frontend/src/pages/Login.tsx`). O jeito de
+criar o primeiro administrador depende de qual caminho está ativo.
+
+### Via SSO Keycloak
+
+O login cria automaticamente o registro em `usuarios` no primeiro acesso de
+cada pessoa, sempre com perfil `solicitante`. Para promover a primeira pessoa
+a `administrador`:
 
 1. Peça para a pessoa fazer login uma vez via SSO (isso a cria em `usuarios`).
 2. Edite `backend/scripts/bootstrap_admin.sql`, substituindo o placeholder
@@ -71,11 +78,28 @@ pessoa, sempre com perfil `solicitante`. Para promover a primeira pessoa a
 4. Reverta a edição do passo 2 antes de commitar — o arquivo deve voltar ao
    placeholder no repositório (dado sensível, repositório público).
 
-Depois do primeiro administrador criado, qualquer administrador autenticado
-pode conceder/revogar o perfil `administrador` e ativar/desativar outros
-usuários via `PATCH /api/admin/usuarios/{id}` (protegido por `RequireAuth`,
-grava trilha de auditoria em `usuarios_auditoria`). O sistema sempre recusa
-(`409`) qualquer mudança que deixaria zero administradores ativos.
+### Via login local (sem Keycloak configurado)
+
+Sem SSO não existe auto-provisionamento, então o primeiro administrador
+precisa ser criado direto no banco:
+
+1. Edite `backend/scripts/bootstrap_admin_local.sql`, substituindo os 3
+   placeholders (e-mail, nome, senha).
+2. Rode: `psql "$DATABASE_URL" -f backend/scripts/bootstrap_admin_local.sql`
+3. Reverta a edição do passo 1 antes de commitar.
+4. Faça login em `/login` com o e-mail e a senha reais.
+
+Administradores seguintes **não** precisam de script manual — qualquer
+administrador autenticado cria contas locais via
+`POST /api/admin/usuarios` (`{email, nome, senha, perfil?}`).
+
+### Gestão de usuários (qualquer um dos dois caminhos)
+
+Qualquer administrador autenticado pode conceder/revogar o perfil
+`administrador` e ativar/desativar outros usuários via
+`PATCH /api/admin/usuarios/{id}` (protegido por `RequireAuth`, grava trilha
+de auditoria em `usuarios_auditoria`). O sistema sempre recusa (`409`)
+qualquer mudança que deixaria zero administradores ativos.
 
 ## Estrutura de diretórios
 

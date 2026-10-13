@@ -3,6 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { buildLoginUrl, fetchIAMConfig } from '@/lib/keycloak/buildLoginUrl';
 
+// Payload de POST /api/auth/login em caso de sucesso — mesmo formato que
+// AuthContext.login() espera (ver backend/handlers/auth.go, AuthResponse),
+// igual SSOLoginResponse em handleCallback.ts.
+interface LocalLoginResponse {
+  token: string;
+  user: {
+    id: string;
+    email: string;
+    nome: string;
+    perfil: 'solicitante' | 'administrador';
+  };
+}
+
 // Tela de login — único fluxo é SSO Keycloak (AD-6/Epic 1: "sem cadastro de
 // usuário separado"). Sem shadcn/ui ou sonner aqui: o scaffold (Story 1.1)
 // ainda não inclui esses componentes/dependência — usa só Tailwind (já
@@ -11,8 +24,11 @@ import { buildLoginUrl, fetchIAMConfig } from '@/lib/keycloak/buildLoginUrl';
 const Login = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [ssoEnabled, setSsoEnabled] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { login, isAuthenticated } = useAuth();
 
   // `?password` força a tela manual mesmo com SSO habilitado — útil pra
   // depurar o fluxo sem cair direto no redirect automático.
@@ -80,6 +96,34 @@ const Login = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Login local (e-mail+senha) — só aparece quando SSO não está configurado
+  // (ssoEnabled=false). Contas locais são criadas por um administrador via
+  // POST /api/admin/usuarios; não existe autocadastro aqui.
+  const handleLocalLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setErrorMsg(null);
+    setSubmitting(true);
+    try {
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = (await resp.json()) as LocalLoginResponse | { error?: string };
+      if (!resp.ok) {
+        setErrorMsg(('error' in data && data.error) || 'E-mail ou senha inválidos');
+        return;
+      }
+      login(data as LocalLoginResponse);
+      navigate('/', { replace: true });
+    } catch {
+      setErrorMsg('Falha de conexão com o servidor. Tente novamente.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleSSOLogin = async () => {
     try {
       window.location.href = await buildLoginUrl();
@@ -128,9 +172,43 @@ const Login = () => {
             Entrar com SSO Ferreira Costa
           </button>
         ) : (
-          <div className="mt-5 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-            SSO Keycloak não está configurado neste servidor. Contate o administrador.
-          </div>
+          <form onSubmit={handleLocalLogin} className="mt-5 flex flex-col gap-3">
+            <div>
+              <label htmlFor="email" className="text-xs font-medium text-card-foreground">
+                E-mail
+              </label>
+              <input
+                id="email"
+                type="email"
+                required
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label htmlFor="password" className="text-xs font-medium text-card-foreground">
+                Senha
+              </label>
+              <input
+                id="password"
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="mt-1 w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+            >
+              {submitting ? 'Entrando...' : 'Entrar'}
+            </button>
+          </form>
         )}
       </div>
     </div>
