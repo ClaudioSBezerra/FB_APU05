@@ -198,6 +198,49 @@ func TestCarregarUsuariosHandler_CentroCustoNomeCriaAutomaticamente(t *testing.T
 	}
 }
 
+// TestCarregarUsuariosHandler_NomccuComoSinonimoDeCentroCustoNome cobre o
+// arquivo real do negócio: a coluna chama "NOMCCU" (convenção Senior/Oracle
+// da query deles), não "centro_custo_nome" — precisa ser aceita do mesmo
+// jeito, sem pedir pra renomear a planilha.
+func TestCarregarUsuariosHandler_NomccuComoSinonimoDeCentroCustoNome(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "EMAIL;NOME;COD_EMPRESA;NUMCAD;CENTRO_CUSTO_CODIGO;NOMCCU\n" +
+		"novo@ferreiracosta.com.br;Fulano de Tal;1;12345;6450;E-commerce Corporativo\n"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("6450").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO divisoes")).
+		WithArgs("SEM-DIVISAO").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("divisao-sem-divisao-id"))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO centros_custo")).
+		WithArgs("6450", "E-commerce Corporativo", "divisao-sem-divisao-id").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("novo@ferreiracosta.com.br").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
+		WithArgs("novo@ferreiracosta.com.br", "Fulano de Tal", sqlmock.AnyArg(), 1, 12345, testCentroCustoID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := CarregarUsuariosHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newUsuariosCargaRequest(csv))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"criados":1`) || !strings.Contains(rec.Body.String(), `"ignorados":0`) {
+		t.Fatalf("corpo não indica 1 criado + 0 ignorados: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
 // TestCarregarUsuariosHandler_IgnoraColunaPerfil cobre explicitamente que uma
 // coluna "perfil" presente no arquivo (formato antigo, ou planilha que o
 // usuário editou por conta própria) é ignorada pelo parser por nome — nunca

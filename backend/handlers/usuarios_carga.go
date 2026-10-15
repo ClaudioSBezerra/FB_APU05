@@ -69,6 +69,20 @@ var colunasObrigatoriasUsuariosCSV = []string{"email", "nome", "cod_empresa", "n
 // opcional, separador ';', mesmo padrão de lerCadastroCSV (cadastros_csv.go)
 // quanto a aspas/encoding, mas com cabeçalho flexível (ver comentário de
 // topo do arquivo).
+// primeiroIndiceEncontrado procura, em ordem, cada nome de coluna aceito
+// (sinônimos) no índice de cabeçalho — devolve o primeiro que existir.
+// Usado para aceitar mais de um nome para a mesma coluna opcional (ex.
+// "centro_custo_nome" ou "nomccu", a convenção que a query real do
+// negócio já usa) sem precisar que a pessoa renomeie a planilha.
+func primeiroIndiceEncontrado(indice map[string]int, nomes ...string) (int, bool) {
+	for _, nome := range nomes {
+		if i, ok := indice[nome]; ok {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 func lerUsuariosCSV(corpo []byte) ([]linhaUsuarioCSV, error) {
 	corpo = bytes.TrimPrefix(corpo, bomUTF8)
 
@@ -116,10 +130,14 @@ func lerUsuariosCSV(corpo []byte) ([]linhaUsuarioCSV, error) {
 			CodEmpresaStr: strings.TrimSpace(campos[indice["cod_empresa"]]),
 			NumcadStr:     strings.TrimSpace(campos[indice["numcad"]]),
 		}
-		if i, ok := indice["centro_custo_codigo"]; ok {
+		if i, ok := primeiroIndiceEncontrado(indice, "centro_custo_codigo"); ok {
 			linha.CentroCustoCodigo = strings.TrimSpace(campos[i])
 		}
-		if i, ok := indice["centro_custo_nome"]; ok {
+		// "nomccu" é o nome que a query real do negócio já usa (nome do
+		// centro de custo, convenção Senior/Oracle) — aceito como sinônimo
+		// de centro_custo_nome em vez de pedir pra renomear a planilha de
+		// novo.
+		if i, ok := primeiroIndiceEncontrado(indice, "centro_custo_nome", "nomccu"); ok {
 			linha.CentroCustoNome = strings.TrimSpace(campos[i])
 		}
 		linhas = append(linhas, linha)
