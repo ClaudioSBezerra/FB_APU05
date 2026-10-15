@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -29,7 +29,7 @@ import {
   DialogFooter,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { UserPlus, Upload, Mail } from 'lucide-react';
+import { UserPlus, Upload, Mail, Pencil, Search } from 'lucide-react';
 
 // Tela de gestão de usuários — consome os 3 endpoints administrativos do
 // backend (handlers/admin.go): GET /api/admin/usuarios (lista paginada,
@@ -51,12 +51,34 @@ interface Usuario {
   created_at: string;
   cod_empresa: number | null;
   numcad: number | null;
+  centro_custo_id: string | null;
+  centro_custo_nome: string | null;
 }
 
-interface ListaResponse {
-  items: Usuario[];
-  pagina: number;
-  tamanho: number;
+interface CentroCusto {
+  id: string;
+  codigo: string;
+  nome: string;
+}
+
+// A API não devolve total/cursor (AD-14) e paginacaoDaQuery trava "tamanho"
+// em 100 no servidor — então pra ter a lista inteira (hoje ~500 usuários
+// carregados via planilha) é preciso paginar no cliente até vir uma página
+// mais curta que o pedido, igual já se faz em qualquer outra tela que
+// precisa do dado completo sem filtro no servidor.
+async function fetchTudoPaginado<T>(urlBase: string): Promise<T[]> {
+  const tamanho = 100;
+  let pagina = 1;
+  const todos: T[] = [];
+  for (;;) {
+    const resp = await fetchJSON<{ items: T[] }>(
+      `${urlBase}${urlBase.includes('?') ? '&' : '?'}pagina=${pagina}&tamanho=${tamanho}`,
+    );
+    todos.push(...resp.items);
+    if (resp.items.length < tamanho) break;
+    pagina++;
+  }
+  return todos;
 }
 
 interface CargaResultado {
@@ -133,11 +155,33 @@ const GestaoUsuarios = () => {
   const [cargaOpen, setCargaOpen] = useState(false);
   const [arquivoCarga, setArquivoCarga] = useState<File | null>(null);
   const [resultadoCarga, setResultadoCarga] = useState<CargaResultado | null>(null);
+  const [busca, setBusca] = useState('');
+  const [editAlvo, setEditAlvo] = useState<Usuario | null>(null);
+  const [editNome, setEditNome] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editCentroCustoId, setEditCentroCustoId] = useState('');
 
-  const { data, isLoading, error } = useQuery({
+  const { data: usuarios, isLoading, error } = useQuery({
     queryKey: ['usuarios'],
-    queryFn: () => fetchJSON<ListaResponse>('/api/admin/usuarios?tamanho=100'),
+    queryFn: () => fetchTudoPaginado<Usuario>('/api/admin/usuarios'),
   });
+
+  const { data: centrosCusto } = useQuery({
+    queryKey: ['centros-custo'],
+    queryFn: () => fetchTudoPaginado<CentroCusto>('/api/admin/cadastros/centros-custo'),
+  });
+
+  const usuariosFiltrados = useMemo(() => {
+    const todos = usuarios ?? [];
+    const termo = busca.trim().toLowerCase();
+    if (!termo) return todos;
+    return todos.filter((u) =>
+      [u.nome, u.email, u.centro_custo_nome ?? '', String(u.cod_empresa ?? ''), String(u.numcad ?? '')]
+        .join(' ')
+        .toLowerCase()
+        .includes(termo),
+    );
+  }, [usuarios, busca]);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -173,7 +217,11 @@ const GestaoUsuarios = () => {
       body,
     }: {
       id: string;
-      body: Partial<Pick<Usuario, 'perfil' | 'ativo' | 'cod_empresa' | 'numcad'>>;
+      body: Partial<Pick<Usuario, 'perfil' | 'ativo' | 'cod_empresa' | 'numcad'>> & {
+        nome?: string;
+        email?: string;
+        centro_custo_id?: string;
+      };
     }) =>
       fetchJSON(`/api/admin/usuarios/${id}`, {
         method: 'PATCH',
@@ -222,6 +270,24 @@ const GestaoUsuarios = () => {
       setArquivoCarga(null);
       setResultadoCarga(null);
     }
+  }
+
+  function abrirEdicao(usuario: Usuario) {
+    setEditAlvo(usuario);
+    setEditNome(usuario.nome);
+    setEditEmail(usuario.email);
+    setEditCentroCustoId(usuario.centro_custo_id ?? '');
+  }
+
+  function salvarEdicao() {
+    if (!editAlvo) return;
+    updateMutation.mutate(
+      {
+        id: editAlvo.id,
+        body: { nome: editNome, email: editEmail, centro_custo_id: editCentroCustoId },
+      },
+      { onSuccess: () => setEditAlvo(null) },
+    );
   }
 
   return (
@@ -359,11 +425,25 @@ const GestaoUsuarios = () => {
         </div>
       </div>
 
+      <div className="relative max-w-sm">
+        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <Input
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar por nome, e-mail, empresa/matrícula ou centro de custo..."
+          className="pl-8"
+        />
+      </div>
+
       {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
       {error && <p className="text-sm text-destructive">{(error as Error).message}</p>}
 
-      {data && (
-        <Table>
+      {usuarios && (
+        <>
+          <p className="text-xs text-muted-foreground">
+            {usuariosFiltrados.length} de {usuarios.length} usuário(s)
+          </p>
+          <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Nome</TableHead>
@@ -371,12 +451,13 @@ const GestaoUsuarios = () => {
               <TableHead>Perfil</TableHead>
               <TableHead>Ativo</TableHead>
               <TableHead>Empresa / Matrícula (Oracle)</TableHead>
+              <TableHead>Centro de custo</TableHead>
               <TableHead>Criado em</TableHead>
               <TableHead>Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data.items.map((u) => (
+            {usuariosFiltrados.map((u) => (
               <TableRow key={u.id}>
                 <TableCell className="font-medium">{u.nome}</TableCell>
                 <TableCell className="text-muted-foreground">{u.email}</TableCell>
@@ -411,25 +492,75 @@ const GestaoUsuarios = () => {
                     }
                   />
                 </TableCell>
+                <TableCell className="text-muted-foreground">{u.centro_custo_nome ?? '—'}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {new Date(u.created_at).toLocaleDateString('pt-BR')}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => liberarAcessoMutation.mutate(u.id)}
-                    disabled={liberarAcessoMutation.isPending}
-                  >
-                    <Mail className="mr-1 h-3.5 w-3.5" />
-                    Liberar acesso
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => abrirEdicao(u)}>
+                      <Pencil className="mr-1 h-3.5 w-3.5" />
+                      Editar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => liberarAcessoMutation.mutate(u.id)}
+                      disabled={liberarAcessoMutation.isPending}
+                    >
+                      <Mail className="mr-1 h-3.5 w-3.5" />
+                      Liberar acesso
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
-        </Table>
+          </Table>
+        </>
       )}
+
+      <Dialog open={editAlvo !== null} onOpenChange={(o) => !o && setEditAlvo(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Editar usuário</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit-nome">Nome</Label>
+              <Input id="edit-nome" value={editNome} onChange={(e) => setEditNome(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit-email">E-mail</Label>
+              <Input id="edit-email" type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Centro de custo</Label>
+              <Select value={editCentroCustoId || '__nenhum__'} onValueChange={(v) => setEditCentroCustoId(v === '__nenhum__' ? '' : v)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__nenhum__">Nenhum</SelectItem>
+                  {(centrosCusto ?? []).map((cc) => (
+                    <SelectItem key={cc.id} value={cc.id}>
+                      {cc.codigo} — {cc.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditAlvo(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={salvarEdicao} disabled={updateMutation.isPending || !editNome || !editEmail}>
+              {updateMutation.isPending ? 'Salvando...' : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
