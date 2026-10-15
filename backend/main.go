@@ -354,6 +354,16 @@ func main() {
 	// acima; diferente delas, reimportar é sempre permitido (nunca 409).
 	http.HandleFunc("POST /api/admin/colaboradores/carga", handlers.RequireAuth(withDB(handlers.CarregarColaboradoresHandler), "administrador"))
 
+	// ERP Bridge — credenciais para o daemon externo que sincroniza
+	// VW_COLABORADORES do Oracle/SAP (servidor FCCORP). Réplica do mecanismo
+	// do FB_APU02, mais estrita aqui: administrador em vez de "qualquer
+	// autenticado". GET /credentials é o único endpoint sem RequireAuth —
+	// autenticado via X-API-Key (chamado pelo daemon, não pelo navegador).
+	http.HandleFunc("GET /api/erp-bridge/config", handlers.RequireAuth(withDB(handlers.ERPBridgeConfigHandler), "administrador"))
+	http.HandleFunc("PATCH /api/erp-bridge/config", handlers.RequireAuth(withDB(handlers.ERPBridgeConfigHandler), "administrador"))
+	http.HandleFunc("POST /api/erp-bridge/config/generate-api-key", handlers.RequireAuth(withDB(handlers.ERPBridgeGenerateAPIKeyHandler), "administrador"))
+	http.HandleFunc("GET /api/erp-bridge/credentials", withDB(handlers.ERPBridgeCredentialsHandler))
+
 	// Abrir solicitação (Story 3.1, FR-5/FR-10) — primeira rota do FB_APU05
 	// que não exige perfil `administrador` (RequireAuth(..., "") — qualquer
 	// solicitante autenticado). Só tipo_solicitacao="transferencia" tem

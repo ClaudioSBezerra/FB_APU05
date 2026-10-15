@@ -14,6 +14,7 @@ import ChangePassword from '@/pages/ChangePassword'
 import GestaoUsuarios from '@/pages/GestaoUsuarios'
 import AbrirSolicitacao from '@/pages/AbrirSolicitacao'
 import FilaAdministrador from '@/pages/FilaAdministrador'
+import ERPBridgeCredenciais from '@/pages/ERPBridgeCredenciais'
 
 const queryClient = new QueryClient()
 
@@ -125,6 +126,14 @@ function App() {
                     element={
                       <AdminRoute>
                         <GestaoUsuarios />
+                      </AdminRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/erp-bridge"
+                    element={
+                      <AdminRoute>
+                        <ERPBridgeCredenciais />
                       </AdminRoute>
                     }
                   />
