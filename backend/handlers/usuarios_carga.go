@@ -19,6 +19,7 @@ package handlers
 // /api/admin/usuarios/{id}), nunca em lote.
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -34,6 +35,32 @@ import (
 )
 
 var cabecalhoUsuariosCSV = []string{"email", "nome", "cod_empresa", "numcad", "centro_custo_codigo"}
+
+// normalizarCabecalhoCSV deixa só a PRIMEIRA linha (o cabeçalho) em
+// minúsculas, preservando BOM e todo o resto do arquivo — planilhas
+// exportadas do Oracle/Excel costumam vir com cabeçalho em maiúsculas (ex.
+// "EMAIL;NOME;..."), mas cabecalhoUsuariosCSV exige minúsculas (mesma
+// convenção de todo outro cadastro CSV do sistema). Rejeitou a mesma
+// planilha duas vezes por esse motivo — normaliza aqui em vez de depender
+// de a pessoa editar o arquivo à mão toda vez.
+func normalizarCabecalhoCSV(corpo []byte) []byte {
+	resto := corpo
+	var prefixo []byte
+	if bytes.HasPrefix(resto, bomUTF8) {
+		prefixo = resto[:len(bomUTF8)]
+		resto = resto[len(bomUTF8):]
+	}
+	fimLinha := bytes.IndexByte(resto, '\n')
+	if fimLinha == -1 {
+		fimLinha = len(resto)
+	}
+	cabecalho := bytes.ToLower(resto[:fimLinha])
+	saida := make([]byte, 0, len(corpo))
+	saida = append(saida, prefixo...)
+	saida = append(saida, cabecalho...)
+	saida = append(saida, resto[fimLinha:]...)
+	return saida
+}
 
 type usuarioCargaResultado struct {
 	Criados     int      `json:"criados"`
@@ -83,7 +110,7 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		linhas, err := lerCadastroCSV(corpo, cabecalhoUsuariosCSV)
+		linhas, err := lerCadastroCSV(normalizarCabecalhoCSV(corpo), cabecalhoUsuariosCSV)
 		if err != nil {
 			jsonErr(w, http.StatusBadRequest, err.Error())
 			return

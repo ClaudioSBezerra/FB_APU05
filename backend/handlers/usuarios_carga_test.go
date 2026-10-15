@@ -74,6 +74,41 @@ func TestCarregarUsuariosHandler_CriaUsuarioNovo(t *testing.T) {
 	}
 }
 
+// TestCarregarUsuariosHandler_CabecalhoMaiusculo cobre um incidente real:
+// planilhas exportadas do Oracle/Excel costumam vir com cabeçalho em
+// maiúsculas (EMAIL;NOME;...) — normalizarCabecalhoCSV deixa só essa 1ª
+// linha em minúsculas antes de validar, sem exigir que a pessoa edite o
+// arquivo à mão.
+func TestCarregarUsuariosHandler_CabecalhoMaiusculo(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "EMAIL;NOME;COD_EMPRESA;NUMCAD;CENTRO_CUSTO_CODIGO\n" +
+		"novo@ferreiracosta.com.br;Fulano de Tal;1;12345;\n"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("novo@ferreiracosta.com.br").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
+		WithArgs("novo@ferreiracosta.com.br", "Fulano de Tal", sqlmock.AnyArg(), 1, 12345, nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := CarregarUsuariosHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newUsuariosCargaRequest(csv))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"criados":1`) {
+		t.Fatalf("corpo não indica 1 criado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
 func TestCarregarUsuariosHandler_AtualizaUsuarioExistente(t *testing.T) {
 	db, mock := newSQLMock(t)
 
