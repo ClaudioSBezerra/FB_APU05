@@ -40,12 +40,20 @@ services:
         condition: service_healthy
     networks:
       - fb_net
+    # Mitigação (15/10) da janela de Gateway Timeout pós-deploy: db/api/web
+    # são recriados juntos a cada deploy (mesmo "application" no Coolify —
+    # o conserto definitivo é separar o banco como recurso próprio, ainda
+    # não feito). Enquanto isso, intervalos mais curtos aqui e em `db`/`web`
+    # só encurtam a DETECÇÃO de "ficou saudável" — não eliminam o reinício
+    # do Postgres em si. start_period/retries mantêm margem real (~40s)
+    # para um boot mais lento (ex. migration nova), só não ficam parados
+    # até 30-40s só para a PRIMEIRA checagem.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   # Frontend (build estático + nginx) — único serviço exposto ao domínio;
   # proxya /api internamente para o container `api` (ver frontend/nginx.conf).
@@ -58,9 +66,22 @@ services:
     expose:
       - "80"
     depends_on:
-      - api
+      api:
+        # Antes: só esperava o CONTAINER do api existir (não ele responder
+        # de verdade) — nginx podia subir e já aceitar tráfego do Traefik
+        # antes do /api/* funcionar, virando 502/504 pro usuário. Agora só
+        # sobe depois que o healthcheck do api já passou.
+        condition: service_healthy
     networks:
       - fb_net
+    # Sobrescreve o HEALTHCHECK da imagem (frontend/Dockerfile, intervalo
+    # 30s/start-period 10s) com a mesma detecção mais rápida do api/db.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.fb-apu05-web.rule=Host(`controladoria.fbtax.cloud`)"
@@ -85,10 +106,10 @@ services:
       - fb_net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
 networks:
   fb_net:
