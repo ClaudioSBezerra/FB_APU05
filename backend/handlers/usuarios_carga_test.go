@@ -151,6 +151,88 @@ func TestCarregarUsuariosHandler_CentroCustoNaoEncontrado_NaoBloqueiaCriacao(t *
 	}
 }
 
+// TestCarregarUsuariosHandler_CentroCustoNomeCriaAutomaticamente cobre o
+// ajuste pedido depois do incidente dos centros de custo ausentes: com uma
+// coluna extra "centro_custo_nome" (presente ou não — aqui está), um CC não
+// encontrado é CRIADO na hora (preso à divisão placeholder "SEM-DIVISAO",
+// também criada na hora) em vez de só virar aviso.
+func TestCarregarUsuariosHandler_CentroCustoNomeCriaAutomaticamente(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "email;nome;cod_empresa;numcad;centro_custo_codigo;centro_custo_nome\n" +
+		"novo@ferreiracosta.com.br;Fulano de Tal;1;12345;6450;E-commerce Corporativo\n"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("6450").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO divisoes")).
+		WithArgs("SEM-DIVISAO").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("divisao-sem-divisao-id"))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO centros_custo")).
+		WithArgs("6450", "E-commerce Corporativo", "divisao-sem-divisao-id").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("novo@ferreiracosta.com.br").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
+		WithArgs("novo@ferreiracosta.com.br", "Fulano de Tal", sqlmock.AnyArg(), 1, 12345, testCentroCustoID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := CarregarUsuariosHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newUsuariosCargaRequest(csv))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"criados":1`) || !strings.Contains(rec.Body.String(), `"ignorados":0`) {
+		t.Fatalf("corpo não indica 1 criado + 0 ignorados: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "não foi possível") {
+		t.Fatalf("não deveria ter avisado falha ao criar CC: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
+// TestCarregarUsuariosHandler_IgnoraColunaPerfil cobre explicitamente que uma
+// coluna "perfil" presente no arquivo (formato antigo, ou planilha que o
+// usuário editou por conta própria) é ignorada pelo parser por nome — nunca
+// quebra a leitura nem é usada para decidir o perfil (sempre 'solicitante'
+// na criação).
+func TestCarregarUsuariosHandler_IgnoraColunaPerfil(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "EMAIL;NOME;PERFIL;COD_EMPRESA;NUMCAD;CENTRO_CUSTO_CODIGO;NOMCCU\n" +
+		"novo@ferreiracosta.com.br;Fulano de Tal;3345;1;12345;;\n"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("novo@ferreiracosta.com.br").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
+		WithArgs("novo@ferreiracosta.com.br", "Fulano de Tal", sqlmock.AnyArg(), 1, 12345, nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := CarregarUsuariosHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newUsuariosCargaRequest(csv))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"criados":1`) {
+		t.Fatalf("corpo não indica 1 criado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
 func TestCarregarUsuariosHandler_AtualizaUsuarioExistente(t *testing.T) {
 	db, mock := newSQLMock(t)
 

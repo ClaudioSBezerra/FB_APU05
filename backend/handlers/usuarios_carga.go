@@ -1,27 +1,41 @@
 package handlers
 
-// usuarios_carga.go — carga em lote (CSV ';' + UTF-8 BOM opcional, mesmo
-// parser de cadastros_csv.go) de usuários já com a identidade Oracle
-// (cod_empresa/numcad, migration 019) preenchida — destrava testar o
-// sistema com uma planilha real antes do conector ERP Bridge
-// (erp-bridge-colaboradores/) estar rodando em produção.
+// usuarios_carga.go — carga em lote (CSV ';' + UTF-8 BOM opcional) de
+// usuários já com a identidade Oracle (cod_empresa/numcad, migration 019)
+// preenchida — destrava testar o sistema com uma planilha real antes do
+// conector ERP Bridge (erp-bridge-colaboradores/) estar rodando em
+// produção.
+//
+// Parser PRÓPRIO (não lerCadastroCSV/cadastros_csv.go): colunas resolvidas
+// por NOME no cabeçalho, não por posição fixa — tolera reordenar,
+// maiúsculas/minúsculas, e ignora colunas extras (ex. "perfil", presente ou
+// não no arquivo, nunca é usada: todo usuário criado nasce 'solicitante').
+// Só email/nome/cod_empresa/numcad são obrigatórias; centro_custo_codigo e
+// centro_custo_nome são opcionais. Motivo de não reaproveitar
+// lerCadastroCSV: aquele exige cabeçalho EXATO (mesmo texto, mesma ordem),
+// e essa planilha real já rejeitou por isso mais de uma vez.
 //
 // UPSERT por e-mail (case-insensitive): usuário novo recebe uma senha
 // aleatória gerada aqui e descartada na hora — só o hash bcrypt é gravado,
 // o texto puro nunca é persistido, logado ou devolvido na resposta. A
 // pessoa define a própria senha via "Esqueci minha senha" (SMTP já
 // configurado). Usuário já existente tem nome/identidade/CC atualizados;
-// senha nunca é tocada por este handler.
+// senha e perfil nunca são tocados por este handler (perfil só muda
+// individualmente, tela de Gestão de Usuários).
 //
-// Sem coluna "perfil" (removida a pedido do negócio): todo usuário criado
-// por esta carga nasce 'solicitante' — promover a administrador continua
-// sendo feito individualmente na tela de Gestão de Usuários (PATCH
-// /api/admin/usuarios/{id}), nunca em lote.
+// centro_custo_codigo sem cadastro ainda: se a linha também trouxer
+// centro_custo_nome, o centro de custo é CRIADO automaticamente aqui
+// (preso a uma divisão placeholder "SEM-DIVISAO", criada uma única vez) —
+// nunca bloqueia a criação do usuário. Sem nome, vira só um aviso (CC fica
+// em branco). Corrigir a divisão real de cada CC depois é
+// responsabilidade do administrador, na tela de Cadastros (que já tem
+// histórico/restauração).
 
 import (
 	"bytes"
 	"crypto/rand"
 	"database/sql"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -34,32 +48,83 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var cabecalhoUsuariosCSV = []string{"email", "nome", "cod_empresa", "numcad", "centro_custo_codigo"}
+type linhaUsuarioCSV struct {
+	Numero            int
+	Email             string
+	Nome              string
+	CodEmpresaStr     string
+	NumcadStr         string
+	CentroCustoCodigo string
+	CentroCustoNome   string
+}
 
-// normalizarCabecalhoCSV deixa só a PRIMEIRA linha (o cabeçalho) em
-// minúsculas, preservando BOM e todo o resto do arquivo — planilhas
-// exportadas do Oracle/Excel costumam vir com cabeçalho em maiúsculas (ex.
-// "EMAIL;NOME;..."), mas cabecalhoUsuariosCSV exige minúsculas (mesma
-// convenção de todo outro cadastro CSV do sistema). Rejeitou a mesma
-// planilha duas vezes por esse motivo — normaliza aqui em vez de depender
-// de a pessoa editar o arquivo à mão toda vez.
-func normalizarCabecalhoCSV(corpo []byte) []byte {
-	resto := corpo
-	var prefixo []byte
-	if bytes.HasPrefix(resto, bomUTF8) {
-		prefixo = resto[:len(bomUTF8)]
-		resto = resto[len(bomUTF8):]
+// colunasObrigatoriasUsuariosCSV — únicas colunas sem as quais o arquivo é
+// rejeitado inteiro (cabeçalho mal formado); as demais (centro_custo_codigo,
+// centro_custo_nome) são opcionais, e qualquer outra coluna (ex. "perfil")
+// é ignorada.
+var colunasObrigatoriasUsuariosCSV = []string{"email", "nome", "cod_empresa", "numcad"}
+
+// lerUsuariosCSV faz parse do CSV resolvendo colunas pelo NOME do
+// cabeçalho (minúsculas, após TrimSpace) — não pela posição. BOM UTF-8
+// opcional, separador ';', mesmo padrão de lerCadastroCSV (cadastros_csv.go)
+// quanto a aspas/encoding, mas com cabeçalho flexível (ver comentário de
+// topo do arquivo).
+func lerUsuariosCSV(corpo []byte) ([]linhaUsuarioCSV, error) {
+	corpo = bytes.TrimPrefix(corpo, bomUTF8)
+
+	reader := csv.NewReader(bytes.NewReader(corpo))
+	reader.Comma = ';'
+	reader.FieldsPerRecord = -1
+
+	header, err := reader.Read()
+	if err == io.EOF {
+		return nil, fmt.Errorf("arquivo CSV vazio")
 	}
-	fimLinha := bytes.IndexByte(resto, '\n')
-	if fimLinha == -1 {
-		fimLinha = len(resto)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao ler cabeçalho do CSV: %v", err)
 	}
-	cabecalho := bytes.ToLower(resto[:fimLinha])
-	saida := make([]byte, 0, len(corpo))
-	saida = append(saida, prefixo...)
-	saida = append(saida, cabecalho...)
-	saida = append(saida, resto[fimLinha:]...)
-	return saida
+
+	indice := make(map[string]int, len(header))
+	for i, campo := range header {
+		indice[strings.ToLower(strings.TrimSpace(campo))] = i
+	}
+	for _, col := range colunasObrigatoriasUsuariosCSV {
+		if _, ok := indice[col]; !ok {
+			return nil, fmt.Errorf("cabeçalho do CSV precisa ter a coluna '%s' (colunas obrigatórias: %s)", col, strings.Join(colunasObrigatoriasUsuariosCSV, ", "))
+		}
+	}
+
+	var linhas []linhaUsuarioCSV
+	numeroLinha := 1
+	for {
+		numeroLinha++
+		campos, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("linha %d: erro ao ler CSV: %v", numeroLinha, err)
+		}
+		if len(campos) != len(header) {
+			return nil, fmt.Errorf("linha %d: esperado %d coluna(s) (mesmo número do cabeçalho), recebido %d", numeroLinha, len(header), len(campos))
+		}
+
+		linha := linhaUsuarioCSV{
+			Numero:        numeroLinha,
+			Email:         strings.TrimSpace(campos[indice["email"]]),
+			Nome:          strings.TrimSpace(campos[indice["nome"]]),
+			CodEmpresaStr: strings.TrimSpace(campos[indice["cod_empresa"]]),
+			NumcadStr:     strings.TrimSpace(campos[indice["numcad"]]),
+		}
+		if i, ok := indice["centro_custo_codigo"]; ok {
+			linha.CentroCustoCodigo = strings.TrimSpace(campos[i])
+		}
+		if i, ok := indice["centro_custo_nome"]; ok {
+			linha.CentroCustoNome = strings.TrimSpace(campos[i])
+		}
+		linhas = append(linhas, linha)
+	}
+	return linhas, nil
 }
 
 type usuarioCargaResultado struct {
@@ -91,9 +156,58 @@ func hashSenhaDescartavel(senha string) (string, error) {
 	return string(bytes), err
 }
 
+// obterOuCriarDivisaoPadrao devolve o id de uma divisão placeholder
+// "SEM-DIVISAO", criando-a na primeira vez que for necessária — usada
+// exclusivamente como FK obrigatória (divisao_id NOT NULL,
+// migrations/003_cadastros_administraveis.sql) para um centro de custo
+// criado automaticamente por esta carga (obterOuCriarCentroCusto). A
+// divisão real de cada CC pode ser corrigida depois na tela de Cadastros,
+// que já tem histórico/restauração — esta função nunca decide a divisão
+// definitiva, só destrava a criação agora.
+func obterOuCriarDivisaoPadrao(tx *sql.Tx) (string, error) {
+	const codigo = "SEM-DIVISAO"
+	var id string
+	err := tx.QueryRow(`
+		INSERT INTO divisoes (codigo, nome)
+		VALUES ($1, 'Sem divisão definida (criada automaticamente pela carga de usuários)')
+		ON CONFLICT (codigo) DO UPDATE SET codigo = EXCLUDED.codigo
+		RETURNING id
+	`, codigo).Scan(&id)
+	return id, err
+}
+
+// obterOuCriarCentroCusto resolve centro_custo_codigo (mesma busca
+// case-insensitive de resolveCentroCustoIDPorCodigo) e, se não existir,
+// cria o cadastro na hora — preso à divisão placeholder acima. Nunca
+// escreve em cadastro_historico (diferente de ImportarCadastroHandler): é
+// um atalho de bootstrap, não o caminho administrativo "de verdade"
+// (Cadastros > centros-custo), que continua sendo o lugar certo para
+// editar/corrigir esses registros depois.
+func obterOuCriarCentroCusto(tx *sql.Tx, codigo, nome string) (string, error) {
+	if id, err := resolveCentroCustoIDPorCodigo(tx, codigo); err == nil {
+		return id, nil
+	}
+	divisaoID, err := obterOuCriarDivisaoPadrao(tx)
+	if err != nil {
+		return "", fmt.Errorf("divisão padrão: %w", err)
+	}
+	var id string
+	err = tx.QueryRow(`
+		INSERT INTO centros_custo (codigo, nome, divisao_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (codigo) DO UPDATE SET codigo = EXCLUDED.codigo
+		RETURNING id
+	`, codigo, nome, divisaoID).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 // CarregarUsuariosHandler — POST /api/admin/usuarios/carga (corpo = CSV cru,
-// cabecalhoUsuariosCSV). Registrado atrás de RequireAuth(..., "administrador"),
-// mesmo nível de permissão das demais cargas administrativas.
+// colunasObrigatoriasUsuariosCSV). Registrado atrás de
+// RequireAuth(..., "administrador"), mesmo nível de permissão das demais
+// cargas administrativas.
 func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -110,7 +224,7 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		linhas, err := lerCadastroCSV(normalizarCabecalhoCSV(corpo), cabecalhoUsuariosCSV)
+		linhas, err := lerUsuariosCSV(corpo)
 		if err != nil {
 			jsonErr(w, http.StatusBadRequest, err.Error())
 			return
@@ -138,13 +252,7 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		primeiraLinhaPorEmail := make(map[string]int)
 
 		for _, linha := range linhas {
-			email := strings.TrimSpace(linha.Campos[0])
-			nome := strings.TrimSpace(linha.Campos[1])
-			codEmpresaStr := strings.TrimSpace(linha.Campos[2])
-			numcadStr := strings.TrimSpace(linha.Campos[3])
-			centroCustoCodigo := strings.TrimSpace(linha.Campos[4])
-
-			emailChave := strings.ToLower(email)
+			emailChave := strings.ToLower(linha.Email)
 			if primeira, visto := primeiraLinhaPorEmail[emailChave]; visto {
 				resultado.Erros = append(resultado.Erros, fmt.Sprintf(
 					"linha %d: e-mail repetido (já apareceu na linha %d deste arquivo) — mantida só a primeira ocorrência; para dar acesso a outro centro de custo à mesma pessoa, cadastre uma exceção de CC (Cadastros > cc-excecao)",
@@ -156,23 +264,20 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			primeiraLinhaPorEmail[emailChave] = linha.Numero
 
 			msgErro, codEmpresa, numcad, centroCustoID, avisoCC := validarELerLinhaUsuario(
-				tx, linha.Numero, email, nome, codEmpresaStr, numcadStr, centroCustoCodigo,
+				tx, linha.Numero, linha.Email, linha.Nome, linha.CodEmpresaStr, linha.NumcadStr,
+				linha.CentroCustoCodigo, linha.CentroCustoNome,
 			)
 			if msgErro != "" {
 				resultado.Erros = append(resultado.Erros, msgErro)
 				resultado.Ignorados++
 				continue
 			}
-			// CC não encontrado nunca bloqueia a criação/atualização do
-			// usuário — só vira um aviso: os cadastros mestres (Story 2.1)
-			// podem simplesmente ainda não estar carregados, e a identidade
-			// (cod_empresa/numcad) é o que mais importa agora. O CC fica
-			// NULL/inalterado e pode ser preenchido depois (recarregando
-			// esta planilha após carregar centros-custo, ou pela
-			// sincronização diária do ERP Bridge).
 			if avisoCC != "" {
 				resultado.Erros = append(resultado.Erros, avisoCC)
 			}
+
+			email := linha.Email
+			nome := linha.Nome
 
 			var existeID string
 			err = tx.QueryRow(`SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)`, email).Scan(&existeID)
@@ -206,8 +311,7 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 				return
 
 			default:
-				// Nunca toca "perfil" aqui — não é mais uma coluna desta
-				// carga (ver cabeçalho do arquivo); promover a administrador
+				// Nunca toca "perfil" aqui — promover a administrador
 				// continua sendo feito individualmente na tela de Gestão de
 				// Usuários. centro_custo_id vazio preserva cc_proprio_id
 				// atual (COALESCE).
@@ -249,15 +353,16 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // validarELerLinhaUsuario valida e converte uma linha estruturalmente (sem
-// acesso a banco, exceto a resolução opcional de centro_custo_codigo, que
+// acesso a banco, exceto a resolução/criação de centro_custo_codigo, que
 // precisa rodar na MESMA transação do import). msgErro != "" rejeita só
 // esta linha (nunca aborta a carga inteira, mesmo princípio de
 // CarregarColaboradoresHandler) — reservado para dado estruturalmente
 // inválido (e-mail/nome/cod_empresa/numcad). centro_custo_codigo não
-// encontrado NUNCA entra em msgErro: vira avisoCC (não bloqueia a linha —
-// ver comentário no chamador).
+// encontrado NUNCA entra em msgErro: ou é criado na hora (se
+// centroCustoNome vier preenchido) ou vira avisoCC — nenhum dos dois
+// bloqueia a linha.
 func validarELerLinhaUsuario(
-	tx *sql.Tx, numeroLinha int, email, nome, codEmpresaStr, numcadStr, centroCustoCodigo string,
+	tx *sql.Tx, numeroLinha int, email, nome, codEmpresaStr, numcadStr, centroCustoCodigo, centroCustoNome string,
 ) (msgErro string, codEmpresa, numcad int, centroCustoID interface{}, avisoCC string) {
 	if email == "" || !strings.Contains(email, "@") {
 		return fmt.Sprintf("linha %d: e-mail inválido", numeroLinha), 0, 0, nil, ""
@@ -274,11 +379,17 @@ func validarELerLinhaUsuario(
 		return fmt.Sprintf("linha %d: campo 'numcad' deve ser um número positivo", numeroLinha), 0, 0, nil, ""
 	}
 	if centroCustoCodigo != "" {
-		id, resolveErr := resolveCentroCustoIDPorCodigo(tx, centroCustoCodigo)
-		if resolveErr != nil {
-			avisoCC = fmt.Sprintf("linha %d: centro de custo %q não encontrado — usuário criado/atualizado mesmo assim, sem CC definido", numeroLinha, centroCustoCodigo)
-		} else {
+		if id, resolveErr := resolveCentroCustoIDPorCodigo(tx, centroCustoCodigo); resolveErr == nil {
 			centroCustoID = id
+		} else if centroCustoNome != "" {
+			novoID, criarErr := obterOuCriarCentroCusto(tx, centroCustoCodigo, centroCustoNome)
+			if criarErr != nil {
+				avisoCC = fmt.Sprintf("linha %d: centro de custo %q não encontrado e não foi possível criar automaticamente (%v) — usuário criado/atualizado mesmo assim, sem CC definido", numeroLinha, centroCustoCodigo, criarErr)
+			} else {
+				centroCustoID = novoID
+			}
+		} else {
+			avisoCC = fmt.Sprintf("linha %d: centro de custo %q não encontrado — usuário criado/atualizado mesmo assim, sem CC definido", numeroLinha, centroCustoCodigo)
 		}
 	}
 	return "", codEmpresa, numcad, centroCustoID, avisoCC

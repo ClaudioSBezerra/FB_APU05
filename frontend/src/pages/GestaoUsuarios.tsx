@@ -243,9 +243,12 @@ const GestaoUsuarios = () => {
             {!resultadoCarga ? (
               <>
                 <p className="text-xs text-muted-foreground">
-                  Arquivo CSV (separador &quot;;&quot;, UTF-8) com as colunas:{' '}
-                  <code>email;nome;cod_empresa;numcad;centro_custo_codigo</code>. Todo usuário criado entra como
-                  solicitante — promova a administrador depois, na tabela abaixo.
+                  Arquivo CSV (separador &quot;;&quot;, UTF-8). Colunas obrigatórias:{' '}
+                  <code>email;nome;cod_empresa;numcad</code>. Opcionais: <code>centro_custo_codigo</code> e{' '}
+                  <code>centro_custo_nome</code> (se o CC não existir ainda, é criado automaticamente quando o nome
+                  vier preenchido). A ordem das colunas não importa, maiúsculas/minúsculas tanto faz, e colunas
+                  extras (ex. &quot;perfil&quot;) são ignoradas — todo usuário criado entra como solicitante,
+                  promova a administrador depois na tabela abaixo.
                 </p>
                 <Input
                   type="file"
