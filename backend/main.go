@@ -354,6 +354,11 @@ func main() {
 	// acima; diferente delas, reimportar é sempre permitido (nunca 409).
 	http.HandleFunc("POST /api/admin/colaboradores/carga", handlers.RequireAuth(withDB(handlers.CarregarColaboradoresHandler), "administrador"))
 
+	// Carga em lote de usuários já com identidade Oracle (cod_empresa/
+	// numcad) — destrava testar com uma planilha real antes do conector ERP
+	// Bridge estar em produção (handlers/usuarios_carga.go).
+	http.HandleFunc("POST /api/admin/usuarios/carga", handlers.RequireAuth(withDB(handlers.CarregarUsuariosHandler), "administrador"))
+
 	// ERP Bridge — credenciais para o daemon externo que sincroniza
 	// VW_COLABORADORES do Oracle/SAP (servidor FCCORP). Réplica do mecanismo
 	// do FB_APU02, mais estrita aqui: administrador em vez de "qualquer
