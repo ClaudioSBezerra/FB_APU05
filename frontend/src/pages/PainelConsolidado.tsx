@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import { Button } from '@/components/ui/button'
+import { toast } from 'sonner'
 
 // PainelConsolidado — Story 5.1 (Epic 5, FR-17). Página autenticada que
 // busca o painel agregado pré-calculado em GET /api/paineis/consolidado
@@ -51,10 +53,11 @@ function ListaAgrupamento({ titulo, itens }: { titulo: string; itens: PainelItem
 }
 
 function PainelConsolidado() {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
   const navigate = useNavigate()
   const [painel, setPainel] = useState<PainelConsolidadoResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [recalculando, setRecalculando] = useState(false)
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -62,10 +65,8 @@ function PainelConsolidado() {
     }
   }, [isAuthenticated, navigate])
 
-  useEffect(() => {
-    if (!isAuthenticated) return
-
-    fetch('/api/paineis/consolidado')
+  const buscarPainel = useCallback(() => {
+    return fetch('/api/paineis/consolidado')
       .then(async (res) => {
         const data = (await res.json()) as PainelConsolidadoResponse
         if (!res.ok) {
@@ -75,7 +76,32 @@ function PainelConsolidado() {
       })
       .then((data) => setPainel(data))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-  }, [isAuthenticated])
+  }, [])
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+    buscarPainel()
+  }, [isAuthenticated, buscarPainel])
+
+  // Recalcular agora — dispara o mesmo job que roda sozinho a cada 5
+  // minutos (handlers/painel_calculo.go), só que na hora; útil para não
+  // esperar o próximo ciclo depois de testar uma solicitação nova.
+  async function recalcularAgora() {
+    setRecalculando(true)
+    try {
+      const res = await fetch('/api/admin/paineis/consolidado/recalcular', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data?.error || `HTTP ${res.status}`)
+      }
+      await buscarPainel()
+      toast.success('Painel recalculado')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erro ao recalcular painel')
+    } finally {
+      setRecalculando(false)
+    }
+  }
 
   if (!isAuthenticated) {
     return null
@@ -83,7 +109,14 @@ function PainelConsolidado() {
 
   return (
     <div className="flex flex-col items-center gap-6 bg-background p-6 text-foreground">
-      <h1 className="text-2xl font-bold">Painel consolidado de solicitações</h1>
+      <div className="flex w-full max-w-3xl items-center justify-between">
+        <h1 className="text-2xl font-bold">Painel consolidado de solicitações</h1>
+        {user?.perfil === 'administrador' && (
+          <Button size="sm" variant="outline" onClick={recalcularAgora} disabled={recalculando}>
+            {recalculando ? 'Recalculando...' : 'Recalcular agora'}
+          </Button>
+        )}
+      </div>
 
       {error && (
         <p className="text-sm text-destructive" data-testid="painel-error">

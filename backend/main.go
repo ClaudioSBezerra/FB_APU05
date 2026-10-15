@@ -130,6 +130,28 @@ func initPrivilegedDBAsync() {
 	}()
 }
 
+// initPainelRecalculoAsync dispara o job periódico de
+// handlers.RecalcularPainelConsolidado (Epic 5, FR-17) — a cada 5 minutos,
+// sobre dbApp (mesma conexão GERAL de ObterPainelHandler; painel_snapshots
+// não tem a restrição de GRANT que solicitacoes.versao/status tem, então
+// não precisa de dbPrivileged). Ignora silenciosamente cada tick em que
+// dbApp ainda não conectou (initAppDBAsync roda em paralelo) — o próximo
+// tick, 5 minutos depois, tenta de novo.
+func initPainelRecalculoAsync() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			database := getDBApp()
+			if database == nil {
+				continue
+			}
+			if err := handlers.RecalcularPainelConsolidado(database); err != nil {
+				log.Printf("[Painel] Erro no recálculo periódico: %v", err)
+			}
+		}
+	}()
+}
+
 // initDBAsync conecta ao Postgres em background, com retry, para não travar a
 // subida do processo HTTP enquanto o banco (ex. container `db`) ainda não está
 // pronto. Ao conectar com sucesso, dispara o runner de migrations. Desde a
@@ -266,6 +288,7 @@ func main() {
 	// handlers de fato usam.
 	initAppDBAsync()
 	initPrivilegedDBAsync()
+	initPainelRecalculoAsync()
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -457,6 +480,12 @@ func main() {
 	// usuário autenticado (RequireAuth(..., "") — nenhuma AC pede restrição
 	// a administrador, mesmo padrão de POST /api/solicitacoes).
 	http.HandleFunc("GET /api/paineis/{painel}", handlers.RequireAuth(withDB(handlers.ObterPainelHandler), ""))
+
+	// Recálculo manual de painel_snapshots (handlers/painel_calculo.go) —
+	// mesma rotina do job periódico (initPainelRecalculoAsync, abaixo),
+	// disparável sob demanda por um administrador para não esperar o
+	// próximo ciclo de 5 minutos.
+	http.HandleFunc("POST /api/admin/paineis/{painel}/recalcular", handlers.RequireAuth(withDB(handlers.RecalcularPainelHandler), "administrador"))
 
 	if iamBaseURL := os.Getenv("IAM_BASE_URL"); iamBaseURL != "" {
 		var allowedClientIDs []string
