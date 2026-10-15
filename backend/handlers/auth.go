@@ -108,14 +108,23 @@ func ValidateJWTSecret() {
 	}
 }
 
-// GenerateToken emite o JWT próprio do FB_APU05 (HS256, access 30min) — claims
+// GenerateToken emite o JWT próprio do FB_APU05 (HS256, access 8h) — claims
 // user_id/perfil/exp. Perfil vem sempre da tabela `usuarios` (AD-7), nunca de
 // claim do Keycloak.
+//
+// Era 30min (AD-9); aumentado porque não existe endpoint de refresh
+// silencioso ainda (/api/auth/refresh não está registrado em main.go — o
+// refresh_token em cookie é gerado no login mas nunca consumido) — na
+// prática, a sessão morria de verdade a cada 30min, forçando login manual
+// repetido o dia inteiro, inclusive esbarrando no rate limit de login
+// (LoginRL, 5 tentativas/15min por IP) quando várias contas de teste são
+// usadas do mesmo IP num intervalo curto. 8h cobre um turno de trabalho;
+// reduz drasticamente a frequência de login sem eliminar a expiração.
 func GenerateToken(userID, perfil string) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id": userID,
 		"perfil":  perfil,
-		"exp":     time.Now().Add(30 * time.Minute).Unix(), // 30 minutos
+		"exp":     time.Now().Add(8 * time.Hour).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(getJWTSecret())
