@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 var cabecalhoUsuariosCSV = []string{"email", "nome", "perfil", "cod_empresa", "numcad", "centro_custo_codigo"}
@@ -40,6 +42,21 @@ func gerarSenhaAleatoria() string {
 	buf := make([]byte, 16)
 	_, _ = rand.Read(buf)
 	return hex.EncodeToString(buf)
+}
+
+// hashSenhaDescartavel cifra a senha aleatória de uma conta recém-criada por
+// esta carga com bcrypt.MinCost, NUNCA o custo 14 de HashPassword (auth.go).
+// Diferença deliberada: essa senha tem 128 bits de aleatoriedade, é
+// descartada no mesmo instante em que é gerada e nunca é usada para logar de
+// verdade (a pessoa define a própria senha via "Esqueci minha senha") — um
+// custo alto não protege nada aqui, só multiplica CPU por centena de linhas.
+// Causou um incidente real: uma carga de ~500 contas novas gastava minutos
+// de CPU só em bcrypt custo 14 sequencial dentro de uma única transação,
+// suficiente para travar outras rotas (Gestão de Usuários, ERP Bridge) até o
+// gateway dar timeout.
+func hashSenhaDescartavel(senha string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(senha), bcrypt.MinCost)
+	return string(bytes), err
 }
 
 // CarregarUsuariosHandler — POST /api/admin/usuarios/carga (corpo = CSV cru,
@@ -124,7 +141,7 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 				if perfilNovo == "" {
 					perfilNovo = "solicitante"
 				}
-				hash, herr := HashPassword(gerarSenhaAleatoria())
+				hash, herr := hashSenhaDescartavel(gerarSenhaAleatoria())
 				if herr != nil {
 					log.Printf("[UsuariosCarga] Erro ao gerar hash de senha (linha %d): %v", linha.Numero, herr)
 					jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
