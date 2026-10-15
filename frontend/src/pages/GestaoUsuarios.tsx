@@ -244,8 +244,8 @@ const GestaoUsuarios = () => {
               <>
                 <p className="text-xs text-muted-foreground">
                   Arquivo CSV (separador &quot;;&quot;, UTF-8) com as colunas:{' '}
-                  <code>email;nome;perfil;cod_empresa;numcad;centro_custo_codigo</code>. &quot;perfil&quot; pode
-                  ficar vazio (vira solicitante).
+                  <code>email;nome;cod_empresa;numcad;centro_custo_codigo</code>. Todo usuário criado entra como
+                  solicitante — promova a administrador depois, na tabela abaixo.
                 </p>
                 <Input
                   type="file"

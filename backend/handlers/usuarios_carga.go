@@ -10,8 +10,13 @@ package handlers
 // aleatória gerada aqui e descartada na hora — só o hash bcrypt é gravado,
 // o texto puro nunca é persistido, logado ou devolvido na resposta. A
 // pessoa define a própria senha via "Esqueci minha senha" (SMTP já
-// configurado). Usuário já existente tem nome/perfil/identidade/CC
-// atualizados; senha nunca é tocada por este handler.
+// configurado). Usuário já existente tem nome/identidade/CC atualizados;
+// senha nunca é tocada por este handler.
+//
+// Sem coluna "perfil" (removida a pedido do negócio): todo usuário criado
+// por esta carga nasce 'solicitante' — promover a administrador continua
+// sendo feito individualmente na tela de Gestão de Usuários (PATCH
+// /api/admin/usuarios/{id}), nunca em lote.
 
 import (
 	"crypto/rand"
@@ -28,7 +33,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var cabecalhoUsuariosCSV = []string{"email", "nome", "perfil", "cod_empresa", "numcad", "centro_custo_codigo"}
+var cabecalhoUsuariosCSV = []string{"email", "nome", "cod_empresa", "numcad", "centro_custo_codigo"}
 
 type usuarioCargaResultado struct {
 	Criados     int      `json:"criados"`
@@ -108,10 +113,9 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		for _, linha := range linhas {
 			email := strings.TrimSpace(linha.Campos[0])
 			nome := strings.TrimSpace(linha.Campos[1])
-			perfil := strings.TrimSpace(linha.Campos[2])
-			codEmpresaStr := strings.TrimSpace(linha.Campos[3])
-			numcadStr := strings.TrimSpace(linha.Campos[4])
-			centroCustoCodigo := strings.TrimSpace(linha.Campos[5])
+			codEmpresaStr := strings.TrimSpace(linha.Campos[2])
+			numcadStr := strings.TrimSpace(linha.Campos[3])
+			centroCustoCodigo := strings.TrimSpace(linha.Campos[4])
 
 			emailChave := strings.ToLower(email)
 			if primeira, visto := primeiraLinhaPorEmail[emailChave]; visto {
@@ -125,7 +129,7 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			primeiraLinhaPorEmail[emailChave] = linha.Numero
 
 			msgErro, codEmpresa, numcad, centroCustoID := validarELerLinhaUsuario(
-				tx, linha.Numero, email, nome, perfil, codEmpresaStr, numcadStr, centroCustoCodigo,
+				tx, linha.Numero, email, nome, codEmpresaStr, numcadStr, centroCustoCodigo,
 			)
 			if msgErro != "" {
 				resultado.Erros = append(resultado.Erros, msgErro)
@@ -137,10 +141,6 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			err = tx.QueryRow(`SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)`, email).Scan(&existeID)
 			switch {
 			case err == sql.ErrNoRows:
-				perfilNovo := perfil
-				if perfilNovo == "" {
-					perfilNovo = "solicitante"
-				}
 				hash, herr := hashSenhaDescartavel(gerarSenhaAleatoria())
 				if herr != nil {
 					log.Printf("[UsuariosCarga] Erro ao gerar hash de senha (linha %d): %v", linha.Numero, herr)
@@ -149,8 +149,8 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 				}
 				_, err = tx.Exec(`
 					INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)
-					VALUES ($1, $2, $3, $4, $5, $6, $7)
-				`, email, nome, perfilNovo, hash, codEmpresa, numcad, centroCustoID)
+					VALUES ($1, $2, 'solicitante', $3, $4, $5, $6)
+				`, email, nome, hash, codEmpresa, numcad, centroCustoID)
 				if err != nil {
 					if isUniqueViolationOnConstraint(err, "idx_usuarios_cod_empresa_numcad") {
 						resultado.Erros = append(resultado.Erros, fmt.Sprintf("linha %d: cod_empresa+numcad já usado por outro usuário", linha.Numero))
@@ -169,19 +169,20 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 				return
 
 			default:
-				// perfil vazio preserva o atual (NULLIF($2,'') -> NULL ->
-				// COALESCE devolve o valor já gravado); centro_custo_id vazio
-				// preserva cc_proprio_id atual, mesmo princípio.
+				// Nunca toca "perfil" aqui — não é mais uma coluna desta
+				// carga (ver cabeçalho do arquivo); promover a administrador
+				// continua sendo feito individualmente na tela de Gestão de
+				// Usuários. centro_custo_id vazio preserva cc_proprio_id
+				// atual (COALESCE).
 				_, err = tx.Exec(`
 					UPDATE usuarios SET
 						nome = $1,
-						perfil = COALESCE(NULLIF($2, ''), perfil),
-						cod_empresa = $3,
-						numcad = $4,
-						cc_proprio_id = COALESCE($5, cc_proprio_id),
+						cod_empresa = $2,
+						numcad = $3,
+						cc_proprio_id = COALESCE($4, cc_proprio_id),
 						updated_at = now()
-					WHERE id = $6
-				`, nome, perfil, codEmpresa, numcad, centroCustoID, existeID)
+					WHERE id = $5
+				`, nome, codEmpresa, numcad, centroCustoID, existeID)
 				if err != nil {
 					if isUniqueViolationOnConstraint(err, "idx_usuarios_cod_empresa_numcad") {
 						resultado.Erros = append(resultado.Erros, fmt.Sprintf("linha %d: cod_empresa+numcad já usado por outro usuário", linha.Numero))
@@ -216,16 +217,13 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 // "", "", nil, nil) para rejeitar só esta linha, nunca abortar a carga
 // inteira, mesmo princípio de CarregarColaboradoresHandler.
 func validarELerLinhaUsuario(
-	tx *sql.Tx, numeroLinha int, email, nome, perfil, codEmpresaStr, numcadStr, centroCustoCodigo string,
+	tx *sql.Tx, numeroLinha int, email, nome, codEmpresaStr, numcadStr, centroCustoCodigo string,
 ) (msgErro string, codEmpresa, numcad int, centroCustoID interface{}) {
 	if email == "" || !strings.Contains(email, "@") {
 		return fmt.Sprintf("linha %d: e-mail inválido", numeroLinha), 0, 0, nil
 	}
 	if nome == "" {
 		return fmt.Sprintf("linha %d: campo 'nome' obrigatório", numeroLinha), 0, 0, nil
-	}
-	if perfil != "" && perfil != "administrador" && perfil != "solicitante" {
-		return fmt.Sprintf("linha %d: perfil deve ser 'administrador' ou 'solicitante' (ou vazio)", numeroLinha), 0, 0, nil
 	}
 	codEmpresa, convErr := strconv.Atoi(codEmpresaStr)
 	if convErr != nil || codEmpresa <= 0 {

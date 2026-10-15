@@ -2,9 +2,10 @@ package handlers
 
 // usuarios_carga_test.go — cobre a I/O Matrix de CarregarUsuariosHandler:
 // criação de usuário novo (senha gerada e descartada, nunca aparece na
-// resposta), atualização de usuário existente (perfil vazio preserva o
-// atual), linha com cod_empresa/numcad já usado por outro usuário (rejeitada
-// sem abortar a carga) e cabeçalho CSV errado (400, nunca toca o banco).
+// resposta, sempre 'solicitante'), atualização de usuário existente, linha
+// com cod_empresa/numcad já usado por outro usuário (rejeitada sem abortar
+// a carga) e cabeçalho CSV errado (400, nunca toca o banco). Sem coluna
+// "perfil" — removida a pedido do negócio.
 
 import (
 	"database/sql"
@@ -40,8 +41,8 @@ func TestCarregarUsuariosHandler_CabecalhoErrado(t *testing.T) {
 func TestCarregarUsuariosHandler_CriaUsuarioNovo(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	csv := "email;nome;perfil;cod_empresa;numcad;centro_custo_codigo\n" +
-		"novo@ferreiracosta.com.br;Fulano de Tal;;1;12345;CC1\n"
+	csv := "email;nome;cod_empresa;numcad;centro_custo_codigo\n" +
+		"novo@ferreiracosta.com.br;Fulano de Tal;1;12345;CC1\n"
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)")).
@@ -51,7 +52,7 @@ func TestCarregarUsuariosHandler_CriaUsuarioNovo(t *testing.T) {
 		WithArgs("novo@ferreiracosta.com.br").
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
-		WithArgs("novo@ferreiracosta.com.br", "Fulano de Tal", "solicitante", sqlmock.AnyArg(), 1, 12345, testCentroCustoID).
+		WithArgs("novo@ferreiracosta.com.br", "Fulano de Tal", sqlmock.AnyArg(), 1, 12345, testCentroCustoID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -73,18 +74,18 @@ func TestCarregarUsuariosHandler_CriaUsuarioNovo(t *testing.T) {
 	}
 }
 
-func TestCarregarUsuariosHandler_AtualizaUsuarioExistente_PerfilVazioPreserva(t *testing.T) {
+func TestCarregarUsuariosHandler_AtualizaUsuarioExistente(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	csv := "email;nome;perfil;cod_empresa;numcad;centro_custo_codigo\n" +
-		"ja-existe@ferreiracosta.com.br;Fulano Atualizado;;1;12345;\n"
+	csv := "email;nome;cod_empresa;numcad;centro_custo_codigo\n" +
+		"ja-existe@ferreiracosta.com.br;Fulano Atualizado;1;12345;\n"
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
 		WithArgs("ja-existe@ferreiracosta.com.br").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testAlvoID))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE usuarios SET")).
-		WithArgs("Fulano Atualizado", "", 1, 12345, nil, testAlvoID).
+		WithArgs("Fulano Atualizado", 1, 12345, nil, testAlvoID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -106,16 +107,16 @@ func TestCarregarUsuariosHandler_AtualizaUsuarioExistente_PerfilVazioPreserva(t 
 func TestCarregarUsuariosHandler_LinhaInvalidaNaoAbortaCarga(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	csv := "email;nome;perfil;cod_empresa;numcad;centro_custo_codigo\n" +
-		"sem-arroba;Fulano;;1;12345;\n" +
-		"valido@ferreiracosta.com.br;Ciclano;;2;54321;\n"
+	csv := "email;nome;cod_empresa;numcad;centro_custo_codigo\n" +
+		"sem-arroba;Fulano;1;12345;\n" +
+		"valido@ferreiracosta.com.br;Ciclano;2;54321;\n"
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
 		WithArgs("valido@ferreiracosta.com.br").
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
-		WithArgs("valido@ferreiracosta.com.br", "Ciclano", "solicitante", sqlmock.AnyArg(), 2, 54321, nil).
+		WithArgs("valido@ferreiracosta.com.br", "Ciclano", sqlmock.AnyArg(), 2, 54321, nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -142,16 +143,16 @@ func TestCarregarUsuariosHandler_LinhaInvalidaNaoAbortaCarga(t *testing.T) {
 func TestCarregarUsuariosHandler_EmailRepetidoNoArquivo_MantemPrimeiraOcorrencia(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	csv := "email;nome;perfil;cod_empresa;numcad;centro_custo_codigo\n" +
-		"socio@ferreiracosta.com.br;Fulano Socio;;1;99992;\n" +
-		"socio@ferreiracosta.com.br;Fulano Socio;;2;2;\n"
+	csv := "email;nome;cod_empresa;numcad;centro_custo_codigo\n" +
+		"socio@ferreiracosta.com.br;Fulano Socio;1;99992;\n" +
+		"socio@ferreiracosta.com.br;Fulano Socio;2;2;\n"
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
 		WithArgs("socio@ferreiracosta.com.br").
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
-		WithArgs("socio@ferreiracosta.com.br", "Fulano Socio", "solicitante", sqlmock.AnyArg(), 1, 99992, nil).
+		WithArgs("socio@ferreiracosta.com.br", "Fulano Socio", sqlmock.AnyArg(), 1, 99992, nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -176,15 +177,15 @@ func TestCarregarUsuariosHandler_EmailRepetidoNoArquivo_MantemPrimeiraOcorrencia
 func TestCarregarUsuariosHandler_CodEmpresaNumcadDuplicado(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	csv := "email;nome;perfil;cod_empresa;numcad;centro_custo_codigo\n" +
-		"novo@ferreiracosta.com.br;Fulano;;1;12345;\n"
+	csv := "email;nome;cod_empresa;numcad;centro_custo_codigo\n" +
+		"novo@ferreiracosta.com.br;Fulano;1;12345;\n"
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
 		WithArgs("novo@ferreiracosta.com.br").
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
-		WithArgs("novo@ferreiracosta.com.br", "Fulano", "solicitante", sqlmock.AnyArg(), 1, 12345, nil).
+		WithArgs("novo@ferreiracosta.com.br", "Fulano", sqlmock.AnyArg(), 1, 12345, nil).
 		WillReturnError(&pq.Error{Code: "23505", Constraint: "idx_usuarios_cod_empresa_numcad"})
 	mock.ExpectCommit()
 
