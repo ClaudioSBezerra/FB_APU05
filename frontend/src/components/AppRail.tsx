@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LayoutDashboard, Users, LogOut, KeyRound, FilePlus, ListChecks, Plug } from 'lucide-react';
+import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import {
@@ -59,6 +59,32 @@ export function AppRail() {
   const [pwNew, setPwNew] = useState('');
   const [pwConfirm, setPwConfirm] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+
+  // Dispara o mesmo fluxo de "esqueci minha senha" da tela de login, mas já
+  // com o e-mail do usuário logado — serve para testar se o envio de e-mail
+  // está funcionando sem precisar deslogar.
+  async function handleForgotPassword() {
+    if (!user?.email || forgotLoading) return;
+    setForgotLoading(true);
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Erro ao solicitar redefinição de senha');
+        return;
+      }
+      toast.success(data.message || 'Link de redefinição enviado para seu e-mail');
+    } catch {
+      toast.error('Erro de conexão');
+    } finally {
+      setForgotLoading(false);
+    }
+  }
 
   async function handleChangePassword() {
     if (pwNew !== pwConfirm) {
@@ -167,6 +193,10 @@ export function AppRail() {
               <DropdownMenuItem className="text-xs cursor-pointer" onClick={() => setPwDialog(true)}>
                 <KeyRound className="mr-2 h-3.5 w-3.5" />
                 Trocar senha
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-xs cursor-pointer" disabled={forgotLoading} onClick={handleForgotPassword}>
+                <Mail className="mr-2 h-3.5 w-3.5" />
+                {forgotLoading ? 'Enviando...' : 'Esqueci minha senha'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-xs text-red-600 focus:text-red-600 cursor-pointer" onClick={logout}>
