@@ -12,6 +12,8 @@ import ForgotPassword from '@/pages/ForgotPassword'
 import ResetPassword from '@/pages/ResetPassword'
 import ChangePassword from '@/pages/ChangePassword'
 import GestaoUsuarios from '@/pages/GestaoUsuarios'
+import AbrirSolicitacao from '@/pages/AbrirSolicitacao'
+import FilaAdministrador from '@/pages/FilaAdministrador'
 
 const queryClient = new QueryClient()
 
@@ -109,6 +111,15 @@ function App() {
                 <Routes>
                   <Route path="/" element={<Home />} />
                   <Route path="/painel" element={<PainelConsolidado />} />
+                  <Route path="/solicitacoes/nova" element={<AbrirSolicitacao />} />
+                  <Route
+                    path="/fila"
+                    element={
+                      <AdminRoute>
+                        <FilaAdministrador />
+                      </AdminRoute>
+                    }
+                  />
                   <Route
                     path="/admin/usuarios"
                     element={

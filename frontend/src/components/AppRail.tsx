@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LayoutDashboard, Users, LogOut, KeyRound } from 'lucide-react';
+import { LayoutDashboard, Users, LogOut, KeyRound, FilePlus, ListChecks } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import {
@@ -35,12 +35,15 @@ import { toast } from 'sonner';
 // FilialSelector/CompanySwitcher (AD-7, single-company) nem trial_ends_at
 // (sem conceito de trial no FB_APU05).
 const mainItems = [
+  { id: 'nova-solicitacao', icon: FilePlus, label: 'Nova Solicitação', path: '/solicitacoes/nova' },
   { id: 'painel', icon: LayoutDashboard, label: 'Painel', path: '/painel' },
 ];
 
 function getActiveId(pathname: string): string {
   if (pathname.startsWith('/admin/usuarios')) return 'usuarios';
+  if (pathname.startsWith('/fila')) return 'fila';
   if (pathname.startsWith('/painel')) return 'painel';
+  if (pathname.startsWith('/solicitacoes/nova')) return 'nova-solicitacao';
   return '';
 }
 
@@ -101,7 +104,10 @@ export function AppRail() {
   const items = [
     ...mainItems,
     ...(user?.perfil === 'administrador'
-      ? [{ id: 'usuarios', icon: Users, label: 'Gestão de Usuários', path: '/admin/usuarios' }]
+      ? [
+          { id: 'fila', icon: ListChecks, label: 'Fila do Administrador', path: '/fila' },
+          { id: 'usuarios', icon: Users, label: 'Gestão de Usuários', path: '/admin/usuarios' },
+        ]
       : []),
   ];
 
