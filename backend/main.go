@@ -329,6 +329,7 @@ func main() {
 	// do FB_APU05 protegida por RequireAuth (fecha o gap deixado pela Story
 	// 1.2: a tokenBlacklist nunca era lida em lugar nenhum até aqui).
 	http.HandleFunc("PATCH /api/admin/usuarios/{id}", handlers.RequireAuth(withDB(handlers.AdminUpdateUsuarioHandler), "administrador"))
+	http.HandleFunc("POST /api/admin/usuarios/{id}/liberar-acesso", handlers.RequireAuth(withDB(handlers.AdminLiberarAcessoHandler), "administrador"))
 
 	// Criação de conta local — só um administrador pode criar (login local,
 	// ver acima); nenhum usuário solicitante tem rota equivalente.

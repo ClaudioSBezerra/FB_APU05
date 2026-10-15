@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -350,23 +351,8 @@ func ForgotPasswordHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		tokenBytes := make([]byte, 32)
-		if _, err := rand.Read(tokenBytes); err != nil {
-			log.Fatalf("FATAL: crypto/rand.Read failed generating token de reset de senha: %v", err)
-		}
-		token := hex.EncodeToString(tokenBytes)
-
-		if _, err = db.Exec(`
-			INSERT INTO verification_tokens (user_id, token, type, expires_at)
-			VALUES ($1, $2, 'password_reset', $3)
-		`, userID, token, time.Now().Add(1*time.Hour)); err != nil {
-			log.Printf("[ForgotPassword] Erro ao criar token para %s: %v", req.Email, err)
-			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
-			return
-		}
-
-		if err := services.SendPasswordResetEmail(req.Email, token); err != nil {
-			log.Printf("[ForgotPassword] Falha ao enviar e-mail para %s: %v", req.Email, err)
+		if err := gerarEEnviarTokenDeReset(db, userID, req.Email); err != nil {
+			log.Printf("[ForgotPassword] %v (e-mail=%s)", err, req.Email)
 			jsonErr(w, http.StatusInternalServerError, "Erro ao enviar e-mail de recuperação")
 			return
 		}
@@ -374,6 +360,32 @@ func ForgotPasswordHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"message": genericMsg})
 	}
+}
+
+// gerarEEnviarTokenDeReset cria um token de reset de senha (verification_tokens,
+// expira em 1h) e envia o e-mail de redefinição — lógica única compartilhada
+// por ForgotPasswordHandler (fluxo público, a própria pessoa inicia) e por
+// AdminLiberarAcessoHandler (admin.go — fluxo administrativo: admin aciona
+// para outra conta, ex. recém-criada por carga em lote) — nunca duplicada
+// entre os dois.
+func gerarEEnviarTokenDeReset(db *sql.DB, userID, email string) error {
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return fmt.Errorf("crypto/rand.Read falhou: %w", err)
+	}
+	token := hex.EncodeToString(tokenBytes)
+
+	if _, err := db.Exec(`
+		INSERT INTO verification_tokens (user_id, token, type, expires_at)
+		VALUES ($1, $2, 'password_reset', $3)
+	`, userID, token, time.Now().Add(1*time.Hour)); err != nil {
+		return fmt.Errorf("erro ao criar token de reset: %w", err)
+	}
+
+	if err := services.SendPasswordResetEmail(email, token); err != nil {
+		return fmt.Errorf("erro ao enviar e-mail de reset: %w", err)
+	}
+	return nil
 }
 
 // ResetPasswordRequest é o corpo de POST /api/auth/reset-password.

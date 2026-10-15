@@ -29,7 +29,7 @@ import {
   DialogFooter,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { UserPlus } from 'lucide-react';
+import { UserPlus, Upload, Mail } from 'lucide-react';
 
 // Tela de gestão de usuários — consome os 3 endpoints administrativos do
 // backend (handlers/admin.go): GET /api/admin/usuarios (lista paginada,
@@ -57,6 +57,14 @@ interface ListaResponse {
   items: Usuario[];
   pagina: number;
   tamanho: number;
+}
+
+interface CargaResultado {
+  criados: number;
+  atualizados: number;
+  ignorados: number;
+  total: number;
+  erros: string[];
 }
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
@@ -122,6 +130,9 @@ const GestaoUsuarios = () => {
   const [perfil, setPerfil] = useState<'solicitante' | 'administrador'>('solicitante');
   const [codEmpresa, setCodEmpresa] = useState('');
   const [numcad, setNumcad] = useState('');
+  const [cargaOpen, setCargaOpen] = useState(false);
+  const [arquivoCarga, setArquivoCarga] = useState<File | null>(null);
+  const [resultadoCarga, setResultadoCarga] = useState<CargaResultado | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['usuarios'],
@@ -175,10 +186,106 @@ const GestaoUsuarios = () => {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  // Carga em lote via planilha (CSV ';', UTF-8) — consome
+  // POST /api/admin/usuarios/carga (handlers/usuarios_carga.go). Upsert por
+  // e-mail: cria quem não existe (senha descartável, só via "Esqueci minha
+  // senha" dá pra entrar) e atualiza identidade/perfil/CC de quem já existe.
+  const cargaMutation = useMutation({
+    mutationFn: async (arquivo: File) => {
+      const texto = await arquivo.text();
+      return fetchJSON<CargaResultado>('/api/admin/usuarios/carga', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/csv; charset=utf-8' },
+        body: texto,
+      });
+    },
+    onSuccess: (resultado) => {
+      setResultadoCarga(resultado);
+      queryClient.invalidateQueries({ queryKey: ['usuarios'] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  // Liberar acesso — dispara o mesmo e-mail de "Esqueci minha senha", mas a
+  // pedido do administrador (AdminLiberarAcessoHandler, admin.go). Principal
+  // uso: ativar uma conta recém-criada pela carga acima, cuja senha é um
+  // valor aleatório que ninguém conhece.
+  const liberarAcessoMutation = useMutation({
+    mutationFn: (id: string) => fetchJSON<{ message: string }>(`/api/admin/usuarios/${id}/liberar-acesso`, { method: 'POST' }),
+    onSuccess: (resp) => toast.success(resp.message),
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  function fecharDialogCarga(aberto: boolean) {
+    setCargaOpen(aberto);
+    if (!aberto) {
+      setArquivoCarga(null);
+      setResultadoCarga(null);
+    }
+  }
+
   return (
     <div className="p-6 flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold text-foreground">Usuários</h1>
+        <div className="flex gap-2">
+        <Dialog open={cargaOpen} onOpenChange={fecharDialogCarga}>
+          <DialogTrigger asChild>
+            <Button size="sm" variant="outline">
+              <Upload className="mr-2 h-4 w-4" />
+              Carregar planilha
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Carregar planilha de usuários</DialogTitle>
+            </DialogHeader>
+            {!resultadoCarga ? (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Arquivo CSV (separador &quot;;&quot;, UTF-8) com as colunas:{' '}
+                  <code>email;nome;perfil;cod_empresa;numcad;centro_custo_codigo</code>. &quot;perfil&quot; pode
+                  ficar vazio (vira solicitante).
+                </p>
+                <Input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(e) => setArquivoCarga(e.target.files?.[0] ?? null)}
+                />
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setCargaOpen(false)}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    disabled={!arquivoCarga || cargaMutation.isPending}
+                    onClick={() => arquivoCarga && cargaMutation.mutate(arquivoCarga)}
+                  >
+                    {cargaMutation.isPending ? 'Enviando...' : 'Carregar'}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-col gap-2 text-sm">
+                  <p>
+                    <strong>{resultadoCarga.criados}</strong> criados, <strong>{resultadoCarga.atualizados}</strong>{' '}
+                    atualizados, <strong>{resultadoCarga.ignorados}</strong> ignorados (de {resultadoCarga.total}).
+                  </p>
+                  {resultadoCarga.erros.length > 0 && (
+                    <div className="max-h-48 overflow-y-auto rounded-md border border-border p-2 text-xs text-destructive">
+                      {resultadoCarga.erros.map((erro, i) => (
+                        <p key={i}>{erro}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button onClick={() => fecharDialogCarga(false)}>Fechar</Button>
+                </DialogFooter>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button size="sm">
@@ -246,6 +353,7 @@ const GestaoUsuarios = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
@@ -261,6 +369,7 @@ const GestaoUsuarios = () => {
               <TableHead>Ativo</TableHead>
               <TableHead>Empresa / Matrícula (Oracle)</TableHead>
               <TableHead>Criado em</TableHead>
+              <TableHead>Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -301,6 +410,17 @@ const GestaoUsuarios = () => {
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {new Date(u.created_at).toLocaleDateString('pt-BR')}
+                </TableCell>
+                <TableCell>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => liberarAcessoMutation.mutate(u.id)}
+                    disabled={liberarAcessoMutation.isPending}
+                  >
+                    <Mail className="mr-1 h-3.5 w-3.5" />
+                    Liberar acesso
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}

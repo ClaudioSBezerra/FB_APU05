@@ -507,3 +507,54 @@ func ListarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		})
 	}
 }
+
+// AdminLiberarAcessoHandler — POST /api/admin/usuarios/{id}/liberar-acesso.
+// Envia (ou reenvia) o link de definição de senha para o e-mail da conta —
+// mesmo mecanismo de "Esqueci minha senha" (gerarEEnviarTokenDeReset,
+// auth.go), mas disparado pelo administrador em vez da própria pessoa.
+// Cobre o caso de uma conta cuja senha é um valor aleatório descartado que
+// ninguém conhece (criada via CreateUsuarioLocalHandler ou em lote,
+// usuarios_carga.go) — sem isso, a pessoa nunca teria como entrar pela
+// primeira vez. Funciona também para conta só-SSO (dá a ela um fallback de
+// login local, mesmo espírito dual-auth do sistema) — ResetPasswordHandler
+// já aceita definir password_hash pela primeira vez, não só "resetar" um
+// já existente.
+func AdminLiberarAcessoHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		alvoID := r.PathValue("id")
+		if !uuidFormatRegexp.MatchString(alvoID) {
+			jsonErr(w, http.StatusBadRequest, "id inválido")
+			return
+		}
+
+		var email string
+		err := db.QueryRow(`SELECT email FROM usuarios WHERE id = $1`, alvoID).Scan(&email)
+		if err == sql.ErrNoRows {
+			jsonErr(w, http.StatusNotFound, "usuário não encontrado")
+			return
+		}
+		if err != nil {
+			log.Printf("[Admin] Erro ao buscar usuário %s para liberar acesso: %v", alvoID, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		if err := gerarEEnviarTokenDeReset(db, alvoID, email); err != nil {
+			log.Printf("[Admin] Erro ao liberar acesso para %s: %v", email, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro ao enviar e-mail de acesso")
+			return
+		}
+
+		atorID := GetUserIDFromContext(r)
+		log.Printf("[Admin] %s liberou acesso para %s", atorID, email)
+
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "Link de acesso enviado para " + email})
+	}
+}
