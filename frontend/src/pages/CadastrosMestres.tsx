@@ -46,11 +46,17 @@ import { Upload, Plus, Pencil, History, ChevronLeft, ChevronRight, RotateCcw } f
 
 type CampoKind = 'texto' | 'texto_opcional' | 'numero' | 'numero_opcional' | 'booleano' | 'data' | 'uuid' | 'uuid_opcional';
 
+// RefEntidade — qual cadastro um campo uuid/uuid_opcional referencia, para
+// trocar o input de UUID cru por uma busca por nome/código (15/10: "esse
+// negócio de UUID é ruim... pegar pela matrícula ou consultar pelo nome").
+type RefEntidade = 'usuarios' | 'centros-custo' | 'divisoes' | 'locais-obra' | 'subgrupos-despesa';
+
 interface CampoDef {
   nome: string;
   label: string;
   kind: CampoKind;
   ajuda?: string;
+  ref?: RefEntidade;
 }
 
 interface TipoCadastroDef {
@@ -82,7 +88,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
     campos: [
       { nome: 'codigo', label: 'Código', kind: 'texto' },
       { nome: 'nome', label: 'Nome', kind: 'texto' },
-      { nome: 'divisao_id', label: 'Divisão (id)', kind: 'uuid', ajuda: 'UUID de uma divisão — veja em "Divisões"' },
+      { nome: 'divisao_id', label: 'Divisão', kind: 'uuid', ref: 'divisoes' },
       { nome: 'filial', label: 'Filial', kind: 'texto_opcional' },
     ],
   },
@@ -141,8 +147,8 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
     label: 'Exceção de Centro de Custo',
     csvCabecalho: 'colaborador_email;centro_custo_codigo',
     campos: [
-      { nome: 'colaborador_id', label: 'Colaborador (id)', kind: 'uuid' },
-      { nome: 'centro_custo_id', label: 'Centro de custo (id)', kind: 'uuid' },
+      { nome: 'colaborador_id', label: 'Colaborador', kind: 'uuid', ref: 'usuarios' },
+      { nome: 'centro_custo_id', label: 'Centro de custo', kind: 'uuid', ref: 'centros-custo' },
     ],
   },
   {
@@ -155,7 +161,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
       { nome: 'centro_custo_codigo', label: 'Centro de custo (código)', kind: 'texto' },
       { nome: 'valor_minimo', label: 'Valor mínimo', kind: 'numero' },
       { nome: 'valor_maximo', label: 'Valor máximo', kind: 'numero_opcional', ajuda: 'vazio = sem teto' },
-      { nome: 'colaborador_id', label: 'Colaborador (id)', kind: 'uuid_opcional', ajuda: 'informe isto OU papel aprovador, não os dois' },
+      { nome: 'colaborador_id', label: 'Colaborador', kind: 'uuid_opcional', ref: 'usuarios', ajuda: 'informe isto OU papel aprovador, não os dois' },
       { nome: 'papel_aprovador', label: 'Papel aprovador', kind: 'texto_opcional' },
       { nome: 'ativo', label: 'Ativo', kind: 'booleano' },
     ],
@@ -165,9 +171,9 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
     label: 'Gerentes de Aprovação',
     csvCabecalho: 'centro_custo_codigo;divisao_codigo;colaborador_email;papel_aprovador;teto;ativo',
     campos: [
-      { nome: 'centro_custo_id', label: 'Centro de custo (id)', kind: 'uuid_opcional', ajuda: 'informe isto OU divisão, não os dois (ambos vazios = global)' },
-      { nome: 'divisao_id', label: 'Divisão (id)', kind: 'uuid_opcional' },
-      { nome: 'colaborador_id', label: 'Colaborador (id)', kind: 'uuid_opcional', ajuda: 'informe isto OU papel aprovador, não os dois' },
+      { nome: 'centro_custo_id', label: 'Centro de custo', kind: 'uuid_opcional', ref: 'centros-custo', ajuda: 'informe isto OU divisão, não os dois (ambos vazios = global)' },
+      { nome: 'divisao_id', label: 'Divisão', kind: 'uuid_opcional', ref: 'divisoes' },
+      { nome: 'colaborador_id', label: 'Colaborador', kind: 'uuid_opcional', ref: 'usuarios', ajuda: 'informe isto OU papel aprovador, não os dois' },
       { nome: 'papel_aprovador', label: 'Papel aprovador', kind: 'texto_opcional' },
       { nome: 'teto', label: 'Teto', kind: 'numero' },
       { nome: 'ativo', label: 'Ativo', kind: 'booleano' },
@@ -181,7 +187,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
       { nome: 'centro_custo_codigo', label: 'Centro de custo (código)', kind: 'texto' },
       { nome: 'valor_minimo', label: 'Valor mínimo', kind: 'numero' },
       { nome: 'valor_maximo', label: 'Valor máximo', kind: 'numero_opcional', ajuda: 'vazio = sem teto' },
-      { nome: 'colaborador_id', label: 'Colaborador (id)', kind: 'uuid' },
+      { nome: 'colaborador_id', label: 'Colaborador', kind: 'uuid', ref: 'usuarios' },
       { nome: 'ativo', label: 'Ativo', kind: 'booleano' },
     ],
   },
@@ -209,8 +215,8 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
     csvCabecalho: 'numero_ordem;local_obra_codigo;subgrupo_despesa_codigo;tipo_despesa;tipo_faturamento',
     campos: [
       { nome: 'numero_ordem', label: 'Número da ordem', kind: 'texto' },
-      { nome: 'local_obra_id', label: 'Local de obra (id)', kind: 'uuid' },
-      { nome: 'subgrupo_despesa_id', label: 'Subgrupo de despesa (id)', kind: 'uuid' },
+      { nome: 'local_obra_id', label: 'Local de obra', kind: 'uuid', ref: 'locais-obra' },
+      { nome: 'subgrupo_despesa_id', label: 'Subgrupo de despesa', kind: 'uuid', ref: 'subgrupos-despesa' },
       { nome: 'tipo_despesa', label: 'Tipo de despesa', kind: 'texto_opcional' },
       { nome: 'tipo_faturamento', label: 'Tipo de faturamento', kind: 'texto_opcional' },
     ],
@@ -220,7 +226,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
     label: 'Aprovadores de Obra',
     csvCabecalho: 'colaborador_email;teto;ativo',
     campos: [
-      { nome: 'colaborador_id', label: 'Colaborador (id)', kind: 'uuid' },
+      { nome: 'colaborador_id', label: 'Colaborador', kind: 'uuid', ref: 'usuarios' },
       { nome: 'teto', label: 'Teto', kind: 'numero' },
       { nome: 'ativo', label: 'Ativo', kind: 'booleano' },
     ],
@@ -250,6 +256,139 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(data?.error || `Erro HTTP ${resp.status}`);
   }
   return data as T;
+}
+
+// Mesmo padrão de loop de paginação já usado em Gestão de Usuários/Fila —
+// a API não devolve total/cursor (AD-14) e trava "tamanho" em 100 no
+// servidor, então uma lista pra busca/seleção (nunca exibida paginada aqui)
+// precisa insistir nas próximas páginas até vir uma mais curta que o pedido.
+async function fetchTudoPaginado<T>(urlBase: string): Promise<T[]> {
+  const tamanho = 100;
+  let pagina = 1;
+  const todos: T[] = [];
+  for (;;) {
+    const resp = await fetchJSON<{ items: T[] }>(
+      `${urlBase}${urlBase.includes('?') ? '&' : '?'}pagina=${pagina}&tamanho=${tamanho}`,
+    );
+    todos.push(...resp.items);
+    if (resp.items.length < tamanho) break;
+    pagina++;
+  }
+  return todos;
+}
+
+interface OpcaoEntidade {
+  id: string;
+  rotulo: string;
+  busca: string;
+}
+
+// useOpcoesEntidade carrega a lista inteira de um cadastro referenciado
+// (usuarios tem formato próprio — nome/e-mail/matrícula; os demais são
+// {codigo, nome} genéricos, vindos do mesmo endpoint de cadastros usado no
+// resto desta tela) para alimentar a busca por nome/matrícula/código no
+// lugar de pedir um UUID cru.
+function useOpcoesEntidade(ref: RefEntidade | undefined) {
+  return useQuery({
+    queryKey: ['entidade-opcoes', ref],
+    queryFn: async (): Promise<OpcaoEntidade[]> => {
+      if (!ref) return [];
+      if (ref === 'usuarios') {
+        const usuarios = await fetchTudoPaginado<{
+          id: string;
+          nome: string;
+          email: string;
+          cod_empresa: number | null;
+          numcad: number | null;
+        }>('/api/admin/usuarios');
+        return usuarios.map((u) => ({
+          id: u.id,
+          rotulo: `${u.nome}${u.cod_empresa && u.numcad ? ` — matrícula ${u.cod_empresa}/${u.numcad}` : ''} (${u.email})`,
+          busca: `${u.nome} ${u.email} ${u.cod_empresa ?? ''} ${u.numcad ?? ''}`.toLowerCase(),
+        }));
+      }
+      const registros = await fetchTudoPaginado<{ id: string; codigo: string; nome: string }>(`/api/admin/cadastros/${ref}`);
+      return registros.map((r) => ({
+        id: r.id,
+        rotulo: `${r.codigo} — ${r.nome}`,
+        busca: `${r.codigo} ${r.nome}`.toLowerCase(),
+      }));
+    },
+    enabled: Boolean(ref),
+    staleTime: 60_000,
+  });
+}
+
+// CampoReferenciaEntidade — substitui o input de UUID cru por uma busca:
+// digita nome/e-mail/matrícula (usuarios) ou código/nome (os demais
+// cadastros) e escolhe da lista filtrada. Guarda só o id internamente —
+// valorParaEnvio já manda esse id como o UUID que o backend espera.
+function CampoReferenciaEntidade({
+  campo,
+  valor,
+  onChange,
+}: {
+  campo: CampoDef;
+  valor: string;
+  onChange: (v: string) => void;
+}) {
+  const { data: opcoes, isLoading } = useOpcoesEntidade(campo.ref);
+  const [busca, setBusca] = useState('');
+  const [trocando, setTrocando] = useState(false);
+
+  const selecionado = (opcoes ?? []).find((o) => o.id === valor);
+  const termo = busca.trim().toLowerCase();
+  const filtradas = (termo ? (opcoes ?? []).filter((o) => o.busca.includes(termo)) : (opcoes ?? [])).slice(0, 20);
+
+  if (selecionado && !trocando) {
+    return (
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <Label>{campo.label}</Label>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 flex-1 truncate rounded-md border border-border px-3 py-2 text-sm">{selecionado.rotulo}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => { setTrocando(true); setBusca(''); }}>
+            Trocar
+          </Button>
+        </div>
+        {campo.ajuda && <p className="text-[11px] text-muted-foreground">{campo.ajuda}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label>{campo.label}</Label>
+      <Input
+        placeholder={campo.ref === 'usuarios' ? 'Buscar por nome, e-mail ou matrícula...' : 'Buscar por código ou nome...'}
+        value={busca}
+        onChange={(e) => setBusca(e.target.value)}
+      />
+      <div className="max-h-40 overflow-y-auto rounded-md border border-border">
+        {isLoading && <p className="p-2 text-xs text-muted-foreground">Carregando...</p>}
+        {!isLoading && filtradas.length === 0 && <p className="p-2 text-xs text-muted-foreground">Nenhum resultado</p>}
+        {filtradas.map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            className="block w-full px-3 py-1.5 text-left text-sm hover:bg-muted"
+            onClick={() => {
+              onChange(o.id);
+              setTrocando(false);
+              setBusca('');
+            }}
+          >
+            {o.rotulo}
+          </button>
+        ))}
+      </div>
+      {valor && (
+        <Button type="button" size="sm" variant="ghost" className="self-start" onClick={() => { onChange(''); setTrocando(false); }}>
+          Limpar seleção
+        </Button>
+      )}
+      {campo.ajuda && <p className="text-[11px] text-muted-foreground">{campo.ajuda}</p>}
+    </div>
+  );
 }
 
 function valorExibicao(campo: CampoDef, valor: unknown): string {
@@ -311,6 +450,15 @@ function CampoFormulario({
         <Switch checked={Boolean(valor)} onCheckedChange={onChange} />
         <Label>{campo.label}</Label>
       </div>
+    );
+  }
+  if ((campo.kind === 'uuid' || campo.kind === 'uuid_opcional') && campo.ref) {
+    return (
+      <CampoReferenciaEntidade
+        campo={campo}
+        valor={String(valor ?? '')}
+        onChange={(v) => onChange(v)}
+      />
     );
   }
   return (
@@ -593,7 +741,7 @@ const CadastrosMestres = () => {
           </DialogHeader>
           <div className="grid gap-4 py-2 max-h-[60vh] overflow-y-auto">
             {def.campos.map((campo) => (
-              <div key={campo.nome} className="grid gap-1.5">
+              <div key={campo.nome} className="grid gap-1.5 min-w-0">
                 <CampoFormulario
                   campo={campo}
                   idPrefixo="novo"
@@ -621,7 +769,7 @@ const CadastrosMestres = () => {
           </DialogHeader>
           <div className="grid gap-4 py-2 max-h-[60vh] overflow-y-auto">
             {def.campos.map((campo) => (
-              <div key={campo.nome} className="grid gap-1.5">
+              <div key={campo.nome} className="grid gap-1.5 min-w-0">
                 <CampoFormulario
                   campo={campo}
                   idPrefixo="edit"
