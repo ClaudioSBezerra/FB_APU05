@@ -134,6 +134,45 @@ func TestCarregarUsuariosHandler_LinhaInvalidaNaoAbortaCarga(t *testing.T) {
 	}
 }
 
+// TestCarregarUsuariosHandler_EmailRepetidoNoArquivo_MantemPrimeiraOcorrencia
+// cobre o caso real de um sócio que atua em várias empresas, uma linha por
+// empresa no mesmo arquivo: só a 1ª ocorrência do e-mail é gravada (INSERT),
+// a 2ª é rejeitada sem nenhuma query extra — nunca um "last write wins"
+// silencioso sobre a identidade já gravada.
+func TestCarregarUsuariosHandler_EmailRepetidoNoArquivo_MantemPrimeiraOcorrencia(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "email;nome;perfil;cod_empresa;numcad;centro_custo_codigo\n" +
+		"socio@ferreiracosta.com.br;Fulano Socio;;1;99992;\n" +
+		"socio@ferreiracosta.com.br;Fulano Socio;;2;2;\n"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("socio@ferreiracosta.com.br").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
+		WithArgs("socio@ferreiracosta.com.br", "Fulano Socio", "solicitante", sqlmock.AnyArg(), 1, 99992, nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := CarregarUsuariosHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newUsuariosCargaRequest(csv))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"criados":1`) || !strings.Contains(rec.Body.String(), `"ignorados":1`) {
+		t.Fatalf("corpo não indica 1 criado + 1 ignorado: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "e-mail repetido") {
+		t.Fatalf("corpo não explica a rejeição por e-mail repetido: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas (a 2ª linha não deveria tocar o banco): %v", err)
+	}
+}
+
 func TestCarregarUsuariosHandler_CodEmpresaNumcadDuplicado(t *testing.T) {
 	db, mock := newSQLMock(t)
 

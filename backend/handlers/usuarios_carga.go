@@ -77,6 +77,17 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 
 		resultado := usuarioCargaResultado{Total: len(linhas), Erros: []string{}}
 
+		// primeiraLinhaPorEmail detecta o mesmo e-mail repetido DENTRO deste
+		// arquivo (ex.: sócio que atua em várias empresas, uma linha por
+		// empresa) — a identidade (cod_empresa/numcad/cc_proprio_id) só é
+		// gravada uma vez, na primeira ocorrência; as demais são rejeitadas
+		// com uma mensagem que aponta o caminho certo (cc-excecao), nunca um
+		// "last write wins" silencioso que apagaria a empresa/CC lida
+		// primeiro sem avisar. Acesso agregado a CCs de outras empresas para
+		// a mesma pessoa é Story 2.3 (cc-excecao) — nunca gravado por aqui
+		// (mesmo limite de AD-8: esta carga nunca escreve cc_excecao).
+		primeiraLinhaPorEmail := make(map[string]int)
+
 		for _, linha := range linhas {
 			email := strings.TrimSpace(linha.Campos[0])
 			nome := strings.TrimSpace(linha.Campos[1])
@@ -84,6 +95,17 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			codEmpresaStr := strings.TrimSpace(linha.Campos[3])
 			numcadStr := strings.TrimSpace(linha.Campos[4])
 			centroCustoCodigo := strings.TrimSpace(linha.Campos[5])
+
+			emailChave := strings.ToLower(email)
+			if primeira, visto := primeiraLinhaPorEmail[emailChave]; visto {
+				resultado.Erros = append(resultado.Erros, fmt.Sprintf(
+					"linha %d: e-mail repetido (já apareceu na linha %d deste arquivo) — mantida só a primeira ocorrência; para dar acesso a outro centro de custo à mesma pessoa, cadastre uma exceção de CC (Cadastros > cc-excecao)",
+					linha.Numero, primeira,
+				))
+				resultado.Ignorados++
+				continue
+			}
+			primeiraLinhaPorEmail[emailChave] = linha.Numero
 
 			msgErro, codEmpresa, numcad, centroCustoID := validarELerLinhaUsuario(
 				tx, linha.Numero, email, nome, perfil, codEmpresaStr, numcadStr, centroCustoCodigo,
