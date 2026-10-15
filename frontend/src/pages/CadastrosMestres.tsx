@@ -29,7 +29,7 @@ import {
   DialogFooter,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Upload, Pencil, History, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
+import { Upload, Plus, Pencil, History, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
 
 // Tela genérica para os cadastros mestres do Epic 2/3 (handlers/cadastros.go)
 // — um único cadastroRegistry no backend serve 15 {tipo} com os mesmos 5
@@ -37,11 +37,12 @@ import { Upload, Pencil, History, ChevronLeft, ChevronRight, RotateCcw } from 'l
 // essa generalidade no frontend com UM formulário dirigido por metadado
 // (TIPOS_CADASTRO abaixo) em vez de 15 páginas quase-idênticas.
 //
-// Limitação herdada do backend, não desta tela: ImportarCadastroHandler só
-// aceita CSV quando a tabela do tipo está INTEIRAMENTE vazia (409 caso
-// contrário) — não existe "criar 1 registro novo" depois da carga inicial,
-// só editar (PUT) o que já existe. Então esta tela nunca tem botão "Novo
-// registro": só "Carregar CSV inicial" (antes de ter dados) e "Editar" (depois).
+// ImportarCadastroHandler (carga CSV) só aceita quando a tabela do tipo está
+// INTEIRAMENTE vazia (409 caso contrário) — serve pra carga inicial em
+// lote. Para adicionar UM registro avulso depois disso, sem reimportar
+// tudo, "Novo registro" usa CriarRegistroCadastroHandler
+// (POST .../{tipo}/registro), que funciona a qualquer momento — mesmo
+// formulário dinâmico do "Editar".
 
 type CampoKind = 'texto' | 'texto_opcional' | 'numero' | 'numero_opcional' | 'booleano' | 'data' | 'uuid' | 'uuid_opcional';
 
@@ -267,6 +268,13 @@ function valorParaFormulario(campo: CampoDef, valor: unknown): string | boolean 
   return String(valor);
 }
 
+// valorInicialFormulario — valor de partida de um campo no diálogo de "Novo
+// registro" (sem linha existente pra copiar, diferente de valorParaFormulario).
+function valorInicialFormulario(campo: CampoDef): string | boolean {
+  if (campo.kind === 'booleano') return true;
+  return '';
+}
+
 function valorParaEnvio(campo: CampoDef, valor: string | boolean): unknown {
   if (campo.kind === 'booleano') return Boolean(valor);
   const texto = String(valor).trim();
@@ -283,6 +291,42 @@ function valorParaEnvio(campo: CampoDef, valor: string | boolean): unknown {
   }
 }
 
+// CampoFormulario — um campo do formulário dinâmico (criar ou editar),
+// compartilhado pelos dois diálogos: mesma lógica de tipo-por-kind, só muda
+// de onde vêm os valores/onChange.
+function CampoFormulario({
+  campo,
+  idPrefixo,
+  valor,
+  onChange,
+}: {
+  campo: CampoDef;
+  idPrefixo: string;
+  valor: string | boolean;
+  onChange: (novo: string | boolean) => void;
+}) {
+  if (campo.kind === 'booleano') {
+    return (
+      <div className="flex items-center gap-2">
+        <Switch checked={Boolean(valor)} onCheckedChange={onChange} />
+        <Label>{campo.label}</Label>
+      </div>
+    );
+  }
+  return (
+    <>
+      <Label htmlFor={`${idPrefixo}-${campo.nome}`}>{campo.label}</Label>
+      <Input
+        id={`${idPrefixo}-${campo.nome}`}
+        type={campo.kind === 'numero' || campo.kind === 'numero_opcional' ? 'number' : campo.kind === 'data' ? 'date' : 'text'}
+        value={String(valor ?? '')}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {campo.ajuda && <p className="text-[11px] text-muted-foreground">{campo.ajuda}</p>}
+    </>
+  );
+}
+
 const CadastrosMestres = () => {
   const queryClient = useQueryClient();
   const [tipoAtual, setTipoAtual] = useState(TIPOS_CADASTRO[0].tipo);
@@ -292,6 +336,8 @@ const CadastrosMestres = () => {
   const [editAlvo, setEditAlvo] = useState<Registro | null>(null);
   const [editValores, setEditValores] = useState<Record<string, string | boolean>>({});
   const [historicoAlvo, setHistoricoAlvo] = useState<Registro | null>(null);
+  const [novoOpen, setNovoOpen] = useState(false);
+  const [novoValores, setNovoValores] = useState<Record<string, string | boolean>>({});
 
   const def = TIPOS_CADASTRO.find((t) => t.tipo === tipoAtual)!;
 
@@ -318,6 +364,24 @@ const CadastrosMestres = () => {
       toast.success(`${resp.importados} registro(s) carregado(s)`);
       setCargaOpen(false);
       setArquivoCarga(null);
+      queryClient.invalidateQueries({ queryKey: ['cadastros', tipoAtual] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  // Criar 1 registro avulso (POST .../{tipo}/registro) — diferente da carga
+  // CSV acima, funciona a qualquer momento, mesmo com o cadastro já
+  // populado (handlers/cadastros.go, CriarRegistroCadastroHandler).
+  const createMutation = useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      fetchJSON(`/api/admin/cadastros/${tipoAtual}/registro`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      toast.success('Registro criado');
+      setNovoOpen(false);
       queryClient.invalidateQueries({ queryKey: ['cadastros', tipoAtual] });
     },
     onError: (err: Error) => toast.error(err.message),
@@ -360,6 +424,23 @@ const CadastrosMestres = () => {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  function abrirNovoRegistro() {
+    const valores: Record<string, string | boolean> = {};
+    for (const campo of def.campos) {
+      valores[campo.nome] = valorInicialFormulario(campo);
+    }
+    setNovoValores(valores);
+    setNovoOpen(true);
+  }
+
+  function criarRegistro() {
+    const body: Record<string, unknown> = {};
+    for (const campo of def.campos) {
+      body[campo.nome] = valorParaEnvio(campo, novoValores[campo.nome]);
+    }
+    createMutation.mutate(body);
+  }
+
   function abrirEdicao(registro: Registro) {
     const valores: Record<string, string | boolean> = {};
     for (const campo of def.campos) {
@@ -382,6 +463,11 @@ const CadastrosMestres = () => {
     <div className="p-6 flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold text-foreground">Cadastros Mestres</h1>
+        <div className="flex gap-2">
+        <Button size="sm" onClick={abrirNovoRegistro}>
+          <Plus className="mr-2 h-4 w-4" />
+          Novo registro
+        </Button>
         <Dialog open={cargaOpen} onOpenChange={(o) => { setCargaOpen(o); if (!o) setArquivoCarga(null); }}>
           <DialogTrigger asChild>
             <Button size="sm" variant="outline">
@@ -412,6 +498,7 @@ const CadastrosMestres = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="max-w-xs">
@@ -499,6 +586,34 @@ const CadastrosMestres = () => {
         </>
       )}
 
+      <Dialog open={novoOpen} onOpenChange={(o) => !o && setNovoOpen(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Novo registro — {def.label}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2 max-h-[60vh] overflow-y-auto">
+            {def.campos.map((campo) => (
+              <div key={campo.nome} className="grid gap-1.5">
+                <CampoFormulario
+                  campo={campo}
+                  idPrefixo="novo"
+                  valor={novoValores[campo.nome]}
+                  onChange={(v) => setNovoValores((atual) => ({ ...atual, [campo.nome]: v }))}
+                />
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNovoOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={criarRegistro} disabled={createMutation.isPending}>
+              {createMutation.isPending ? 'Criando...' : 'Criar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={editAlvo !== null} onOpenChange={(o) => !o && setEditAlvo(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -507,26 +622,12 @@ const CadastrosMestres = () => {
           <div className="grid gap-4 py-2 max-h-[60vh] overflow-y-auto">
             {def.campos.map((campo) => (
               <div key={campo.nome} className="grid gap-1.5">
-                {campo.kind === 'booleano' ? (
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      checked={Boolean(editValores[campo.nome])}
-                      onCheckedChange={(checked) => setEditValores((v) => ({ ...v, [campo.nome]: checked }))}
-                    />
-                    <Label>{campo.label}</Label>
-                  </div>
-                ) : (
-                  <>
-                    <Label htmlFor={`edit-${campo.nome}`}>{campo.label}</Label>
-                    <Input
-                      id={`edit-${campo.nome}`}
-                      type={campo.kind === 'numero' || campo.kind === 'numero_opcional' ? 'number' : campo.kind === 'data' ? 'date' : 'text'}
-                      value={String(editValores[campo.nome] ?? '')}
-                      onChange={(e) => setEditValores((v) => ({ ...v, [campo.nome]: e.target.value }))}
-                    />
-                    {campo.ajuda && <p className="text-[11px] text-muted-foreground">{campo.ajuda}</p>}
-                  </>
-                )}
+                <CampoFormulario
+                  campo={campo}
+                  idPrefixo="edit"
+                  valor={editValores[campo.nome]}
+                  onChange={(v) => setEditValores((atual) => ({ ...atual, [campo.nome]: v }))}
+                />
               </div>
             ))}
           </div>

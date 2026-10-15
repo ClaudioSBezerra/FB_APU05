@@ -1214,6 +1214,97 @@ func ImportarCadastroHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// CriarRegistroCadastroHandler — POST /api/admin/cadastros/{tipo}/registro
+// (corpo JSON com todas as colunas editáveis do tipo, mesmo formato aceito
+// por AtualizarCadastroHandler). Diferente de ImportarCadastroHandler (carga
+// CSV em lote, só roda com a tabela do {tipo} ainda vazia), este cria UM
+// registro novo a qualquer momento — o caminho que faltava para adicionar um
+// cadastro avulso depois da carga inicial sem precisar vazar a tabela
+// inteira numa reimportação. Mesma trilha de histórico da carga inicial:
+// versao=1, acao='criado'.
+func CriarRegistroCadastroHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		tipo := r.PathValue("tipo")
+		def, ok := cadastroRegistry[tipo]
+		if !ok {
+			jsonErr(w, http.StatusNotFound, "tipo de cadastro desconhecido")
+			return
+		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var corpo map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&corpo); err != nil {
+			jsonErr(w, http.StatusBadRequest, "corpo da requisição inválido")
+			return
+		}
+		valores, err := def.DecodeJSON(corpo)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		atorID := GetUserIDFromContext(r)
+
+		tx, err := db.Begin()
+		if err != nil {
+			log.Printf("[Cadastros] Erro ao iniciar transação (criar registro %s): %v", tipo, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		colunas := nomesColunas(def.Colunas)
+		insertSQL := montarInsertSQL(def.Tabela, colunas)
+
+		var novoID string
+		if err := tx.QueryRow(insertSQL, valores...).Scan(&novoID); err != nil {
+			msg := "valor inválido para este cadastro"
+			if ehViolacaoDeConstraint(err) {
+				msg = errorMsgAmigavel(err)
+			} else {
+				log.Printf("[Cadastros] Erro ao criar registro em %s: %v", tipo, err)
+			}
+			jsonErr(w, http.StatusBadRequest, msg)
+			return
+		}
+
+		snapshot := montarSnapshot(def.Colunas, valores)
+		dadosJSON, err := json.Marshal(snapshot)
+		if err != nil {
+			log.Printf("[Cadastros] Erro ao serializar snapshot (criar registro %s): %v", tipo, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		if _, err := tx.Exec(`
+			INSERT INTO cadastro_historico (tipo_cadastro, registro_id, versao, acao, dados, ator_id)
+			VALUES ($1, $2, 1, 'criado', $3, $4)
+		`, tipo, novoID, string(dadosJSON), nullableAtor(atorID)); err != nil {
+			log.Printf("[Cadastros] Erro ao gravar histórico (criar registro %s): %v", tipo, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		if err := tx.Commit(); err != nil {
+			log.Printf("[Cadastros] Erro ao commitar criação de registro (%s): %v", tipo, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		log.Printf("[Cadastros] %s criou registro novo em %s (%s)", atorID, tipo, novoID)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		escreverRegistroJSON(w, novoID, snapshot)
+	}
+}
+
 // AtualizarCadastroHandler — PUT /api/admin/cadastros/{tipo}/{id} (corpo JSON
 // com todas as colunas editáveis do tipo). Grava a mudança e a nova linha de
 // histórico na MESMA transação (Boundaries "Always" da spec).

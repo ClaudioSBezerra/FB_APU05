@@ -345,6 +345,7 @@ func main() {
 	// RequireAuth(..., "administrador"), mesmo padrão da linha acima.
 	http.HandleFunc("GET /api/admin/cadastros/{tipo}", handlers.RequireAuth(withDB(handlers.ListarCadastroHandler), "administrador"))
 	http.HandleFunc("POST /api/admin/cadastros/{tipo}", handlers.RequireAuth(withDB(handlers.ImportarCadastroHandler), "administrador"))
+	http.HandleFunc("POST /api/admin/cadastros/{tipo}/registro", handlers.RequireAuth(withDB(handlers.CriarRegistroCadastroHandler), "administrador"))
 	http.HandleFunc("PUT /api/admin/cadastros/{tipo}/{id}", handlers.RequireAuth(withDB(handlers.AtualizarCadastroHandler), "administrador"))
 	http.HandleFunc("GET /api/admin/cadastros/{tipo}/{id}/historico", handlers.RequireAuth(withDB(handlers.HistoricoCadastroHandler), "administrador"))
 	http.HandleFunc("POST /api/admin/cadastros/{tipo}/{id}/restaurar", handlers.RequireAuth(withDB(handlers.RestaurarCadastroHandler), "administrador"))

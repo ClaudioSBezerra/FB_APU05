@@ -750,6 +750,99 @@ func TestAtualizarCadastroHandler_Success(t *testing.T) {
 	}
 }
 
+// --- Criar registro avulso (POST .../{tipo}/registro) ---
+
+// TestCriarRegistroCadastroHandler_Success cobre o caminho que faltava:
+// adicionar 1 registro novo a um cadastro que JÁ tem dados (onde
+// ImportarCadastroHandler recusaria com 409) — mesmo formato de corpo de
+// AtualizarCadastroHandler, histórico nasce em versao=1/acao='criado'.
+func TestCriarRegistroCadastroHandler_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO divisoes (codigo, nome) VALUES ($1, $2) RETURNING id")).
+		WithArgs("D2", "Divisao Dois").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testCadastroID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("divisoes", testCadastroID, `{"codigo":"D2","nome":"Divisao Dois"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := CriarRegistroCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "divisoes", "", `{"codigo":"D2","nome":"Divisao Dois"}`)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Divisao Dois") {
+		t.Fatalf("corpo não reflete o registro criado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+func TestCriarRegistroCadastroHandler_TipoDesconhecido(t *testing.T) {
+	handler := CriarRegistroCadastroHandler(nil)
+	req := newCadastroRequest(http.MethodPost, "tipo-invalido", "", `{}`)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("esperado 404, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCriarRegistroCadastroHandler_CorpoInvalido(t *testing.T) {
+	handler := CriarRegistroCadastroHandler(nil)
+	req := newCadastroRequest(http.MethodPost, "divisoes", "", `{"codigo":"D1"}`)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCriarRegistroCadastroHandler_RejectsWrongMethod(t *testing.T) {
+	handler := CriarRegistroCadastroHandler(nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/cadastros/divisoes/registro", nil)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("esperado 405, obtido %d", rec.Code)
+	}
+}
+
+// TestCriarRegistroCadastroHandler_ViolacaoConstraint cobre um "codigo"
+// duplicado — a tabela já tem a linha (criar registro avulso é usado
+// justamente quando o cadastro NÃO está mais vazio), então uma colisão de
+// UNIQUE é um cenário real, não só teórico.
+func TestCriarRegistroCadastroHandler_ViolacaoConstraint(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO divisoes (codigo, nome) VALUES ($1, $2) RETURNING id")).
+		WithArgs("D1", "Divisao Um Duplicada").
+		WillReturnError(&pq.Error{Code: "23505"})
+	mock.ExpectRollback()
+
+	handler := CriarRegistroCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "divisoes", "", `{"codigo":"D1","nome":"Divisao Um Duplicada"}`)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
 // TestAtualizarCadastroHandler_RegistroInexistente cobre "Edição de id
 // inexistente": 404, nenhuma escrita.
 func TestAtualizarCadastroHandler_RegistroInexistente(t *testing.T) {
