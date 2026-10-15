@@ -274,3 +274,43 @@ func TestListarFilaHandler_DecoraComSLA(t *testing.T) {
 		t.Fatalf("prazo_limite ausente no item: %+v", resp.Items[0])
 	}
 }
+
+// TestMinhasSolicitacoesHandler_FiltraPorAdministradorLogado cobre a razão
+// de MinhasSolicitacoesHandler existir como rota própria (fila.go):
+// `administrador_id` do WHERE é sempre o do token (GetUserIDFromContext),
+// nunca um valor arbitrário — o mock só expira se a query usar exatamente
+// esse valor como 1º argumento.
+func TestMinhasSolicitacoesHandler_FiltraPorAdministradorLogado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT data FROM feriados")).
+		WillReturnRows(sqlmock.NewRows([]string{"data"}))
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacoes")).
+		WithArgs(testFilaHandlerAdministradorID, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "centro_custo_id", "status", "versao", "created_at"}).
+			AddRow(testFilaHandlerSolicitacaoID, "inclusao", "cc0000-0000-0000-0000-000000000001", "em_atendimento", 2, time.Now()))
+
+	handler := MinhasSolicitacoesHandler(db)
+	req := newFilaListRequest("")
+	req.URL.Path = "/api/fila/minhas"
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, esperado 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("resposta não é JSON válido: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0]["status"] != "em_atendimento" {
+		t.Fatalf("items = %+v, inesperado", resp.Items)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}

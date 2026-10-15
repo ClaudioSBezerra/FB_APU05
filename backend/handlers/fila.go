@@ -202,3 +202,81 @@ func nullStringOuNil(v sql.NullString) interface{} {
 	}
 	return v.String
 }
+
+// MinhasSolicitacoesHandler — GET /api/fila/minhas?pagina=&tamanho=.
+// Suporte de front-end às Stories 4.2/4.3/4.4/4.5 (marcar pendência,
+// finalizar, selecionar para lote) — nenhuma delas tem como funcionar sem
+// antes listar o que o administrador logado já assumiu. Deliberadamente um
+// handler/rota NOVO, nunca uma extensão de ListarFilaHandler: aquele
+// handler é escopo fechado da Story 4.1 ("só status='aberta'", Boundaries
+// "Always" da spec) — mudar seu filtro quebraria esse invariante
+// documentado. `status = 'em_atendimento' AND administrador_id = $1` (nunca
+// todas as solicitações em atendimento de QUALQUER administrador — cada um
+// só vê o que assumiu).
+func MinhasSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		pagina, tamanho := paginacaoDaQuery(r)
+		administradorID := GetUserIDFromContext(r)
+
+		calendario, err := sla.NovoCalendario(db)
+		if err != nil {
+			log.Printf("[Fila] Erro ao carregar calendário de SLA: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		rows, err := db.Query(`
+			SELECT id, tipo_solicitacao, centro_custo_id, status, versao, created_at
+			FROM solicitacoes
+			WHERE status = 'em_atendimento' AND administrador_id = $1
+			ORDER BY created_at ASC, id ASC
+			LIMIT $2 OFFSET $3
+		`, administradorID, tamanho, (pagina-1)*tamanho)
+		if err != nil {
+			log.Printf("[Fila] Erro ao listar minhas solicitações: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		defer rows.Close()
+
+		items := make([]map[string]interface{}, 0)
+		for rows.Next() {
+			var id, tipoSolicitacao, status string
+			var centroCustoID sql.NullString
+			var versao int
+			var criadoEm time.Time
+			if err := rows.Scan(&id, &tipoSolicitacao, &centroCustoID, &status, &versao, &criadoEm); err != nil {
+				log.Printf("[Fila] Erro ao ler linha de minhas solicitações: %v", err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+
+			items = append(items, map[string]interface{}{
+				"id":               id,
+				"tipo_solicitacao": tipoSolicitacao,
+				"centro_custo_id":  nullStringOuNil(centroCustoID),
+				"status":           status,
+				"versao":           versao,
+				"created_at":       criadoEm,
+				"prazo_limite":     calendario.PrazoLimite(criadoEm),
+				"atrasada":         calendario.EstaAtrasado(criadoEm),
+			})
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("[Fila] Erro ao iterar minhas solicitações: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"items": items, "pagina": pagina, "tamanho": tamanho,
+		})
+	}
+}

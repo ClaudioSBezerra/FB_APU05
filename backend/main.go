@@ -361,6 +361,16 @@ func main() {
 	// 3.2-3.5 para os outros 4 tipos.
 	http.HandleFunc("POST /api/solicitacoes", handlers.RequireAuth(withDB(handlers.AbrirSolicitacaoHandler), ""))
 
+	// Opções de formulário (suporte de front-end ao Epic 3) — somente
+	// leitura, mesmo nível de permissão de POST /api/solicitacoes
+	// (RequireAuth(..., "") — qualquer perfil autenticado). Nenhuma delas
+	// decide aprovador: só espelham, para preencher combos, as mesmas
+	// consultas que AbrirSolicitacaoHandler/internal/aprovacao já usam para
+	// validar no servidor.
+	http.HandleFunc("GET /api/formulario/opcoes", handlers.RequireAuth(withDB(handlers.OpcoesFormularioHandler), ""))
+	http.HandleFunc("GET /api/formulario/autorizadores", handlers.RequireAuth(withDB(handlers.AutorizadoresHandler), ""))
+	http.HandleFunc("GET /api/formulario/obra-ordens", handlers.RequireAuth(withDB(handlers.ObraOrdensHandler), ""))
+
 	// Fila do administrador (Story 4.1, Epic 4) — primeiras rotas que fazem
 	// UPDATE em aprovador_snapshot/versao/status/administrador_id de
 	// `solicitacoes` (AD-4). ListarFilaHandler é só leitura e fica na
@@ -368,6 +378,11 @@ func main() {
 	// precisa da conexão privilegiada (withPrivilegedDB/
 	// fb_apu05_privilegiado) — a única com GRANT UPDATE nessas colunas.
 	http.HandleFunc("GET /api/fila/solicitacoes", handlers.RequireAuth(withDB(handlers.ListarFilaHandler), "administrador"))
+
+	// Minhas solicitações em atendimento (suporte de front-end às Stories
+	// 4.2-4.5) — só leitura, mesma conexão geral; nunca estende
+	// ListarFilaHandler (escopo fechado da Story 4.1, só status='aberta').
+	http.HandleFunc("GET /api/fila/minhas", handlers.RequireAuth(withDB(handlers.MinhasSolicitacoesHandler), "administrador"))
 	http.HandleFunc("POST /api/solicitacoes/{id}/assumir", handlers.RequireAuth(withPrivilegedDB(handlers.AssumirSolicitacaoHandler), "administrador"))
 
 	// Pendência e reabertura (Story 4.2, Epic 4) — 2 novas escritas em
