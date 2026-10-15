@@ -149,7 +149,7 @@ const Login = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-sm">
-        <h1 className="text-base font-semibold text-card-foreground">FB_APU05 — Módulo Controladoria</h1>
+        <h1 className="text-base font-semibold text-card-foreground">Módulo de Controladoria</h1>
         <p className="mt-1 text-xs text-muted-foreground">Entre com sua conta corporativa Ferreira Costa.</p>
 
         {sessionExpired && (

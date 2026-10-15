@@ -39,7 +39,11 @@ func GetEmailConfig() *EmailConfig {
 	}
 	from := os.Getenv("SMTP_FROM")
 	if from == "" {
-		from = "FB_APU05 <noreply@fortesbezerra.com.br>"
+		// Sem acento aqui de propósito — "From" é cabeçalho RFC 5322, não
+		// corpo (o Content-Type: text/html; charset=UTF-8 abaixo só cobre o
+		// corpo da mensagem); mesma convenção já adotada no Subject logo
+		// abaixo ("Redefinicao de Senha", sem acento).
+		from = "Modulo de Controladoria <noreply@fortesbezerra.com.br>"
 	}
 	return &EmailConfig{
 		Host:     os.Getenv("SMTP_HOST"),
@@ -106,18 +110,18 @@ func SendPasswordResetEmail(email, resetToken string) error {
 	}
 	resetLink := fmt.Sprintf("%s/reset-senha?token=%s", appURL, resetToken)
 
-	message := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: FB_APU05 - Redefinicao de Senha\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"+
+	message := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: Modulo de Controladoria - Redefinicao de Senha\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"+
 		`<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333; max-width: 600px; margin: 0 auto;">
   <div style="background-color: #f4f4f8; padding: 40px; border-radius: 8px;">
     <div style="background: #2d3748; color: white; padding: 20px; border-radius: 8px; text-align: center;">
-      <div style="font-size: 20px; font-weight: bold;">FB_APU05 — Módulo Controladoria</div>
+      <div style="font-size: 20px; font-weight: bold;">Módulo de Controladoria</div>
     </div>
     <div style="background: white; padding: 30px; border-radius: 8px; margin-top: 16px;">
       <p>Olá,</p>
-      <p>Recebemos uma solicitação de redefinição de senha para sua conta no FB_APU05.</p>
+      <p>Recebemos uma solicitação de redefinição de senha para sua conta no Módulo de Controladoria.</p>
       <p>Se você não solicitou esta alteração, ignore este e-mail.</p>
       <div style="text-align: center; margin: 30px 0;">
         <a href="%s" style="display: inline-block; padding: 12px 24px; background: #2d3748; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">Redefinir Minha Senha</a>
