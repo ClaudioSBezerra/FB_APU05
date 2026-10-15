@@ -337,6 +337,43 @@ func TestCarregarUsuariosHandler_LinhaInvalidaNaoAbortaCarga(t *testing.T) {
 	}
 }
 
+// TestCarregarUsuariosHandler_NumcadForaDoRangeInt32_NaoAbortaCarga cobre o
+// mesmo incidente real de TestCreateUsuarioLocalHandler_RejectsNumcadForaDoRangeInt32
+// (admin_create_usuario_test.go), mas no caminho de carga em lote: uma
+// matrícula de 10 dígitos (typo) estourava o INTEGER (int4) do Postgres só
+// no INSERT — agora vira um erro de linha (não bloqueia o arquivo inteiro),
+// igual a qualquer outra linha inválida.
+func TestCarregarUsuariosHandler_NumcadForaDoRangeInt32_NaoAbortaCarga(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "email;nome;cod_empresa;numcad;centro_custo_codigo\n" +
+		"typo@ferreiracosta.com.br;Fulano;1;9999999999;\n" +
+		"valido@ferreiracosta.com.br;Ciclano;2;54321;\n"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("valido@ferreiracosta.com.br").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
+		WithArgs("valido@ferreiracosta.com.br", "Ciclano", sqlmock.AnyArg(), 2, 54321, nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := CarregarUsuariosHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newUsuariosCargaRequest(csv))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"criados":1`) || !strings.Contains(rec.Body.String(), `"ignorados":1`) {
+		t.Fatalf("corpo não indica 1 criado + 1 ignorado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
 // TestCarregarUsuariosHandler_EmailRepetidoNoArquivo_MantemPrimeiraOcorrencia
 // cobre o caso real de um sócio que atua em várias empresas, uma linha por
 // empresa no mesmo arquivo: só a 1ª ocorrência do e-mail é gravada (INSERT),

@@ -37,6 +37,18 @@ import (
 // isso aparece como um 500 genérico.
 var uuidFormatRegexp = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+// identidadeOracleMaxima é o maior valor que cabe numa coluna INTEGER do
+// Postgres (int4) — cod_empresa/numcad são int4 (migration 019). `int` em Go
+// é 64 bits, então um valor maior (tipicamente erro de digitação, ex. uma
+// matrícula com dígitos a mais) passa incólume por aqui e só estoura na
+// hora do INSERT/UPDATE, como "value out of range for type integer" —
+// um erro do driver que caía no 500 genérico em vez de virar um 400 claro.
+const identidadeOracleMaxima = 2147483647
+
+func identidadeOracleValida(codEmpresa, numcad int) bool {
+	return codEmpresa >= 1 && codEmpresa <= identidadeOracleMaxima && numcad >= 1 && numcad <= identidadeOracleMaxima
+}
+
 // AdminUpdateUsuarioRequest é o corpo de PATCH /api/admin/usuarios/{id}.
 // Campos ponteiro: distinguem "não enviado" de "enviado como zero-value"
 // (ex. `{"ativo": false}` precisa ser distinguível de "ativo não informado").
@@ -103,8 +115,8 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusBadRequest, "'cod_empresa' e 'numcad' devem ser enviados juntos")
 			return
 		}
-		if req.CodEmpresa != nil && (*req.CodEmpresa <= 0 || *req.Numcad <= 0) {
-			jsonErr(w, http.StatusBadRequest, "'cod_empresa' e 'numcad' devem ser positivos")
+		if req.CodEmpresa != nil && !identidadeOracleValida(*req.CodEmpresa, *req.Numcad) {
+			jsonErr(w, http.StatusBadRequest, "'cod_empresa' e 'numcad' devem ser positivos e no máximo 2147483647")
 			return
 		}
 		if req.Nome != nil && strings.TrimSpace(*req.Nome) == "" {
@@ -400,8 +412,8 @@ func CreateUsuarioLocalHandler(db *sql.DB) http.HandlerFunc {
 		// SFC.SFC_VW_COLABORADORES (Oracle, FCCORP) — sem isso, a
 		// sincronização diária de CC via ERP Bridge nunca alcança este
 		// usuário (a view não tem e-mail para casar de outro jeito).
-		if req.CodEmpresa <= 0 || req.Numcad <= 0 {
-			jsonErr(w, http.StatusBadRequest, "campos 'cod_empresa' e 'numcad' são obrigatórios e devem ser positivos")
+		if !identidadeOracleValida(req.CodEmpresa, req.Numcad) {
+			jsonErr(w, http.StatusBadRequest, "campos 'cod_empresa' e 'numcad' são obrigatórios, positivos e no máximo 2147483647")
 			return
 		}
 

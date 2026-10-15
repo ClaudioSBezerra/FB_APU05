@@ -389,12 +389,12 @@ func validarELerLinhaUsuario(
 		return fmt.Sprintf("linha %d: campo 'nome' obrigatório", numeroLinha), 0, 0, nil, ""
 	}
 	codEmpresa, convErr := strconv.Atoi(codEmpresaStr)
-	if convErr != nil || codEmpresa <= 0 {
-		return fmt.Sprintf("linha %d: campo 'cod_empresa' deve ser um número positivo", numeroLinha), 0, 0, nil, ""
+	if convErr != nil || codEmpresa <= 0 || codEmpresa > identidadeOracleMaxima {
+		return fmt.Sprintf("linha %d: campo 'cod_empresa' deve ser um número positivo de até 10 dígitos", numeroLinha), 0, 0, nil, ""
 	}
 	numcad, convErr = strconv.Atoi(numcadStr)
-	if convErr != nil || numcad <= 0 {
-		return fmt.Sprintf("linha %d: campo 'numcad' deve ser um número positivo", numeroLinha), 0, 0, nil, ""
+	if convErr != nil || numcad <= 0 || numcad > identidadeOracleMaxima {
+		return fmt.Sprintf("linha %d: campo 'numcad' deve ser um número positivo de até 10 dígitos", numeroLinha), 0, 0, nil, ""
 	}
 	if centroCustoCodigo != "" {
 		if id, resolveErr := resolveCentroCustoIDPorCodigo(tx, centroCustoCodigo); resolveErr == nil {

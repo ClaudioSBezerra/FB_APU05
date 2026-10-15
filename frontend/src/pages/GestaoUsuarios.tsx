@@ -125,6 +125,7 @@ function IdentidadeOracleCell({
     <div className="flex gap-1.5">
       <Input
         type="number"
+        max={2147483647}
         value={codEmpresa}
         onChange={(e) => setCodEmpresa(e.target.value)}
         onBlur={salvarSeMudou}
@@ -133,6 +134,7 @@ function IdentidadeOracleCell({
       />
       <Input
         type="number"
+        max={2147483647}
         value={numcad}
         onChange={(e) => setNumcad(e.target.value)}
         onBlur={salvarSeMudou}
@@ -385,13 +387,20 @@ const GestaoUsuarios = () => {
                   <Input
                     id="novo-cod-empresa"
                     type="number"
+                    max={2147483647}
                     value={codEmpresa}
                     onChange={(e) => setCodEmpresa(e.target.value)}
                   />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="novo-numcad">Matrícula (NUMCAD)</Label>
-                  <Input id="novo-numcad" type="number" value={numcad} onChange={(e) => setNumcad(e.target.value)} />
+                  <Input
+                    id="novo-numcad"
+                    type="number"
+                    max={2147483647}
+                    value={numcad}
+                    onChange={(e) => setNumcad(e.target.value)}
+                  />
                 </div>
               </div>
               <div className="grid gap-1.5">

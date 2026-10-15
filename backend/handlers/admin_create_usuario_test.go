@@ -101,6 +101,22 @@ func TestCreateUsuarioLocalHandler_RejectsMissingCodEmpresaOuNumcad(t *testing.T
 	}
 }
 
+// TestCreateUsuarioLocalHandler_RejectsNumcadForaDoRangeInt32 cobre um
+// incidente real: "numcad":9999999999 (10 dígitos, typo de digitação)
+// passava pela validação <= 0 em Go (int de 64 bits) e só estourava no
+// INSERT contra a coluna INTEGER (int4) do Postgres — "value out of range
+// for type integer", que virava um 500 genérico em vez de um 400 claro.
+func TestCreateUsuarioLocalHandler_RejectsNumcadForaDoRangeInt32(t *testing.T) {
+	handler := CreateUsuarioLocalHandler(nil)
+	rec := httptest.NewRecorder()
+	body := `{"email":"a@b.com","nome":"Fulano","senha":"senha12345","cod_empresa":1,"numcad":9999999999}`
+	handler(rec, newCreateUsuarioRequest(body))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
 // --- Caminhos que chegam ao banco (sqlmock) ---
 
 func TestCreateUsuarioLocalHandler_Succeeds(t *testing.T) {
