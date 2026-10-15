@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug } from 'lucide-react';
+import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import {
@@ -41,6 +41,7 @@ const mainItems = [
 
 function getActiveId(pathname: string): string {
   if (pathname.startsWith('/admin/usuarios')) return 'usuarios';
+  if (pathname.startsWith('/admin/cadastros')) return 'cadastros';
   if (pathname.startsWith('/admin/erp-bridge')) return 'erp-bridge';
   if (pathname.startsWith('/fila')) return 'fila';
   if (pathname.startsWith('/painel')) return 'painel';
@@ -134,6 +135,7 @@ export function AppRail() {
       ? [
           { id: 'fila', icon: ListChecks, label: 'Fila do Administrador', path: '/fila' },
           { id: 'usuarios', icon: Users, label: 'Gestão de Usuários', path: '/admin/usuarios' },
+          { id: 'cadastros', icon: Database, label: 'Cadastros Mestres', path: '/admin/cadastros' },
           { id: 'erp-bridge', icon: Plug, label: 'ERP Bridge — Credenciais', path: '/admin/erp-bridge' },
         ]
       : []),

@@ -14,6 +14,7 @@ import GestaoUsuarios from '@/pages/GestaoUsuarios'
 import AbrirSolicitacao from '@/pages/AbrirSolicitacao'
 import FilaAdministrador from '@/pages/FilaAdministrador'
 import ERPBridgeCredenciais from '@/pages/ERPBridgeCredenciais'
+import CadastrosMestres from '@/pages/CadastrosMestres'
 
 const queryClient = new QueryClient()
 
@@ -81,6 +82,14 @@ function App() {
                     element={
                       <AdminRoute>
                         <ERPBridgeCredenciais />
+                      </AdminRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/cadastros"
+                    element={
+                      <AdminRoute>
+                        <CadastrosMestres />
                       </AdminRoute>
                     }
                   />
