@@ -494,16 +494,20 @@ func isUniqueViolationOnConstraint(err error, constraintName string) bool {
 }
 
 // UsuarioListItem é um item de GET /api/admin/usuarios — nunca inclui
-// password_hash.
+// password_hash. CentroCustoID/CentroCustoNome vêm de um LEFT JOIN com
+// centros_custo (cc_proprio_id) — nulo quando o usuário não tem CC próprio
+// atribuído (ex.: sócio principal, que usa cc_excecao em vez disso).
 type UsuarioListItem struct {
-	ID         string `json:"id"`
-	Email      string `json:"email"`
-	Nome       string `json:"nome"`
-	Perfil     string `json:"perfil"`
-	Ativo      bool   `json:"ativo"`
-	CreatedAt  string `json:"created_at"`
-	CodEmpresa *int   `json:"cod_empresa"`
-	Numcad     *int   `json:"numcad"`
+	ID              string  `json:"id"`
+	Email           string  `json:"email"`
+	Nome            string  `json:"nome"`
+	Perfil          string  `json:"perfil"`
+	Ativo           bool    `json:"ativo"`
+	CreatedAt       string  `json:"created_at"`
+	CodEmpresa      *int    `json:"cod_empresa"`
+	Numcad          *int    `json:"numcad"`
+	CentroCustoID   *string `json:"centro_custo_id"`
+	CentroCustoNome *string `json:"centro_custo_nome"`
 }
 
 // ListarUsuariosHandler — GET /api/admin/usuarios, paginado (pagina/tamanho,
@@ -521,8 +525,11 @@ func ListarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		pagina, tamanho := paginacaoDaQuery(r)
 
 		rows, err := db.Query(`
-			SELECT id, email, nome, perfil, ativo, created_at, cod_empresa, numcad
-			FROM usuarios ORDER BY created_at, id LIMIT $1 OFFSET $2
+			SELECT u.id, u.email, u.nome, u.perfil, u.ativo, u.created_at, u.cod_empresa, u.numcad,
+			       cc.id, cc.nome
+			FROM usuarios u
+			LEFT JOIN centros_custo cc ON cc.id = u.cc_proprio_id
+			ORDER BY u.created_at, u.id LIMIT $1 OFFSET $2
 		`, tamanho, (pagina-1)*tamanho)
 		if err != nil {
 			log.Printf("[Admin] Erro ao listar usuários: %v", err)
@@ -534,7 +541,7 @@ func ListarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		items := make([]UsuarioListItem, 0)
 		for rows.Next() {
 			var item UsuarioListItem
-			if err := rows.Scan(&item.ID, &item.Email, &item.Nome, &item.Perfil, &item.Ativo, &item.CreatedAt, &item.CodEmpresa, &item.Numcad); err != nil {
+			if err := rows.Scan(&item.ID, &item.Email, &item.Nome, &item.Perfil, &item.Ativo, &item.CreatedAt, &item.CodEmpresa, &item.Numcad, &item.CentroCustoID, &item.CentroCustoNome); err != nil {
 				log.Printf("[Admin] Erro ao ler usuário: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
