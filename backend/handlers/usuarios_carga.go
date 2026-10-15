@@ -155,13 +155,23 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			}
 			primeiraLinhaPorEmail[emailChave] = linha.Numero
 
-			msgErro, codEmpresa, numcad, centroCustoID := validarELerLinhaUsuario(
+			msgErro, codEmpresa, numcad, centroCustoID, avisoCC := validarELerLinhaUsuario(
 				tx, linha.Numero, email, nome, codEmpresaStr, numcadStr, centroCustoCodigo,
 			)
 			if msgErro != "" {
 				resultado.Erros = append(resultado.Erros, msgErro)
 				resultado.Ignorados++
 				continue
+			}
+			// CC não encontrado nunca bloqueia a criação/atualização do
+			// usuário — só vira um aviso: os cadastros mestres (Story 2.1)
+			// podem simplesmente ainda não estar carregados, e a identidade
+			// (cod_empresa/numcad) é o que mais importa agora. O CC fica
+			// NULL/inalterado e pode ser preenchido depois (recarregando
+			// esta planilha após carregar centros-custo, ou pela
+			// sincronização diária do ERP Bridge).
+			if avisoCC != "" {
+				resultado.Erros = append(resultado.Erros, avisoCC)
 			}
 
 			var existeID string
@@ -240,36 +250,36 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 
 // validarELerLinhaUsuario valida e converte uma linha estruturalmente (sem
 // acesso a banco, exceto a resolução opcional de centro_custo_codigo, que
-// precisa rodar na MESMA transação do import) — devolve (mensagem de erro,
-// "", "", nil, nil) para rejeitar só esta linha, nunca abortar a carga
-// inteira, mesmo princípio de CarregarColaboradoresHandler.
+// precisa rodar na MESMA transação do import). msgErro != "" rejeita só
+// esta linha (nunca aborta a carga inteira, mesmo princípio de
+// CarregarColaboradoresHandler) — reservado para dado estruturalmente
+// inválido (e-mail/nome/cod_empresa/numcad). centro_custo_codigo não
+// encontrado NUNCA entra em msgErro: vira avisoCC (não bloqueia a linha —
+// ver comentário no chamador).
 func validarELerLinhaUsuario(
 	tx *sql.Tx, numeroLinha int, email, nome, codEmpresaStr, numcadStr, centroCustoCodigo string,
-) (msgErro string, codEmpresa, numcad int, centroCustoID interface{}) {
+) (msgErro string, codEmpresa, numcad int, centroCustoID interface{}, avisoCC string) {
 	if email == "" || !strings.Contains(email, "@") {
-		return fmt.Sprintf("linha %d: e-mail inválido", numeroLinha), 0, 0, nil
+		return fmt.Sprintf("linha %d: e-mail inválido", numeroLinha), 0, 0, nil, ""
 	}
 	if nome == "" {
-		return fmt.Sprintf("linha %d: campo 'nome' obrigatório", numeroLinha), 0, 0, nil
+		return fmt.Sprintf("linha %d: campo 'nome' obrigatório", numeroLinha), 0, 0, nil, ""
 	}
 	codEmpresa, convErr := strconv.Atoi(codEmpresaStr)
 	if convErr != nil || codEmpresa <= 0 {
-		return fmt.Sprintf("linha %d: campo 'cod_empresa' deve ser um número positivo", numeroLinha), 0, 0, nil
+		return fmt.Sprintf("linha %d: campo 'cod_empresa' deve ser um número positivo", numeroLinha), 0, 0, nil, ""
 	}
 	numcad, convErr = strconv.Atoi(numcadStr)
 	if convErr != nil || numcad <= 0 {
-		return fmt.Sprintf("linha %d: campo 'numcad' deve ser um número positivo", numeroLinha), 0, 0, nil
+		return fmt.Sprintf("linha %d: campo 'numcad' deve ser um número positivo", numeroLinha), 0, 0, nil, ""
 	}
 	if centroCustoCodigo != "" {
-		// resolveCentroCustoIDPorCodigo (cadastros_csv.go) já devolve uma
-		// mensagem pronta para "não encontrado" — mesmo padrão que todo
-		// decodeCSV* já segue (repassa o erro como rejeição da linha, nunca
-		// como falha de servidor).
 		id, resolveErr := resolveCentroCustoIDPorCodigo(tx, centroCustoCodigo)
 		if resolveErr != nil {
-			return fmt.Sprintf("linha %d: %v", numeroLinha, resolveErr), 0, 0, nil
+			avisoCC = fmt.Sprintf("linha %d: centro de custo %q não encontrado — usuário criado/atualizado mesmo assim, sem CC definido", numeroLinha, centroCustoCodigo)
+		} else {
+			centroCustoID = id
 		}
-		centroCustoID = id
 	}
-	return "", codEmpresa, numcad, centroCustoID
+	return "", codEmpresa, numcad, centroCustoID, avisoCC
 }

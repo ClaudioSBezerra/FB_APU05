@@ -109,6 +109,48 @@ func TestCarregarUsuariosHandler_CabecalhoMaiusculo(t *testing.T) {
 	}
 }
 
+// TestCarregarUsuariosHandler_CentroCustoNaoEncontrado_NaoBloqueiaCriacao
+// cobre um incidente real: subir a planilha de usuários ANTES de carregar o
+// cadastro mestre de centros de custo (Story 2.1) fazia TODA linha falhar
+// por "centro de custo não encontrado" — identidade (cod_empresa/numcad) é
+// o que mais importa agora, então um CC não encontrado vira só um aviso;
+// a linha continua, o usuário é criado com cc_proprio_id NULL.
+func TestCarregarUsuariosHandler_CentroCustoNaoEncontrado_NaoBloqueiaCriacao(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	csv := "email;nome;cod_empresa;numcad;centro_custo_codigo\n" +
+		"novo@ferreiracosta.com.br;Fulano de Tal;1;12345;6450\n"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)")).
+		WithArgs("6450").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("novo@ferreiracosta.com.br").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad, cc_proprio_id)")).
+		WithArgs("novo@ferreiracosta.com.br", "Fulano de Tal", sqlmock.AnyArg(), 1, 12345, nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := CarregarUsuariosHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newUsuariosCargaRequest(csv))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"criados":1`) || !strings.Contains(rec.Body.String(), `"ignorados":0`) {
+		t.Fatalf("corpo não indica 1 criado + 0 ignorados (CC não encontrado não deveria bloquear): %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "não encontrado") {
+		t.Fatalf("corpo não traz o aviso de CC não encontrado: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
 func TestCarregarUsuariosHandler_AtualizaUsuarioExistente(t *testing.T) {
 	db, mock := newSQLMock(t)
 
