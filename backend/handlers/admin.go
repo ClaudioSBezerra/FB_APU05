@@ -49,8 +49,15 @@ type AdminUpdateUsuarioRequest struct {
 	// via SSO (que nunca passam pelo formulário de criação local onde esses
 	// campos são obrigatórios). Sempre os dois juntos — um par parcial não
 	// identifica ninguém de verdade.
-	CodEmpresa *int `json:"cod_empresa,omitempty"`
-	Numcad     *int `json:"numcad,omitempty"`
+	CodEmpresa *int    `json:"cod_empresa,omitempty"`
+	Numcad     *int    `json:"numcad,omitempty"`
+	Nome       *string `json:"nome,omitempty"`
+	Email      *string `json:"email,omitempty"`
+	// CentroCustoID: UUID de centros_custo, ou "" para desatribuir
+	// (cc_proprio_id -> NULL). Tela de edição manda sempre o id já
+	// resolvido (dropdown populado por GET /api/admin/cadastros/centros-custo),
+	// nunca um código para resolver aqui.
+	CentroCustoID *string `json:"centro_custo_id,omitempty"`
 }
 
 const errMsgUltimoAdministrador = "operação recusada: deixaria o sistema sem nenhum administrador ativo"
@@ -83,8 +90,9 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusBadRequest, "corpo da requisição inválido")
 			return
 		}
-		if req.Perfil == nil && req.Ativo == nil && req.CodEmpresa == nil && req.Numcad == nil {
-			jsonErr(w, http.StatusBadRequest, "informe ao menos 'perfil', 'ativo', 'cod_empresa' ou 'numcad'")
+		if req.Perfil == nil && req.Ativo == nil && req.CodEmpresa == nil && req.Numcad == nil &&
+			req.Nome == nil && req.Email == nil && req.CentroCustoID == nil {
+			jsonErr(w, http.StatusBadRequest, "informe ao menos um campo para atualizar")
 			return
 		}
 		if req.Perfil != nil && *req.Perfil != "administrador" && *req.Perfil != "solicitante" {
@@ -97,6 +105,18 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		}
 		if req.CodEmpresa != nil && (*req.CodEmpresa <= 0 || *req.Numcad <= 0) {
 			jsonErr(w, http.StatusBadRequest, "'cod_empresa' e 'numcad' devem ser positivos")
+			return
+		}
+		if req.Nome != nil && strings.TrimSpace(*req.Nome) == "" {
+			jsonErr(w, http.StatusBadRequest, "'nome' não pode ser vazio")
+			return
+		}
+		if req.Email != nil && (strings.TrimSpace(*req.Email) == "" || !strings.Contains(*req.Email, "@")) {
+			jsonErr(w, http.StatusBadRequest, "'email' inválido")
+			return
+		}
+		if req.CentroCustoID != nil && *req.CentroCustoID != "" && !uuidFormatRegexp.MatchString(*req.CentroCustoID) {
+			jsonErr(w, http.StatusBadRequest, "'centro_custo_id' inválido")
 			return
 		}
 
@@ -127,14 +147,15 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		var perfilAnterior string
+		var perfilAnterior, nomeAnterior, emailAnterior string
 		var ativoAnterior bool
 		var codEmpresaAnterior, numcadAnterior sql.NullInt64
+		var centroCustoAnterior sql.NullString
 		// FOR UPDATE: trava a linha-alvo pela duração da transação — ver
 		// Design Notes da spec.
 		err = tx.QueryRow(`
-			SELECT perfil, ativo, cod_empresa, numcad FROM usuarios WHERE id = $1 FOR UPDATE
-		`, alvoID).Scan(&perfilAnterior, &ativoAnterior, &codEmpresaAnterior, &numcadAnterior)
+			SELECT perfil, ativo, cod_empresa, numcad, nome, email, cc_proprio_id FROM usuarios WHERE id = $1 FOR UPDATE
+		`, alvoID).Scan(&perfilAnterior, &ativoAnterior, &codEmpresaAnterior, &numcadAnterior, &nomeAnterior, &emailAnterior, &centroCustoAnterior)
 		if err == sql.ErrNoRows {
 			jsonErr(w, http.StatusNotFound, "usuário não encontrado")
 			return
@@ -157,6 +178,22 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		if req.CodEmpresa != nil {
 			codEmpresaNovo = sql.NullInt64{Int64: int64(*req.CodEmpresa), Valid: true}
 			numcadNovo = sql.NullInt64{Int64: int64(*req.Numcad), Valid: true}
+		}
+		nomeNovo := nomeAnterior
+		if req.Nome != nil {
+			nomeNovo = strings.TrimSpace(*req.Nome)
+		}
+		emailNovo := emailAnterior
+		if req.Email != nil {
+			emailNovo = strings.TrimSpace(*req.Email)
+		}
+		centroCustoNovo := centroCustoAnterior
+		if req.CentroCustoID != nil {
+			if *req.CentroCustoID == "" {
+				centroCustoNovo = sql.NullString{Valid: false}
+			} else {
+				centroCustoNovo = sql.NullString{String: *req.CentroCustoID, Valid: true}
+			}
 		}
 
 		// Proteção do último admin (FR-2): se esta mudança tira o usuário-alvo
@@ -209,9 +246,10 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 
 		perfilMudou := perfilNovo != perfilAnterior
 		ativoMudou := ativoNovo != ativoAnterior
-		identidadeMudou := codEmpresaNovo != codEmpresaAnterior || numcadNovo != numcadAnterior
+		cadastroMudou := codEmpresaNovo != codEmpresaAnterior || numcadNovo != numcadAnterior ||
+			nomeNovo != nomeAnterior || emailNovo != emailAnterior || centroCustoNovo != centroCustoAnterior
 
-		if !perfilMudou && !ativoMudou && !identidadeMudou {
+		if !perfilMudou && !ativoMudou && !cadastroMudou {
 			// Nada mudou: não é "uma mudança aplicada" (spec), então não grava
 			// auditoria — só confirma o estado atual.
 			if err := tx.Commit(); err != nil {
@@ -224,10 +262,17 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		if _, err = tx.Exec(`
-			UPDATE usuarios SET perfil = $1, ativo = $2, cod_empresa = $3, numcad = $4, updated_at = now() WHERE id = $5
-		`, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo, alvoID); err != nil {
+			UPDATE usuarios SET
+				perfil = $1, ativo = $2, cod_empresa = $3, numcad = $4,
+				nome = $5, email = $6, cc_proprio_id = $7, updated_at = now()
+			WHERE id = $8
+		`, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo, nomeNovo, emailNovo, centroCustoNovo, alvoID); err != nil {
 			if isUniqueViolationOnConstraint(err, "idx_usuarios_cod_empresa_numcad") {
 				jsonErr(w, http.StatusConflict, "já existe um usuário com esse código de empresa + matrícula")
+				return
+			}
+			if isUniqueViolationOnConstraint(err, "idx_usuarios_email_lower") {
+				jsonErr(w, http.StatusConflict, "já existe um usuário com esse e-mail")
 				return
 			}
 			log.Printf("[Admin] Erro ao atualizar usuário %s: %v", alvoID, err)
@@ -236,9 +281,10 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// usuarios_auditoria só registra perfil/ativo (FR-2) — mudança só de
-		// identidade (cod_empresa/numcad) não grava evento auditável aqui,
-		// mesmo princípio do "no-op": a auditoria desta tabela é sobre
-		// concessão/revogação de acesso, não sobre dado cadastral.
+		// dado cadastral (nome/email/identidade/CC) não grava evento
+		// auditável aqui, mesmo princípio do "no-op": a auditoria desta
+		// tabela é sobre concessão/revogação de acesso, não sobre dado
+		// cadastral.
 		if perfilMudou || ativoMudou {
 			if _, err = tx.Exec(`
 				INSERT INTO usuarios_auditoria
