@@ -71,6 +71,27 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+// A API não devolve total/cursor (AD-14) e paginacaoDaQuery trava "tamanho"
+// em 100 no servidor — então uma única chamada com tamanho=100 só mostra as
+// 100 solicitações mais antigas (ORDER BY created_at) quando a fila passa
+// disso, com o resto silenciosamente fora da tela. Pagina no cliente até
+// vir uma página mais curta que o pedido, mesmo padrão já aplicado em
+// Gestão de Usuários.
+async function fetchTudoPaginado<T>(urlBase: string): Promise<T[]> {
+  const tamanho = 100;
+  let pagina = 1;
+  const todos: T[] = [];
+  for (;;) {
+    const resp = await fetchJSON<{ items: T[] }>(
+      `${urlBase}${urlBase.includes('?') ? '&' : '?'}pagina=${pagina}&tamanho=${tamanho}`,
+    );
+    todos.push(...resp.items);
+    if (resp.items.length < tamanho) break;
+    pagina++;
+  }
+  return todos;
+}
+
 function baixarArquivoBase64(nomeArquivo: string, base64: string) {
   const bytes = atob(base64);
   const buffer = new Uint8Array(bytes.length);
@@ -104,12 +125,12 @@ const FilaAdministrador = () => {
 
   const filaQuery = useQuery({
     queryKey: ['fila-aberta'],
-    queryFn: () => fetchJSON<{ items: ItemFila[] }>('/api/fila/solicitacoes?tamanho=100'),
+    queryFn: () => fetchTudoPaginado<ItemFila>('/api/fila/solicitacoes'),
   });
 
   const minhasQuery = useQuery({
     queryKey: ['fila-minhas'],
-    queryFn: () => fetchJSON<{ items: ItemFila[] }>('/api/fila/minhas?tamanho=100'),
+    queryFn: () => fetchTudoPaginado<ItemFila>('/api/fila/minhas'),
   });
 
   const detalheQuery = useQuery({
@@ -185,7 +206,7 @@ const FilaAdministrador = () => {
   });
 
   async function gerarLote(tipo: 'despesa' | 'obra') {
-    const minhas = minhasQuery.data?.items ?? [];
+    const minhas = minhasQuery.data ?? [];
     const ids = minhas
       .filter((i) => selecionados.has(i.id) && (tipo === 'obra' ? i.tipo_solicitacao === 'obras' : i.tipo_solicitacao !== 'obras'))
       .map((i) => i.id);
@@ -240,7 +261,9 @@ const FilaAdministrador = () => {
   return (
     <div className="flex flex-col gap-8 p-6">
       <div>
-        <h1 className="mb-3 text-lg font-semibold text-foreground">Fila (aguardando atendimento)</h1>
+        <h1 className="mb-3 text-lg font-semibold text-foreground">
+          Fila (aguardando atendimento){filaQuery.data ? ` — ${filaQuery.data.length}` : ''}
+        </h1>
         {filaQuery.isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
         {filaQuery.error && <p className="text-sm text-destructive">{(filaQuery.error as Error).message}</p>}
         <Table>
@@ -254,7 +277,7 @@ const FilaAdministrador = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(filaQuery.data?.items ?? []).map((item) => (
+            {(filaQuery.data ?? []).map((item) => (
               <TableRow key={item.id}>
                 <TableCell className="font-medium capitalize">{item.tipo_solicitacao}</TableCell>
                 <TableCell className="text-muted-foreground">{item.centro_custo_id ?? '—'}</TableCell>
@@ -273,7 +296,7 @@ const FilaAdministrador = () => {
                 </TableCell>
               </TableRow>
             ))}
-            {filaQuery.data?.items.length === 0 && (
+            {filaQuery.data?.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
                   Nenhuma solicitação aberta
@@ -286,7 +309,9 @@ const FilaAdministrador = () => {
 
       <div>
         <div className="mb-3 flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-foreground">Minhas solicitações (em atendimento)</h1>
+          <h1 className="text-lg font-semibold text-foreground">
+            Minhas solicitações (em atendimento){minhasQuery.data ? ` — ${minhasQuery.data.length}` : ''}
+          </h1>
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={() => gerarLote('despesa')}>
               Gerar lote Despesa
@@ -309,7 +334,7 @@ const FilaAdministrador = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(minhasQuery.data?.items ?? []).map((item) => (
+            {(minhasQuery.data ?? []).map((item) => (
               <TableRow key={item.id}>
                 <TableCell>
                   <input
@@ -336,7 +361,7 @@ const FilaAdministrador = () => {
                 </TableCell>
               </TableRow>
             ))}
-            {minhasQuery.data?.items.length === 0 && (
+            {minhasQuery.data?.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
                   Nenhuma solicitação em atendimento
