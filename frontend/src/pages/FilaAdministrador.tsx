@@ -249,6 +249,42 @@ const FilaAdministrador = () => {
     }
   }
 
+  // Exportar CSV de demonstração (15/10) — mesma elegibilidade de
+  // "Gerar lote", mas sem gravar nada e sem precisar do .xlsm real (ainda
+  // não configurado no servidor). Útil para mostrar a estrutura/dados do
+  // lote antes do arquivo real estar disponível.
+  async function baixarCSV(tipo: 'despesa' | 'obra') {
+    const minhas = minhasQuery.data ?? [];
+    const ids = minhas
+      .filter((i) => selecionados.has(i.id) && (tipo === 'obra' ? i.tipo_solicitacao === 'obras' : i.tipo_solicitacao !== 'obras'))
+      .map((i) => i.id);
+    if (ids.length === 0) {
+      toast.error(`Nenhuma solicitação de ${tipo === 'obra' ? 'Obras' : 'Despesa'} selecionada`);
+      return;
+    }
+    try {
+      const resp = await fetch(`/api/solicitacoes/lote-${tipo}/csv`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ solicitacao_ids: ids }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data?.error || `Erro HTTP ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `preview_lote_${tipo}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('CSV de demonstração baixado');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erro ao gerar CSV');
+    }
+  }
+
   function toggleSelecionado(id: string) {
     setSelecionados((atual) => {
       const novo = new Set(atual);
@@ -318,6 +354,12 @@ const FilaAdministrador = () => {
             </Button>
             <Button size="sm" variant="outline" onClick={() => gerarLote('obra')}>
               Gerar lote Obra
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => baixarCSV('despesa')}>
+              Exportar CSV Despesa (demonstração)
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => baixarCSV('obra')}>
+              Exportar CSV Obra (demonstração)
             </Button>
           </div>
         </div>

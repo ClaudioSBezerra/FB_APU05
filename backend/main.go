@@ -463,6 +463,14 @@ func main() {
 	// real no SAP para uma linha 'CRIAR' (só na finalização).
 	http.HandleFunc("POST /api/solicitacoes/lote-obra", handlers.RequireAuth(withPrivilegedDB(handlers.GerarLoteObraHandler), "administrador"))
 
+	// Prévia de lote em CSV (15/10) — mesma elegibilidade dos dois acima,
+	// mas nunca grava em exportacoes_sap e nunca precisa do .xlsm: serve
+	// para demonstrar o conteúdo do lote (ex. para o time de SAP) enquanto
+	// EXPORT_TEMPLATE_LOTE_DESPESA/EXPORT_TEMPLATE_LOTE_OBRA não estão
+	// configuradas. Conexão GERAL (withDB) — somente leitura.
+	http.HandleFunc("POST /api/solicitacoes/lote-despesa/csv", handlers.RequireAuth(withDB(handlers.PreviewLoteDespesaCSVHandler), "administrador"))
+	http.HandleFunc("POST /api/solicitacoes/lote-obra/csv", handlers.RequireAuth(withDB(handlers.PreviewLoteObraCSVHandler), "administrador"))
+
 	// Finalizar solicitação (Story 4.5, Epic 4, FR-14/AD-3/AD-5) — terceira
 	// rota de internal/exportacao: encerra a solicitação já exportada
 	// (lote Despesa ou Obra), mudando `status` para `finalizada_sucesso`/
