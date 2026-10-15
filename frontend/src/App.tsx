@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from '@/components/ui/sonner'
@@ -17,11 +16,6 @@ import FilaAdministrador from '@/pages/FilaAdministrador'
 import ERPBridgeCredenciais from '@/pages/ERPBridgeCredenciais'
 
 const queryClient = new QueryClient()
-
-type HealthResponse = {
-  status: string
-  error?: string
-}
 
 // ProtectedRoute/AdminRoute — mesmo padrão do FB_APU02 (App.tsx de lá):
 // AuthContext do FB_APU05 restaura a sessão de sessionStorage de forma
@@ -42,56 +36,9 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />
   }
   if (user?.perfil !== 'administrador') {
-    return <Navigate to="/" replace />
+    return <Navigate to="/painel" replace />
   }
   return <>{children}</>
-}
-
-// Home — tela inicial do módulo. Mostra o health-check (herdado de Story
-// 1.1) e o usuário autenticado, pra tornar o fluxo de ponta a ponta (login →
-// sessão → logout) visível/verificável manualmente.
-function Home() {
-  const { user, logout } = useAuth()
-  const [health, setHealth] = useState<HealthResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    fetch('/api/health')
-      .then(async (res) => {
-        const data = (await res.json()) as HealthResponse
-        if (!res.ok) {
-          throw new Error(data.error || `HTTP ${res.status}`)
-        }
-        return data
-      })
-      .then((data) => setHealth(data))
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-  }, [])
-
-  return (
-    <div className="flex flex-col items-center justify-center gap-4 p-6 text-foreground">
-      <h1 className="text-2xl font-bold">Módulo de gestão de solicitações de orçamentos</h1>
-      <p className="text-sm text-muted-foreground" data-testid="health-status">
-        {error && `Erro ao consultar /api/health: ${error}`}
-        {!error && !health && 'Consultando /api/health...'}
-        {!error && health && `/api/health respondeu: ${JSON.stringify(health)}`}
-      </p>
-      {user && (
-        <div className="flex flex-col items-center gap-2 text-sm">
-          <p>
-            Logado como <strong>{user.email}</strong> ({user.perfil})
-          </p>
-          <button
-            type="button"
-            onClick={logout}
-            className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
-          >
-            Sair
-          </button>
-        </div>
-      )}
-    </div>
-  )
 }
 
 function App() {
@@ -110,7 +57,7 @@ function App() {
             <ProtectedRoute>
               <Layout>
                 <Routes>
-                  <Route path="/" element={<Home />} />
+                  <Route path="/" element={<Navigate to="/painel" replace />} />
                   <Route path="/painel" element={<PainelConsolidado />} />
                   <Route path="/solicitacoes/nova" element={<AbrirSolicitacao />} />
                   <Route
@@ -137,7 +84,7 @@ function App() {
                       </AdminRoute>
                     }
                   />
-                  <Route path="*" element={<Navigate to="/" replace />} />
+                  <Route path="*" element={<Navigate to="/painel" replace />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>
