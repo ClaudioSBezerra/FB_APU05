@@ -230,6 +230,26 @@ func ERPBridgeGenerateAPIKeyHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// erpBridgeAPIKeyValida checa o header X-API-Key de r contra api_key_hash —
+// mesma verificação por hash de ERPBridgeCredentialsHandler, extraída para
+// reuso por qualquer outro endpoint autenticado por API key (ex.:
+// SincronizarColaboradoresOracleHandler, colaboradores_oracle_sync.go).
+// Nunca compara a chave em claro diretamente.
+func erpBridgeAPIKeyValida(db *sql.DB, r *http.Request) bool {
+	apiKey := r.Header.Get("X-API-Key")
+	if apiKey == "" {
+		return false
+	}
+	hash := sha256.Sum256([]byte(apiKey))
+	hashHex := hex.EncodeToString(hash[:])
+	var existe bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM erp_bridge_config WHERE api_key_hash = $1)`, hashHex).Scan(&existe); err != nil {
+		log.Printf("[ERPBridge] Erro ao validar API key: %v", err)
+		return false
+	}
+	return existe
+}
+
 // ERPBridgeCredentialsHandler — GET /api/erp-bridge/credentials. Único
 // endpoint do ERP Bridge sem RequireAuth (JWT) — autenticado via header
 // X-API-Key, comparado por hash contra api_key_hash (nunca por igualdade

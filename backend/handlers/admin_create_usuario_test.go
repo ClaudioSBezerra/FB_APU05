@@ -82,7 +82,18 @@ func TestCreateUsuarioLocalHandler_RejectsShortSenha(t *testing.T) {
 func TestCreateUsuarioLocalHandler_RejectsInvalidPerfil(t *testing.T) {
 	handler := CreateUsuarioLocalHandler(nil)
 	rec := httptest.NewRecorder()
-	body := `{"email":"a@b.com","nome":"Fulano","senha":"senha12345","perfil":"super-admin"}`
+	body := `{"email":"a@b.com","nome":"Fulano","senha":"senha12345","perfil":"super-admin","cod_empresa":1,"numcad":12345}`
+	handler(rec, newCreateUsuarioRequest(body))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateUsuarioLocalHandler_RejectsMissingCodEmpresaOuNumcad(t *testing.T) {
+	handler := CreateUsuarioLocalHandler(nil)
+	rec := httptest.NewRecorder()
+	body := `{"email":"a@b.com","nome":"Fulano","senha":"senha12345"}`
 	handler(rec, newCreateUsuarioRequest(body))
 
 	if rec.Code != http.StatusBadRequest {
@@ -96,8 +107,8 @@ func TestCreateUsuarioLocalHandler_Succeeds(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash)")).
-		WithArgs("novo@fortesbezerra.com.br", "Fulano", "solicitante", sqlmock.AnyArg()).
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad)")).
+		WithArgs("novo@fortesbezerra.com.br", "Fulano", "solicitante", sqlmock.AnyArg(), 1, 12345).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testAlvoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios_auditoria")).
 		WithArgs(testAtorID, testAlvoID, "solicitante").
@@ -106,7 +117,7 @@ func TestCreateUsuarioLocalHandler_Succeeds(t *testing.T) {
 
 	handler := CreateUsuarioLocalHandler(db)
 	rec := httptest.NewRecorder()
-	body := `{"email":"novo@fortesbezerra.com.br","nome":"Fulano","senha":"senha12345"}`
+	body := `{"email":"novo@fortesbezerra.com.br","nome":"Fulano","senha":"senha12345","cod_empresa":1,"numcad":12345}`
 	handler(rec, newCreateUsuarioRequest(body))
 
 	if rec.Code != http.StatusCreated {
@@ -124,14 +135,14 @@ func TestCreateUsuarioLocalHandler_DuplicateEmail_Returns409(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash)")).
-		WithArgs("ja-existe@fortesbezerra.com.br", "Fulano", "solicitante", sqlmock.AnyArg()).
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad)")).
+		WithArgs("ja-existe@fortesbezerra.com.br", "Fulano", "solicitante", sqlmock.AnyArg(), 1, 12345).
 		WillReturnError(&pq.Error{Code: "23505"})
 	mock.ExpectRollback()
 
 	handler := CreateUsuarioLocalHandler(db)
 	rec := httptest.NewRecorder()
-	body := `{"email":"ja-existe@fortesbezerra.com.br","nome":"Fulano","senha":"senha12345"}`
+	body := `{"email":"ja-existe@fortesbezerra.com.br","nome":"Fulano","senha":"senha12345","cod_empresa":1,"numcad":12345}`
 	handler(rec, newCreateUsuarioRequest(body))
 
 	if rec.Code != http.StatusConflict {

@@ -60,9 +60,9 @@ func TestAdminUpdateUsuarioHandler_LastAdminProtection_Rejects(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock($1)")).
 		WithArgs(adminMutationLockKey).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT perfil, ativo FROM usuarios WHERE id = $1 FOR UPDATE")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT perfil, ativo, cod_empresa, numcad FROM usuarios WHERE id = $1 FOR UPDATE")).
 		WithArgs(testAlvoID).
-		WillReturnRows(sqlmock.NewRows([]string{"perfil", "ativo"}).AddRow("administrador", true))
+		WillReturnRows(sqlmock.NewRows([]string{"perfil", "ativo", "cod_empresa", "numcad"}).AddRow("administrador", true, nil, nil))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE perfil = 'administrador' AND ativo = true ORDER BY id FOR UPDATE")).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testAlvoID))
 	mock.ExpectRollback()
@@ -94,13 +94,13 @@ func TestAdminUpdateUsuarioHandler_Success_UpdatesAndAudits(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock($1)")).
 		WithArgs(adminMutationLockKey).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT perfil, ativo FROM usuarios WHERE id = $1 FOR UPDATE")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT perfil, ativo, cod_empresa, numcad FROM usuarios WHERE id = $1 FOR UPDATE")).
 		WithArgs(testAlvoID).
-		WillReturnRows(sqlmock.NewRows([]string{"perfil", "ativo"}).AddRow("administrador", true))
+		WillReturnRows(sqlmock.NewRows([]string{"perfil", "ativo", "cod_empresa", "numcad"}).AddRow("administrador", true, nil, nil))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE perfil = 'administrador' AND ativo = true ORDER BY id FOR UPDATE")).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testAlvoID).AddRow("33333333-3333-3333-3333-333333333333"))
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE usuarios SET perfil = $1, ativo = $2, updated_at = now() WHERE id = $3")).
-		WithArgs("administrador", false, testAlvoID).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE usuarios SET perfil = $1, ativo = $2, cod_empresa = $3, numcad = $4, updated_at = now() WHERE id = $5")).
+		WithArgs("administrador", false, nil, nil, testAlvoID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios_auditoria")).
 		WithArgs(testAtorID, testAlvoID, "ativo_alterado", "administrador", "administrador", true, false).
@@ -130,9 +130,9 @@ func TestAdminUpdateUsuarioHandler_NoOp_CommitsWithoutAuditing(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock($1)")).
 		WithArgs(adminMutationLockKey).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT perfil, ativo FROM usuarios WHERE id = $1 FOR UPDATE")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT perfil, ativo, cod_empresa, numcad FROM usuarios WHERE id = $1 FOR UPDATE")).
 		WithArgs(testAlvoID).
-		WillReturnRows(sqlmock.NewRows([]string{"perfil", "ativo"}).AddRow("administrador", true))
+		WillReturnRows(sqlmock.NewRows([]string{"perfil", "ativo", "cod_empresa", "numcad"}).AddRow("administrador", true, nil, nil))
 	mock.ExpectCommit()
 
 	handler := AdminUpdateUsuarioHandler(db)
@@ -183,6 +183,56 @@ func TestAdminUpdateUsuarioHandler_RejectsInvalidPerfil(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "perfil deve ser") {
 		t.Fatalf("corpo não indica a causa esperada (perfil inválido): %s", rec.Body.String())
+	}
+}
+
+// TestAdminUpdateUsuarioHandler_RejectsCodEmpresaSemNumcad garante 400
+// quando só um dos dois campos de identidade (migration 019) é enviado — um
+// par parcial não identifica ninguém de verdade.
+func TestAdminUpdateUsuarioHandler_RejectsCodEmpresaSemNumcad(t *testing.T) {
+	handler := AdminUpdateUsuarioHandler(nil)
+
+	req := newAdminRequest(testAlvoID, `{"cod_empresa":1}`)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "juntos") {
+		t.Fatalf("corpo não indica a causa esperada (campos juntos): %s", rec.Body.String())
+	}
+}
+
+// TestAdminUpdateUsuarioHandler_AtualizaIdentidadeSemAfetarAuditoria garante
+// que editar só cod_empresa/numcad (sem mudar perfil/ativo) grava o UPDATE
+// mas NUNCA um evento em usuarios_auditoria (essa tabela é sobre
+// concessão/revogação de acesso, não sobre dado cadastral).
+func TestAdminUpdateUsuarioHandler_AtualizaIdentidadeSemAfetarAuditoria(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock($1)")).
+		WithArgs(adminMutationLockKey).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT perfil, ativo, cod_empresa, numcad FROM usuarios WHERE id = $1 FOR UPDATE")).
+		WithArgs(testAlvoID).
+		WillReturnRows(sqlmock.NewRows([]string{"perfil", "ativo", "cod_empresa", "numcad"}).AddRow("solicitante", true, nil, nil))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE usuarios SET perfil = $1, ativo = $2, cod_empresa = $3, numcad = $4, updated_at = now() WHERE id = $5")).
+		WithArgs("solicitante", true, 1, 12345, testAlvoID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := AdminUpdateUsuarioHandler(db)
+	req := newAdminRequest(testAlvoID, `{"cod_empresa":1,"numcad":12345}`)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (INSERT INTO usuarios_auditoria não deveria ter sido chamado): %v", err)
 	}
 }
 

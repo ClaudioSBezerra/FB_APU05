@@ -34,9 +34,14 @@ import { UserPlus } from 'lucide-react';
 // Tela de gestão de usuários — consome os 3 endpoints administrativos do
 // backend (handlers/admin.go): GET /api/admin/usuarios (lista paginada,
 // AD-14), POST /api/admin/usuarios (CreateUsuarioLocalHandler) e
-// PATCH /api/admin/usuarios/{id} (AdminUpdateUsuarioHandler — perfil/ativo).
-// O Authorization é injetado automaticamente pelo interceptor global de
-// fetch (AuthContext.tsx), não precisa setar aqui.
+// PATCH /api/admin/usuarios/{id} (AdminUpdateUsuarioHandler — perfil/ativo/
+// cod_empresa/numcad). O Authorization é injetado automaticamente pelo
+// interceptor global de fetch (AuthContext.tsx), não precisa setar aqui.
+//
+// cod_empresa/numcad (migration 019) identificam o usuário em
+// SFC.SFC_VW_COLABORADORES (Oracle/FCCORP) — a view não tem e-mail, então a
+// sincronização diária de centro de custo via ERP Bridge só alcança um
+// usuário que tenha os dois preenchidos aqui.
 interface Usuario {
   id: string;
   email: string;
@@ -44,6 +49,8 @@ interface Usuario {
   perfil: 'solicitante' | 'administrador';
   ativo: boolean;
   created_at: string;
+  cod_empresa: number | null;
+  numcad: number | null;
 }
 
 interface ListaResponse {
@@ -61,6 +68,51 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+// IdentidadeOracleCell — edição inline de cod_empresa/numcad para um usuário
+// já existente (ex.: provisionado via SSO, que nunca passa pelo formulário
+// de criação local onde esses campos são obrigatórios). Os dois sempre
+// salvam juntos (o backend recusa um par parcial) — onBlur em vez de
+// onChange para não disparar um PATCH a cada dígito.
+function IdentidadeOracleCell({
+  usuario,
+  onSalvar,
+}: {
+  usuario: Usuario;
+  onSalvar: (codEmpresa: number, numcad: number) => void;
+}) {
+  const [codEmpresa, setCodEmpresa] = useState(usuario.cod_empresa?.toString() ?? '');
+  const [numcad, setNumcad] = useState(usuario.numcad?.toString() ?? '');
+
+  function salvarSeMudou() {
+    const codEmpresaNum = Number(codEmpresa);
+    const numcadNum = Number(numcad);
+    if (!codEmpresaNum || !numcadNum) return;
+    if (codEmpresaNum === usuario.cod_empresa && numcadNum === usuario.numcad) return;
+    onSalvar(codEmpresaNum, numcadNum);
+  }
+
+  return (
+    <div className="flex gap-1.5">
+      <Input
+        type="number"
+        value={codEmpresa}
+        onChange={(e) => setCodEmpresa(e.target.value)}
+        onBlur={salvarSeMudou}
+        placeholder="Empresa"
+        className="h-8 w-20"
+      />
+      <Input
+        type="number"
+        value={numcad}
+        onChange={(e) => setNumcad(e.target.value)}
+        onBlur={salvarSeMudou}
+        placeholder="Matrícula"
+        className="h-8 w-24"
+      />
+    </div>
+  );
+}
+
 const GestaoUsuarios = () => {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
@@ -68,6 +120,8 @@ const GestaoUsuarios = () => {
   const [nome, setNome] = useState('');
   const [senha, setSenha] = useState('');
   const [perfil, setPerfil] = useState<'solicitante' | 'administrador'>('solicitante');
+  const [codEmpresa, setCodEmpresa] = useState('');
+  const [numcad, setNumcad] = useState('');
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['usuarios'],
@@ -79,7 +133,14 @@ const GestaoUsuarios = () => {
       fetchJSON('/api/admin/usuarios', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, nome, senha, perfil }),
+        body: JSON.stringify({
+          email,
+          nome,
+          senha,
+          perfil,
+          cod_empresa: Number(codEmpresa),
+          numcad: Number(numcad),
+        }),
       }),
     onSuccess: () => {
       toast.success('Usuário criado com sucesso');
@@ -88,13 +149,21 @@ const GestaoUsuarios = () => {
       setNome('');
       setSenha('');
       setPerfil('solicitante');
+      setCodEmpresa('');
+      setNumcad('');
       queryClient.invalidateQueries({ queryKey: ['usuarios'] });
     },
     onError: (err: Error) => toast.error(err.message),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Partial<Pick<Usuario, 'perfil' | 'ativo'>> }) =>
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: Partial<Pick<Usuario, 'perfil' | 'ativo' | 'cod_empresa' | 'numcad'>>;
+    }) =>
       fetchJSON(`/api/admin/usuarios/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -134,6 +203,21 @@ const GestaoUsuarios = () => {
                 <Label htmlFor="novo-senha">Senha (mínimo 8 caracteres)</Label>
                 <Input id="novo-senha" type="password" value={senha} onChange={(e) => setSenha(e.target.value)} />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="novo-cod-empresa">Código da empresa</Label>
+                  <Input
+                    id="novo-cod-empresa"
+                    type="number"
+                    value={codEmpresa}
+                    onChange={(e) => setCodEmpresa(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="novo-numcad">Matrícula (NUMCAD)</Label>
+                  <Input id="novo-numcad" type="number" value={numcad} onChange={(e) => setNumcad(e.target.value)} />
+                </div>
+              </div>
               <div className="grid gap-1.5">
                 <Label>Perfil</Label>
                 <Select value={perfil} onValueChange={(v) => setPerfil(v as 'solicitante' | 'administrador')}>
@@ -153,7 +237,9 @@ const GestaoUsuarios = () => {
               </Button>
               <Button
                 onClick={() => createMutation.mutate()}
-                disabled={createMutation.isPending || !email || !nome || senha.length < 8}
+                disabled={
+                  createMutation.isPending || !email || !nome || senha.length < 8 || !codEmpresa || !numcad
+                }
               >
                 {createMutation.isPending ? 'Criando...' : 'Criar'}
               </Button>
@@ -173,6 +259,7 @@ const GestaoUsuarios = () => {
               <TableHead>E-mail</TableHead>
               <TableHead>Perfil</TableHead>
               <TableHead>Ativo</TableHead>
+              <TableHead>Empresa / Matrícula (Oracle)</TableHead>
               <TableHead>Criado em</TableHead>
             </TableRow>
           </TableHeader>
@@ -203,6 +290,14 @@ const GestaoUsuarios = () => {
                     />
                     <Badge variant={u.ativo ? 'default' : 'secondary'}>{u.ativo ? 'Ativo' : 'Inativo'}</Badge>
                   </div>
+                </TableCell>
+                <TableCell>
+                  <IdentidadeOracleCell
+                    usuario={u}
+                    onSalvar={(codEmpresa, numcadValor) =>
+                      updateMutation.mutate({ id: u.id, body: { cod_empresa: codEmpresa, numcad: numcadValor } })
+                    }
+                  />
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {new Date(u.created_at).toLocaleDateString('pt-BR')}

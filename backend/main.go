@@ -364,6 +364,11 @@ func main() {
 	http.HandleFunc("POST /api/erp-bridge/config/generate-api-key", handlers.RequireAuth(withDB(handlers.ERPBridgeGenerateAPIKeyHandler), "administrador"))
 	http.HandleFunc("GET /api/erp-bridge/credentials", withDB(handlers.ERPBridgeCredentialsHandler))
 
+	// Sincronização diária de CC a partir de SFC.SFC_VW_COLABORADORES
+	// (Oracle/FCCORP) — autenticada via X-API-Key (não JWT), chamada pelo
+	// mesmo conector externo que busca as credenciais acima.
+	http.HandleFunc("POST /api/erp-bridge/colaboradores/sincronizar", withDB(handlers.SincronizarColaboradoresOracleHandler))
+
 	// Abrir solicitação (Story 3.1, FR-5/FR-10) — primeira rota do FB_APU05
 	// que não exige perfil `administrador` (RequireAuth(..., "") — qualquer
 	// solicitante autenticado). Só tipo_solicitacao="transferencia" tem

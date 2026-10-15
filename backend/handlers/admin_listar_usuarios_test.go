@@ -11,8 +11,8 @@ import (
 )
 
 func sqlmockRowsListaUsuarios() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "email", "nome", "perfil", "ativo", "created_at"}).
-		AddRow(testAlvoID, "claudio.bezerra@ferreiracosta.com.br", "Claudio Bezerra", "administrador", true, "2026-01-01T00:00:00Z")
+	return sqlmock.NewRows([]string{"id", "email", "nome", "perfil", "ativo", "created_at", "cod_empresa", "numcad"}).
+		AddRow(testAlvoID, "claudio.bezerra@ferreiracosta.com.br", "Claudio Bezerra", "administrador", true, "2026-01-01T00:00:00Z", nil, nil)
 }
 
 func TestListarUsuariosHandler_RejectsWrongMethod(t *testing.T) {
@@ -28,7 +28,7 @@ func TestListarUsuariosHandler_RejectsWrongMethod(t *testing.T) {
 
 func TestListarUsuariosHandler_Succeeds(t *testing.T) {
 	db, mock := newSQLMock(t)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, email, nome, perfil, ativo, created_at FROM usuarios ORDER BY created_at, id LIMIT $1 OFFSET $2")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, email, nome, perfil, ativo, created_at, cod_empresa, numcad FROM usuarios ORDER BY created_at, id LIMIT $1 OFFSET $2")).
 		WithArgs(20, 0).
 		WillReturnRows(sqlmockRowsListaUsuarios())
 

@@ -43,6 +43,14 @@ var uuidFormatRegexp = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-
 type AdminUpdateUsuarioRequest struct {
 	Perfil *string `json:"perfil,omitempty"`
 	Ativo  *bool   `json:"ativo,omitempty"`
+	// CodEmpresa/Numcad (migration 019): identidade em
+	// SFC.SFC_VW_COLABORADORES — editável aqui independente de
+	// perfil/ativo, principalmente para backfill de usuários provisionados
+	// via SSO (que nunca passam pelo formulário de criação local onde esses
+	// campos são obrigatórios). Sempre os dois juntos — um par parcial não
+	// identifica ninguém de verdade.
+	CodEmpresa *int `json:"cod_empresa,omitempty"`
+	Numcad     *int `json:"numcad,omitempty"`
 }
 
 const errMsgUltimoAdministrador = "operação recusada: deixaria o sistema sem nenhum administrador ativo"
@@ -75,12 +83,20 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusBadRequest, "corpo da requisição inválido")
 			return
 		}
-		if req.Perfil == nil && req.Ativo == nil {
-			jsonErr(w, http.StatusBadRequest, "informe ao menos 'perfil' ou 'ativo'")
+		if req.Perfil == nil && req.Ativo == nil && req.CodEmpresa == nil && req.Numcad == nil {
+			jsonErr(w, http.StatusBadRequest, "informe ao menos 'perfil', 'ativo', 'cod_empresa' ou 'numcad'")
 			return
 		}
 		if req.Perfil != nil && *req.Perfil != "administrador" && *req.Perfil != "solicitante" {
 			jsonErr(w, http.StatusBadRequest, "perfil deve ser 'administrador' ou 'solicitante'")
+			return
+		}
+		if (req.CodEmpresa == nil) != (req.Numcad == nil) {
+			jsonErr(w, http.StatusBadRequest, "'cod_empresa' e 'numcad' devem ser enviados juntos")
+			return
+		}
+		if req.CodEmpresa != nil && (*req.CodEmpresa <= 0 || *req.Numcad <= 0) {
+			jsonErr(w, http.StatusBadRequest, "'cod_empresa' e 'numcad' devem ser positivos")
 			return
 		}
 
@@ -113,11 +129,12 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 
 		var perfilAnterior string
 		var ativoAnterior bool
+		var codEmpresaAnterior, numcadAnterior sql.NullInt64
 		// FOR UPDATE: trava a linha-alvo pela duração da transação — ver
 		// Design Notes da spec.
 		err = tx.QueryRow(`
-			SELECT perfil, ativo FROM usuarios WHERE id = $1 FOR UPDATE
-		`, alvoID).Scan(&perfilAnterior, &ativoAnterior)
+			SELECT perfil, ativo, cod_empresa, numcad FROM usuarios WHERE id = $1 FOR UPDATE
+		`, alvoID).Scan(&perfilAnterior, &ativoAnterior, &codEmpresaAnterior, &numcadAnterior)
 		if err == sql.ErrNoRows {
 			jsonErr(w, http.StatusNotFound, "usuário não encontrado")
 			return
@@ -134,6 +151,12 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		ativoNovo := ativoAnterior
 		if req.Ativo != nil {
 			ativoNovo = *req.Ativo
+		}
+		codEmpresaNovo := codEmpresaAnterior
+		numcadNovo := numcadAnterior
+		if req.CodEmpresa != nil {
+			codEmpresaNovo = sql.NullInt64{Int64: int64(*req.CodEmpresa), Valid: true}
+			numcadNovo = sql.NullInt64{Int64: int64(*req.Numcad), Valid: true}
 		}
 
 		// Proteção do último admin (FR-2): se esta mudança tira o usuário-alvo
@@ -186,8 +209,9 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 
 		perfilMudou := perfilNovo != perfilAnterior
 		ativoMudou := ativoNovo != ativoAnterior
+		identidadeMudou := codEmpresaNovo != codEmpresaAnterior || numcadNovo != numcadAnterior
 
-		if !perfilMudou && !ativoMudou {
+		if !perfilMudou && !ativoMudou && !identidadeMudou {
 			// Nada mudou: não é "uma mudança aplicada" (spec), então não grava
 			// auditoria — só confirma o estado atual.
 			if err := tx.Commit(); err != nil {
@@ -195,26 +219,36 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
 			}
-			writeUsuarioJSON(w, alvoID, perfilNovo, ativoNovo)
+			writeUsuarioJSON(w, alvoID, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo)
 			return
 		}
 
 		if _, err = tx.Exec(`
-			UPDATE usuarios SET perfil = $1, ativo = $2, updated_at = now() WHERE id = $3
-		`, perfilNovo, ativoNovo, alvoID); err != nil {
+			UPDATE usuarios SET perfil = $1, ativo = $2, cod_empresa = $3, numcad = $4, updated_at = now() WHERE id = $5
+		`, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo, alvoID); err != nil {
+			if isUniqueViolationOnConstraint(err, "idx_usuarios_cod_empresa_numcad") {
+				jsonErr(w, http.StatusConflict, "já existe um usuário com esse código de empresa + matrícula")
+				return
+			}
 			log.Printf("[Admin] Erro ao atualizar usuário %s: %v", alvoID, err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
 
-		if _, err = tx.Exec(`
-			INSERT INTO usuarios_auditoria
-				(ator_id, usuario_alvo_id, acao, perfil_anterior, perfil_novo, ativo_anterior, ativo_novo)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-		`, atorID, alvoID, auditAction(perfilMudou, ativoMudou), perfilAnterior, perfilNovo, ativoAnterior, ativoNovo); err != nil {
-			log.Printf("[Admin] Erro ao gravar auditoria para %s: %v", alvoID, err)
-			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
-			return
+		// usuarios_auditoria só registra perfil/ativo (FR-2) — mudança só de
+		// identidade (cod_empresa/numcad) não grava evento auditável aqui,
+		// mesmo princípio do "no-op": a auditoria desta tabela é sobre
+		// concessão/revogação de acesso, não sobre dado cadastral.
+		if perfilMudou || ativoMudou {
+			if _, err = tx.Exec(`
+				INSERT INTO usuarios_auditoria
+					(ator_id, usuario_alvo_id, acao, perfil_anterior, perfil_novo, ativo_anterior, ativo_novo)
+				VALUES ($1, $2, $3, $4, $5, $6, $7)
+			`, atorID, alvoID, auditAction(perfilMudou, ativoMudou), perfilAnterior, perfilNovo, ativoAnterior, ativoNovo); err != nil {
+				log.Printf("[Admin] Erro ao gravar auditoria para %s: %v", alvoID, err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
 		}
 
 		if err := tx.Commit(); err != nil {
@@ -226,7 +260,7 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		log.Printf("[Admin] %s atualizou usuário %s: perfil %q->%q, ativo %v->%v",
 			atorID, alvoID, perfilAnterior, perfilNovo, ativoAnterior, ativoNovo)
 
-		writeUsuarioJSON(w, alvoID, perfilNovo, ativoNovo)
+		writeUsuarioJSON(w, alvoID, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo)
 	}
 }
 
@@ -241,21 +275,35 @@ func auditAction(perfilMudou, ativoMudou bool) string {
 	}
 }
 
-func writeUsuarioJSON(w http.ResponseWriter, id, perfil string, ativo bool) {
+func writeUsuarioJSON(w http.ResponseWriter, id, perfil string, ativo bool, codEmpresa, numcad sql.NullInt64) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":     id,
-		"perfil": perfil,
-		"ativo":  ativo,
+		"id":          id,
+		"perfil":      perfil,
+		"ativo":       ativo,
+		"cod_empresa": nullInt64OuNil(codEmpresa),
+		"numcad":      nullInt64OuNil(numcad),
 	})
+}
+
+// nullInt64OuNil converte sql.NullInt64 em interface{} para o encoder JSON
+// devolver `null` (em vez de 0) quando a coluna é NULL — mesmo princípio de
+// nullStringOuNil (fila.go).
+func nullInt64OuNil(v sql.NullInt64) interface{} {
+	if !v.Valid {
+		return nil
+	}
+	return v.Int64
 }
 
 // CreateUsuarioLocalRequest é o corpo de POST /api/admin/usuarios.
 type CreateUsuarioLocalRequest struct {
-	Email  string `json:"email"`
-	Nome   string `json:"nome"`
-	Senha  string `json:"senha"`
-	Perfil string `json:"perfil"`
+	Email      string `json:"email"`
+	Nome       string `json:"nome"`
+	Senha      string `json:"senha"`
+	Perfil     string `json:"perfil"`
+	CodEmpresa int    `json:"cod_empresa"`
+	Numcad     int    `json:"numcad"`
 }
 
 // CreateUsuarioLocalHandler cria uma conta local (e-mail+senha) — a única
@@ -302,6 +350,14 @@ func CreateUsuarioLocalHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusBadRequest, "perfil deve ser 'administrador' ou 'solicitante'")
 			return
 		}
+		// cod_empresa/numcad (migration 019): identidade do colaborador em
+		// SFC.SFC_VW_COLABORADORES (Oracle, FCCORP) — sem isso, a
+		// sincronização diária de CC via ERP Bridge nunca alcança este
+		// usuário (a view não tem e-mail para casar de outro jeito).
+		if req.CodEmpresa <= 0 || req.Numcad <= 0 {
+			jsonErr(w, http.StatusBadRequest, "campos 'cod_empresa' e 'numcad' são obrigatórios e devem ser positivos")
+			return
+		}
 
 		hash, err := HashPassword(req.Senha)
 		if err != nil {
@@ -322,11 +378,15 @@ func CreateUsuarioLocalHandler(db *sql.DB) http.HandlerFunc {
 
 		var novoID string
 		err = tx.QueryRow(`
-			INSERT INTO usuarios (email, nome, perfil, password_hash)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad)
+			VALUES ($1, $2, $3, $4, $5, $6)
 			RETURNING id
-		`, req.Email, req.Nome, req.Perfil, hash).Scan(&novoID)
+		`, req.Email, req.Nome, req.Perfil, hash, req.CodEmpresa, req.Numcad).Scan(&novoID)
 		if err != nil {
+			if isUniqueViolationOnConstraint(err, "idx_usuarios_cod_empresa_numcad") {
+				jsonErr(w, http.StatusConflict, "já existe um usuário com esse código de empresa + matrícula")
+				return
+			}
 			// Violação do índice único idx_usuarios_email_lower (migration 001)
 			// — e-mail já cadastrado (local ou auto-provisionado via SSO).
 			if isUniqueViolation(err) {
@@ -359,11 +419,13 @@ func CreateUsuarioLocalHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":     novoID,
-			"email":  req.Email,
-			"nome":   req.Nome,
-			"perfil": req.Perfil,
-			"ativo":  true,
+			"id":          novoID,
+			"email":       req.Email,
+			"nome":        req.Nome,
+			"perfil":      req.Perfil,
+			"ativo":       true,
+			"cod_empresa": req.CodEmpresa,
+			"numcad":      req.Numcad,
 		})
 	}
 }
@@ -376,15 +438,26 @@ func isUniqueViolation(err error) bool {
 	return ok && pqErr.Code.Name() == "unique_violation"
 }
 
+// isUniqueViolationOnConstraint identifica uma violação de UNIQUE num
+// índice/constraint específico (pelo nome) — usado quando uma mesma
+// instrução pode violar mais de um índice único (email OU
+// idx_usuarios_cod_empresa_numcad), e cada um precisa de mensagem própria.
+func isUniqueViolationOnConstraint(err error, constraintName string) bool {
+	pqErr, ok := err.(*pq.Error)
+	return ok && pqErr.Code.Name() == "unique_violation" && pqErr.Constraint == constraintName
+}
+
 // UsuarioListItem é um item de GET /api/admin/usuarios — nunca inclui
 // password_hash.
 type UsuarioListItem struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	Nome      string `json:"nome"`
-	Perfil    string `json:"perfil"`
-	Ativo     bool   `json:"ativo"`
-	CreatedAt string `json:"created_at"`
+	ID         string `json:"id"`
+	Email      string `json:"email"`
+	Nome       string `json:"nome"`
+	Perfil     string `json:"perfil"`
+	Ativo      bool   `json:"ativo"`
+	CreatedAt  string `json:"created_at"`
+	CodEmpresa *int   `json:"cod_empresa"`
+	Numcad     *int   `json:"numcad"`
 }
 
 // ListarUsuariosHandler — GET /api/admin/usuarios, paginado (pagina/tamanho,
@@ -402,7 +475,7 @@ func ListarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		pagina, tamanho := paginacaoDaQuery(r)
 
 		rows, err := db.Query(`
-			SELECT id, email, nome, perfil, ativo, created_at
+			SELECT id, email, nome, perfil, ativo, created_at, cod_empresa, numcad
 			FROM usuarios ORDER BY created_at, id LIMIT $1 OFFSET $2
 		`, tamanho, (pagina-1)*tamanho)
 		if err != nil {
@@ -415,7 +488,7 @@ func ListarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		items := make([]UsuarioListItem, 0)
 		for rows.Next() {
 			var item UsuarioListItem
-			if err := rows.Scan(&item.ID, &item.Email, &item.Nome, &item.Perfil, &item.Ativo, &item.CreatedAt); err != nil {
+			if err := rows.Scan(&item.ID, &item.Email, &item.Nome, &item.Perfil, &item.Ativo, &item.CreatedAt, &item.CodEmpresa, &item.Numcad); err != nil {
 				log.Printf("[Admin] Erro ao ler usuário: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
