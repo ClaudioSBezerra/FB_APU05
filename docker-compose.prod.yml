@@ -90,6 +90,20 @@ services:
       - "traefik.http.routers.fb-apu05-web.middlewares=fb-apu05-compress"
       - "traefik.http.middlewares.fb-apu05-compress.compress=true"
       - "traefik.http.services.fb-apu05-web.loadbalancer.server.port=80"
+      # Redirect HTTP->HTTPS próprio (19/10): o Coolify gera automaticamente
+      # um router de redirect na entrypoint "http" (nome
+      # "http-0-<hash-do-app>-web"), mas nesta instância (4.0.0-beta.463)
+      # esse router nasce com uma regra inválida —
+      # Host(``) && PathPrefix(`controladoria.fbtax.cloud`) — e o Traefik
+      # nunca consegue registrá-lo (erro reaparece nos logs do proxy a cada
+      # ~1min, continuamente). Em vez de depender do router quebrado do
+      # Coolify, declaramos o nosso próprio (nome diferente, sem colidir):
+      # pega qualquer request em texto puro (porta 80) para este domínio e
+      # manda para https.
+      - "traefik.http.routers.fb-apu05-web-http.rule=Host(`controladoria.fbtax.cloud`)"
+      - "traefik.http.routers.fb-apu05-web-http.entrypoints=http"
+      - "traefik.http.routers.fb-apu05-web-http.middlewares=fb-apu05-redirect-https"
+      - "traefik.http.middlewares.fb-apu05-redirect-https.redirectscheme.scheme=https"
 
   # Banco de Dados
   db:
