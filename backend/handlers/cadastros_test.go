@@ -60,9 +60,9 @@ func TestImportarCadastroHandler_Success(t *testing.T) {
 	csv := "\xEF\xBB\xBFcodigo;nome\nD1;Divisao Um\nD2;Divisao Dois\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_divisoes").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM divisoes)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
@@ -104,9 +104,9 @@ func TestImportarCadastroHandler_TabelaNaoVazia(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_divisoes").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM divisoes)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectRollback()
@@ -127,15 +127,76 @@ func TestImportarCadastroHandler_TabelaNaoVazia(t *testing.T) {
 	}
 }
 
+// TestImportarCadastroHandler_LockJaAdquirida (20/10) cobre
+// pg_try_advisory_xact_lock devolvendo false (já existe uma importação em
+// andamento para este {tipo}) -> 409 imediato, SEM esperar a trava liberar
+// (a versão antiga, bloqueante, prendia a conexão desta segunda tentativa
+// para sempre — ver comentário em ImportarCadastroHandler). Nenhuma query
+// além da trava e do rollback.
+func TestImportarCadastroHandler_LockJaAdquirida(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_divisoes").
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(false))
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "divisoes", "", "codigo;nome\nD1;Divisao Um\n")
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("esperado 409, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "já existe uma importação em andamento") {
+		t.Fatalf("corpo não cita a importação em andamento: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_ClienteDesistiu (20/10) cobre o corte no meio
+// do loop de linhas quando o contexto da requisição já foi cancelado (ex.
+// proxy encerrou a conexão por timeout, cliente não está mais esperando) —
+// a carga para na primeira linha, nunca chega a commitar, e NENHUMA linha
+// depois da primeira gera query (sem isso, uma carga de dezenas de
+// milhares de linhas continuaria rodando sozinha até o fim).
+func TestImportarCadastroHandler_ClienteDesistiu(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_divisoes").
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM divisoes)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectRollback()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "divisoes", "", "codigo;nome\nD1;Divisao Um\nD2;Divisao Dois\n")
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas (não deveria ter tentado inserir nada): %v", err)
+	}
+}
+
 // TestImportarCadastroHandler_CabecalhoInvalido cobre "Import com cabeçalho
 // errado": nada é escrito, 400 citando as colunas esperadas.
 func TestImportarCadastroHandler_CabecalhoInvalido(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_divisoes").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM divisoes)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectRollback()
@@ -163,9 +224,9 @@ func TestImportarCadastroHandler_LinhaInvalida(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_divisoes").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM divisoes)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectRollback()
@@ -219,9 +280,9 @@ func TestImportarCadastroHandler_CentrosCusto_Success(t *testing.T) {
 	csv := "codigo;nome;divisao_codigo;filial\nCC1;Centro Um;D1;F1\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_centros-custo").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM centros_custo)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
@@ -264,9 +325,9 @@ func TestImportarCadastroHandler_Alcadas_Success(t *testing.T) {
 	csv := "filial;centro_custo_codigo;valor_minimo;valor_maximo;papel_aprovador;ativo\nF1;CC1;100;;Gerente;true\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_alcadas").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM alcadas)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
@@ -305,9 +366,9 @@ func TestImportarCadastroHandler_CentrosCusto_DivisaoNaoEncontrada(t *testing.T)
 	csv := "codigo;nome;divisao_codigo;filial\nCC1;Centro Um;D-INEXISTENTE;\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_centros-custo").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM centros_custo)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM divisoes WHERE codigo = $1")).
@@ -341,9 +402,9 @@ func TestImportarCadastroHandler_Alcadas_FaixaInvertida(t *testing.T) {
 	csv := "filial;centro_custo_codigo;valor_minimo;valor_maximo;papel_aprovador;ativo\nF1;CC1;500;100;Gerente;true\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_alcadas").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM alcadas)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectRollback()
@@ -374,9 +435,9 @@ func TestImportarCadastroHandler_Contas_Success(t *testing.T) {
 	csv := "plano;codigo;nome\nBIFC;1000;Caixa\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_contas").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM contas)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO contas (plano, codigo, nome) VALUES ($1, $2, $3) RETURNING id")).
@@ -409,9 +470,9 @@ func TestImportarCadastroHandler_Contas_PlanoInvalido(t *testing.T) {
 	csv := "plano;codigo;nome\nXYZ;1000;Caixa\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_contas").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM contas)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectRollback()
@@ -442,9 +503,9 @@ func TestImportarCadastroHandler_ClassesImobilizado_Success(t *testing.T) {
 	csv := "codigo;nome\nCI1;Veiculos\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_classes-imobilizado").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM classes_imobilizado)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO classes_imobilizado (codigo, nome) VALUES ($1, $2) RETURNING id")).
@@ -478,9 +539,9 @@ func TestImportarCadastroHandler_PapelPessoa_Success(t *testing.T) {
 	csv := "papel;pessoa_nome\nGerente;Fulano de Tal\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_papel-pessoa").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM papel_pessoa)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO papel_pessoa (papel, pessoa_nome) VALUES ($1, $2) RETURNING id")).
@@ -514,9 +575,9 @@ func TestImportarCadastroHandler_Feriados_Success(t *testing.T) {
 	csv := "data;descricao\n2024-01-01;Confraternização Universal\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_feriados").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM feriados)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO feriados (data, descricao) VALUES ($1, $2) RETURNING id")).
@@ -1088,9 +1149,9 @@ func TestImportarCadastroHandler_CcExcecao_Success(t *testing.T) {
 	csv := "colaborador_email;centro_custo_codigo\nFulano@Exemplo.com;cc1\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_cc-excecao").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
@@ -1136,9 +1197,9 @@ func TestImportarCadastroHandler_CcExcecao_TabelaNaoVazia(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_cc-excecao").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectRollback()
@@ -1168,9 +1229,9 @@ func TestImportarCadastroHandler_CcExcecao_EmailNaoEncontrado(t *testing.T) {
 	csv := "colaborador_email;centro_custo_codigo\nfulano@exemplo.com;CC1\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_cc-excecao").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
@@ -1203,9 +1264,9 @@ func TestImportarCadastroHandler_CcExcecao_EmailVazio(t *testing.T) {
 	csv := "colaborador_email;centro_custo_codigo\n;CC1\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_cc-excecao").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectRollback()
@@ -1235,9 +1296,9 @@ func TestImportarCadastroHandler_CcExcecao_CentroCustoNaoEncontrado(t *testing.T
 	csv := "colaborador_email;centro_custo_codigo\nfulano@exemplo.com;CC-INEXISTENTE\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_cc-excecao").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
@@ -1273,9 +1334,9 @@ func TestImportarCadastroHandler_CcExcecao_ParDuplicado(t *testing.T) {
 	csv := "colaborador_email;centro_custo_codigo\nfulano@exemplo.com;CC1\nfulano@exemplo.com;CC1\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_cc-excecao").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM cc_excecao)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
@@ -1583,9 +1644,9 @@ func TestImportarCadastroHandler_RegrasAprovacao_Success(t *testing.T) {
 		"1;F1;CC1;1000;;;Gerente Financeiro;true\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_regras-aprovacao").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM regras_aprovacao)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
@@ -1628,9 +1689,9 @@ func TestImportarCadastroHandler_RegrasAprovacao_SemAprovador(t *testing.T) {
 		"1;F1;CC1;1000;;;;true\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_regras-aprovacao").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM regras_aprovacao)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectRollback()
@@ -1661,9 +1722,9 @@ func TestImportarCadastroHandler_GerentesAprovacao_FallbackDivisao(t *testing.T)
 		";D1;;Gerentes Regionais de Logística;;true\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_gerentes-aprovacao").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM gerentes_aprovacao)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
@@ -1711,9 +1772,9 @@ func TestImportarCadastroHandler_GerentesAprovacao_CCEDivisaoAoMesmoTempo(t *tes
 		"CC1;D1;;Gerente;;true\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_gerentes-aprovacao").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM gerentes_aprovacao)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM centros_custo WHERE UPPER(codigo) = UPPER($1)")).
@@ -1756,9 +1817,9 @@ func TestImportarCadastroHandler_AutorizadoresFormulario_Success(t *testing.T) {
 		"CC1;1000;5000;fulano@exemplo.com;true\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_autorizadores-formulario").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM autorizadores_formulario)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
@@ -1808,9 +1869,9 @@ func TestImportarCadastroHandler_AutorizadoresFormulario_EmailNaoEncontrado(t *t
 		"CC1;1000;5000;fulano@exemplo.com;true\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_autorizadores-formulario").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM autorizadores_formulario)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
@@ -1889,9 +1950,9 @@ func TestImportarCadastroHandler_LocaisObra_Success(t *testing.T) {
 		"LO1;Obra Matriz\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_locais-obra").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta(
@@ -1930,9 +1991,9 @@ func TestImportarCadastroHandler_SubgruposDespesa_Success(t *testing.T) {
 		"SG1;Mão de obra\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_subgrupos-despesa").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta(
@@ -1976,9 +2037,9 @@ func TestImportarCadastroHandler_ObraOrdens_Success(t *testing.T) {
 		"OI-001;LO1;SG1;Reforma;Direto\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_obra-ordens").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM obra_ordens)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM locais_obra WHERE UPPER(codigo) = UPPER($1)")).
@@ -2027,9 +2088,9 @@ func TestImportarCadastroHandler_ObraOrdens_LocalObraNaoEncontrado(t *testing.T)
 		"OI-001;LO-INEXISTENTE;SG1;Reforma;Direto\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_obra-ordens").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM obra_ordens)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM locais_obra WHERE UPPER(codigo) = UPPER($1)")).
@@ -2066,9 +2127,9 @@ func TestImportarCadastroHandler_AprovadoresObra_Success(t *testing.T) {
 		"fulano@exemplo.com;50000;true\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_aprovadores-obra").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM aprovadores_obra)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
@@ -2114,9 +2175,9 @@ func TestImportarCadastroHandler_AprovadoresObra_EmailNaoEncontrado(t *testing.T
 		"fulano@exemplo.com;50000;true\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_aprovadores-obra").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM aprovadores_obra)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)")).
@@ -2344,9 +2405,9 @@ func TestImportarCadastroHandler_Fornecedores_Success(t *testing.T) {
 	csv := "cgc;razsoc;fantas;uf\n11222333000181;Fulano Ltda;Fulano;SP\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_fornecedores").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM fornecedores)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO fornecedores (cgc, razsoc, fantas, uf) VALUES ($1, $2, $3, $4) RETURNING id")).
@@ -2380,9 +2441,9 @@ func TestImportarCadastroHandler_Fornecedores_FantasUfVazios(t *testing.T) {
 	csv := "cgc;razsoc;fantas;uf\n22333444000199;Ciclano SA;;\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_fornecedores").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM fornecedores)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO fornecedores (cgc, razsoc, fantas, uf) VALUES ($1, $2, $3, $4) RETURNING id")).
@@ -2417,9 +2478,9 @@ func TestImportarCadastroHandler_Fornecedores_CabecalhoCaixaAlta(t *testing.T) {
 	csv := "CGC;RAZSOC;FANTAS;UF\n11222333000181;Fulano Ltda;Fulano;SP\n"
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
 		WithArgs("cadastro_import_fornecedores").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM fornecedores)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO fornecedores (cgc, razsoc, fantas, uf) VALUES ($1, $2, $3, $4) RETURNING id")).

@@ -1177,10 +1177,22 @@ func ImportarCadastroHandler(db *sql.DB) http.HandlerFunc {
 		// Advisory lock por {tipo}: serializa duas importações concorrentes do
 		// MESMO tipo (duas abas do admin, por exemplo) — sem isso, as duas
 		// podiam ler "tabela vazia" ao mesmo tempo e as duas tentarem
-		// popular.
-		if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext($1))`, "cadastro_import_"+tipo); err != nil {
+		// popular. TRY (não bloqueante, 20/10): a versão bloqueante
+		// (pg_advisory_xact_lock) prendia a conexão da segunda tentativa
+		// esperando pra sempre — Postgres não tem timeout nisso por padrão —
+		// e cada nova tentativa empilhava mais uma conexão presa no pool
+		// (dbApp, main.go), capaz de derrubar o sistema inteiro numa carga
+		// grande (ex. fornecedores, dezenas de milhares de linhas) se o
+		// cliente desistir (504) e tentar de novo enquanto a primeira ainda
+		// está rodando. Agora falha rápido com 409 em vez de empilhar.
+		var lockAdquirida bool
+		if err := tx.QueryRow(`SELECT pg_try_advisory_xact_lock(hashtext($1))`, "cadastro_import_"+tipo).Scan(&lockAdquirida); err != nil {
 			log.Printf("[Cadastros] Erro ao adquirir advisory lock (importar %s): %v", tipo, err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		if !lockAdquirida {
+			jsonErr(w, http.StatusConflict, "já existe uma importação em andamento para este cadastro — aguarde terminar e tente de novo")
 			return
 		}
 
@@ -1206,6 +1218,16 @@ func ImportarCadastroHandler(db *sql.DB) http.HandlerFunc {
 
 		importados := 0
 		for _, linha := range linhas {
+			// Corta a carga se o cliente já desistiu (ex. proxy encerrou a
+			// conexão por timeout) — sem isso, uma carga de dezenas de
+			// milhares de linhas continua rodando sozinha até o fim mesmo sem
+			// ninguém esperando a resposta, prendendo a conexão/transação
+			// (e a advisory lock acima) por todo esse tempo à toa.
+			if r.Context().Err() != nil {
+				log.Printf("[Cadastros] Cliente desistiu durante importação de %s (linha %d) — abortando", tipo, linha.Numero)
+				return
+			}
+
 			valores, err := def.DecodeCSV(tx, linha.Campos)
 			if err != nil {
 				jsonErr(w, http.StatusBadRequest, fmt.Sprintf("linha %d: %v", linha.Numero, err))
