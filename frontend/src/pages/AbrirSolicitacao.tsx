@@ -11,6 +11,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Search } from 'lucide-react';
 
 // Tela de abertura de solicitação (Epic 3 — Stories 3.1 a 3.5). Cobre os 5
 // tipos aceitos por POST /api/solicitacoes (handlers/solicitacoes.go):
@@ -144,20 +152,26 @@ interface FornecedorOpcao {
   uf: string;
 }
 
-// CampoFornecedor (20/10) — autocomplete contra o cadastro de fornecedores
-// sincronizado do Oracle (GET /api/formulario/fornecedores?busca=,
-// handlers/fornecedores_oracle_sync.go), no lugar do texto livre anterior.
-// Guarda só a razão social no campo `fornecedor` — continua um VARCHAR(255)
-// livre em solicitacoes, igual ao formulário legado, só a forma de
-// preencher que muda. Debounce de 300ms: a rota é ILIKE sem índice de
-// trigram, não dá pra disparar uma query por tecla.
+// CampoFornecedor (20/10) — texto livre (continua um VARCHAR(255) livre em
+// solicitacoes, igual ao formulário legado — fornecedor novo, ainda não
+// sincronizado do Oracle, pode ser digitado direto) + popup de consulta
+// contra o cadastro de fornecedores (GET /api/formulario/fornecedores?
+// busca=cgc/razsoc/fantas) — mesmo "zoom"/lookup clássico de ERP: digita
+// CGC ou nome, o resultado mais próximo do topo da lista fica destacado
+// (seta ↑/↓ troca, Enter ou clique confirma), igual ao pedido do negócio.
+// Debounce de 300ms: a rota é ILIKE sem índice de trigram, não dá pra
+// disparar uma query por tecla.
 function CampoFornecedor({ valor, onChange }: { valor: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
   const [busca, setBusca] = useState('');
   const [buscaDebounced, setBuscaDebounced] = useState('');
-  const [trocando, setTrocando] = useState(false);
+  const [indice, setIndice] = useState(0);
 
   useEffect(() => {
-    const t = setTimeout(() => setBuscaDebounced(busca.trim()), 300);
+    const t = setTimeout(() => {
+      setBuscaDebounced(busca.trim());
+      setIndice(0);
+    }, 300);
     return () => clearTimeout(t);
   }, [busca]);
 
@@ -165,61 +179,87 @@ function CampoFornecedor({ valor, onChange }: { valor: string; onChange: (v: str
     queryKey: ['fornecedores', buscaDebounced],
     queryFn: () =>
       fetchJSON<{ items: FornecedorOpcao[] }>(`/api/formulario/fornecedores?busca=${encodeURIComponent(buscaDebounced)}`),
-    enabled: buscaDebounced.length >= 2,
+    enabled: open && buscaDebounced.length >= 2,
   });
+  const resultados = data?.items ?? [];
+
+  function abrirPopup() {
+    setBusca('');
+    setIndice(0);
+    setOpen(true);
+  }
 
   function selecionar(f: FornecedorOpcao) {
     onChange(f.razsoc);
-    setTrocando(false);
-    setBusca('');
+    setOpen(false);
   }
 
-  if (valor && !trocando) {
-    return (
-      <div className="grid gap-1.5">
-        <Label>Fornecedor da despesa</Label>
-        <div className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate rounded-md border border-border px-3 py-2 text-sm">{valor}</span>
-          <Button type="button" size="sm" variant="outline" onClick={() => { setTrocando(true); setBusca(''); }}>
-            Trocar
-          </Button>
-        </div>
-      </div>
-    );
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setIndice((i) => Math.min(i + 1, resultados.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setIndice((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter' && resultados[indice]) {
+      e.preventDefault();
+      selecionar(resultados[indice]);
+    }
   }
 
   return (
     <div className="grid gap-1.5">
       <Label>Fornecedor da despesa</Label>
-      <Input
-        placeholder="Opcional — buscar por nome ou CNPJ..."
-        value={busca}
-        onChange={(e) => setBusca(e.target.value)}
-      />
-      {buscaDebounced.length >= 2 && (
-        <div className="max-h-40 overflow-y-auto rounded-md border border-border">
-          {isFetching && <p className="p-2 text-xs text-muted-foreground">Buscando...</p>}
-          {!isFetching && (data?.items.length ?? 0) === 0 && (
-            <p className="p-2 text-xs text-muted-foreground">Nenhum resultado</p>
-          )}
-          {(data?.items ?? []).map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              className="block w-full px-3 py-1.5 text-left text-sm hover:bg-muted"
-              onClick={() => selecionar(f)}
-            >
-              {f.razsoc}
-              {f.fantas ? ` (${f.fantas})` : ''} — {f.cgc}
-            </button>
-          ))}
-        </div>
-      )}
-      {valor && (
-        <Button type="button" size="sm" variant="ghost" className="self-start" onClick={() => { onChange(''); setTrocando(false); }}>
-          Limpar
+      <div className="flex gap-2">
+        <Input value={valor} onChange={(e) => onChange(e.target.value)} placeholder="Opcional" />
+        <Button type="button" variant="outline" size="icon" onClick={abrirPopup} title="Consultar fornecedor cadastrado">
+          <Search className="h-4 w-4" />
         </Button>
-      )}
+      </div>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Consultar fornecedor</DialogTitle>
+          </DialogHeader>
+          <Input
+            autoFocus
+            placeholder="Digite o CNPJ ou a razão social..."
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+          <div className="max-h-72 overflow-y-auto rounded-md border border-border">
+            {buscaDebounced.length < 2 && (
+              <p className="p-3 text-xs text-muted-foreground">Digite ao menos 2 caracteres.</p>
+            )}
+            {buscaDebounced.length >= 2 && isFetching && (
+              <p className="p-3 text-xs text-muted-foreground">Buscando...</p>
+            )}
+            {buscaDebounced.length >= 2 && !isFetching && resultados.length === 0 && (
+              <p className="p-3 text-xs text-muted-foreground">Nenhum resultado</p>
+            )}
+            {resultados.map((f, i) => (
+              <button
+                key={f.id}
+                type="button"
+                className={`block w-full px-3 py-2 text-left text-sm ${i === indice ? 'bg-muted' : 'hover:bg-muted/60'}`}
+                onMouseEnter={() => setIndice(i)}
+                onClick={() => selecionar(f)}
+              >
+                <span className="font-medium">{f.razsoc}</span>
+                {f.fantas ? ` (${f.fantas})` : ''} — {f.cgc}
+                {f.uf ? ` — ${f.uf}` : ''}
+              </button>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+              Cancelar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
