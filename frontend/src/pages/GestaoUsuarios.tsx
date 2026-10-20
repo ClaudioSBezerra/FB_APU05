@@ -53,6 +53,11 @@ interface Usuario {
   numcad: number | null;
   centro_custo_id: string | null;
   centro_custo_nome: string | null;
+  // aprovador (migration 020): libera o usuário como autorizador em
+  // qualquer CC/faixa/teto, sem precisar de cadastro em
+  // autorizadores_formulario/aprovadores_obra (Cadastros Mestres) — ver
+  // internal/aprovacao, resolveAprovadorGlobal.
+  aprovador: boolean;
 }
 
 interface CentroCusto {
@@ -219,7 +224,7 @@ const GestaoUsuarios = () => {
       body,
     }: {
       id: string;
-      body: Partial<Pick<Usuario, 'perfil' | 'ativo' | 'cod_empresa' | 'numcad'>> & {
+      body: Partial<Pick<Usuario, 'perfil' | 'ativo' | 'cod_empresa' | 'numcad' | 'aprovador'>> & {
         nome?: string;
         email?: string;
         centro_custo_id?: string;
@@ -459,6 +464,7 @@ const GestaoUsuarios = () => {
               <TableHead>E-mail</TableHead>
               <TableHead>Perfil</TableHead>
               <TableHead>Ativo</TableHead>
+              <TableHead>Aprovador</TableHead>
               <TableHead>Empresa / Matrícula (Oracle)</TableHead>
               <TableHead>Centro de custo</TableHead>
               <TableHead>Criado em</TableHead>
@@ -491,6 +497,15 @@ const GestaoUsuarios = () => {
                       onCheckedChange={(checked) => updateMutation.mutate({ id: u.id, body: { ativo: checked } })}
                     />
                     <Badge variant={u.ativo ? 'default' : 'secondary'}>{u.ativo ? 'Ativo' : 'Inativo'}</Badge>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2" title="Libera o usuário como autorizador em qualquer centro de custo/faixa/teto, sem precisar cadastrá-lo em Cadastros Mestres">
+                    <Switch
+                      checked={u.aprovador}
+                      onCheckedChange={(checked) => updateMutation.mutate({ id: u.id, body: { aprovador: checked } })}
+                    />
+                    {u.aprovador && <Badge variant="default">Aprovador</Badge>}
                   </div>
                 </TableCell>
                 <TableCell>

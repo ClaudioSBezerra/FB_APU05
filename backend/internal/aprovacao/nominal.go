@@ -36,8 +36,10 @@ func NovoAutorizadorNominal(db DBTX) *AutorizadorNominal {
 // linha ativa que case `centro_custo_codigo` da solicitação,
 // `colaborador_id = autorizador_id` escolhido pelo solicitante, e
 // `valor_minimo <= valor <= valor_maximo` (valor_maximo nulo = sem teto).
-// Sem match -> ErrAutorizadorInvalido; com match -> Aprovador Tipo="pessoa"
-// com ColaboradorID preenchido.
+// Sem match nessa tabela -> cai no fallback de aprovador global
+// (usuarios.aprovador=true, ver resolveAprovadorGlobal) antes de devolver
+// ErrAutorizadorInvalido. Com match -> Aprovador Tipo="pessoa" com
+// ColaboradorID preenchido.
 func (a *AutorizadorNominal) Resolve(s Solicitacao) (Aprovador, error) {
 	if s.TipoSolicitacao == "obras" {
 		return a.resolveObras(s)
@@ -55,30 +57,68 @@ func (a *AutorizadorNominal) Resolve(s Solicitacao) (Aprovador, error) {
 		ORDER BY valor_minimo DESC, id
 		LIMIT 1
 	`, s.CentroCustoCodigo, s.AutorizadorEscolhidoID, s.Valor).Scan(&id)
-	if err == sql.ErrNoRows {
-		return Aprovador{}, &ErrAutorizadorInvalido{CentroCusto: s.CentroCustoCodigo}
-	}
-	if err != nil {
+	switch {
+	case err == nil:
+		versao, err := versaoDoCadastro(a.db, "autorizadores-formulario", id)
+		if err != nil {
+			return Aprovador{}, err
+		}
+		nome, err := nomeColaborador(a.db, s.AutorizadorEscolhidoID)
+		if err != nil {
+			return Aprovador{}, err
+		}
+		cid := s.AutorizadorEscolhidoID
+		return Aprovador{
+			Tipo:          TipoPessoa,
+			Nome:          nome,
+			ColaboradorID: &cid,
+			Motivo:        "autorizador nominal validado para o CC/faixa de valor",
+			RegraID:       id,
+			RegraVersao:   versao,
+		}, nil
+	case err == sql.ErrNoRows:
+		return a.resolveAprovadorGlobal(s.AutorizadorEscolhidoID, s.CentroCustoCodigo)
+	default:
 		return Aprovador{}, fmt.Errorf("aprovacao: autorizadores_formulario: %w", err)
 	}
+}
 
-	versao, err := versaoDoCadastro(a.db, "autorizadores-formulario", id)
+// resolveAprovadorGlobal (20/10, Gestão de Usuários) é o fallback de
+// AutorizadorNominal quando o `autorizador_id` escolhido não casa nenhuma
+// linha de `autorizadores_formulario`/`aprovadores_obra`: libera o
+// colaborador mesmo assim se ele estiver marcado `usuarios.aprovador = true`
+// — pessoas com alçada reconhecida em qualquer CC/faixa/teto (ex. diretoria),
+// sem precisar de cadastro específico por CC. Nunca sintetiza um Aprovador
+// quando nem isso casa (usuário inexistente ou aprovador=false) -> mesmo
+// ErrAutorizadorInvalido de antes. RegraID/RegraVersao não apontam para
+// nenhuma linha de cadastro_historico (não existe uma aqui) — usam o
+// próprio id do usuário e versão fixa 1, só para satisfazer os campos
+// não-nulos de Aprovador; Motivo identifica a origem para auditoria.
+func (a *AutorizadorNominal) resolveAprovadorGlobal(autorizadorID, centroCustoParaErro string) (Aprovador, error) {
+	var ehAprovador bool
+	err := a.db.QueryRow(`SELECT aprovador FROM usuarios WHERE id = $1`, autorizadorID).Scan(&ehAprovador)
+	if err == sql.ErrNoRows {
+		return Aprovador{}, &ErrAutorizadorInvalido{CentroCusto: centroCustoParaErro}
+	}
+	if err != nil {
+		return Aprovador{}, fmt.Errorf("aprovacao: checar usuarios.aprovador: %w", err)
+	}
+	if !ehAprovador {
+		return Aprovador{}, &ErrAutorizadorInvalido{CentroCusto: centroCustoParaErro}
+	}
+
+	nome, err := nomeColaborador(a.db, autorizadorID)
 	if err != nil {
 		return Aprovador{}, err
 	}
-	nome, err := nomeColaborador(a.db, s.AutorizadorEscolhidoID)
-	if err != nil {
-		return Aprovador{}, err
-	}
-
-	cid := s.AutorizadorEscolhidoID
+	cid := autorizadorID
 	return Aprovador{
 		Tipo:          TipoPessoa,
 		Nome:          nome,
 		ColaboradorID: &cid,
-		Motivo:        "autorizador nominal validado para o CC/faixa de valor",
-		RegraID:       id,
-		RegraVersao:   versao,
+		Motivo:        "aprovador liberado diretamente em Gestão de Usuários (sem CC/faixa específico)",
+		RegraID:       cid,
+		RegraVersao:   1,
 	}, nil
 }
 
@@ -87,7 +127,9 @@ func (a *AutorizadorNominal) Resolve(s Solicitacao) (Aprovador, error) {
 // solicitante e `teto >= valor_total` da solicitação. Obras usa lista fixa
 // própria (11-12 pessoas) com teto de alçada individual por pessoa (Epic 3
 // context) — nunca a mesma tabela/critério de CC-faixa de
-// `autorizadores_formulario`. Sem match -> ErrAutorizadorInvalido com
+// `autorizadores_formulario`. Sem match nessa tabela -> cai no mesmo
+// fallback de aprovador global do branch inclusao/imobilizado (ver
+// resolveAprovadorGlobal) antes de devolver ErrAutorizadorInvalido com
 // CentroCusto="" (sinaliza para Error() a mensagem de teto individual, não
 // de CC/faixa).
 func (a *AutorizadorNominal) resolveObras(s Solicitacao) (Aprovador, error) {
@@ -101,29 +143,28 @@ func (a *AutorizadorNominal) resolveObras(s Solicitacao) (Aprovador, error) {
 		ORDER BY teto ASC, id
 		LIMIT 1
 	`, s.AutorizadorEscolhidoID, s.Valor).Scan(&id)
-	if err == sql.ErrNoRows {
-		return Aprovador{}, &ErrAutorizadorInvalido{}
-	}
-	if err != nil {
+	switch {
+	case err == nil:
+		versao, err := versaoDoCadastro(a.db, "aprovadores-obra", id)
+		if err != nil {
+			return Aprovador{}, err
+		}
+		nome, err := nomeColaborador(a.db, s.AutorizadorEscolhidoID)
+		if err != nil {
+			return Aprovador{}, err
+		}
+		cid := s.AutorizadorEscolhidoID
+		return Aprovador{
+			Tipo:          TipoPessoa,
+			Nome:          nome,
+			ColaboradorID: &cid,
+			Motivo:        "autorizador nominal validado contra o teto de alçada individual",
+			RegraID:       id,
+			RegraVersao:   versao,
+		}, nil
+	case err == sql.ErrNoRows:
+		return a.resolveAprovadorGlobal(s.AutorizadorEscolhidoID, "")
+	default:
 		return Aprovador{}, fmt.Errorf("aprovacao: aprovadores_obra: %w", err)
 	}
-
-	versao, err := versaoDoCadastro(a.db, "aprovadores-obra", id)
-	if err != nil {
-		return Aprovador{}, err
-	}
-	nome, err := nomeColaborador(a.db, s.AutorizadorEscolhidoID)
-	if err != nil {
-		return Aprovador{}, err
-	}
-
-	cid := s.AutorizadorEscolhidoID
-	return Aprovador{
-		Tipo:          TipoPessoa,
-		Nome:          nome,
-		ColaboradorID: &cid,
-		Motivo:        "autorizador nominal validado contra o teto de alçada individual",
-		RegraID:       id,
-		RegraVersao:   versao,
-	}, nil
 }

@@ -8,6 +8,7 @@ package aprovacao
 // sqlmock de calculado_test.go (Review Triage Log da spec 3.3).
 
 import (
+	"database/sql"
 	"errors"
 	"regexp"
 	"testing"
@@ -127,6 +128,9 @@ func TestAutorizadorNominal_SemMatch(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario")).
 		WithArgs("CC1", "colab-1", 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT aprovador FROM usuarios WHERE id = $1")).
+		WithArgs("colab-1").
+		WillReturnRows(sqlmock.NewRows([]string{"aprovador"}).AddRow(false))
 
 	nominal := NovoAutorizadorNominal(db)
 	_, err := nominal.Resolve(baseSolicitacaoNominal())
@@ -139,6 +143,69 @@ func TestAutorizadorNominal_SemMatch(t *testing.T) {
 	}
 	if invalido.CentroCusto != "CC1" {
 		t.Fatalf("CentroCusto inesperado: %+v", invalido)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAutorizadorNominal_AprovadorGlobal_SemCadastroEmFormulario cobre o
+// fallback de aprovador global (20/10, Gestão de Usuários): sem match em
+// autorizadores_formulario, mas usuarios.aprovador=true -> Aprovador válido
+// em vez de ErrAutorizadorInvalido.
+func TestAutorizadorNominal_AprovadorGlobal_SemCadastroEmFormulario(t *testing.T) {
+	db, mock, closeFn := newAprovacaoSQLMock(t)
+	defer closeFn()
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario")).
+		WithArgs("CC1", "colab-1", 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT aprovador FROM usuarios WHERE id = $1")).
+		WithArgs("colab-1").
+		WillReturnRows(sqlmock.NewRows([]string{"aprovador"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT nome FROM usuarios WHERE id = $1")).
+		WithArgs("colab-1").
+		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Diretor Aprovador"))
+
+	nominal := NovoAutorizadorNominal(db)
+	aprovador, err := nominal.Resolve(baseSolicitacaoNominal())
+	if err != nil {
+		t.Fatalf("esperado sucesso, obtido erro: %v", err)
+	}
+	if aprovador.Tipo != TipoPessoa || aprovador.ColaboradorID == nil || *aprovador.ColaboradorID != "colab-1" {
+		t.Fatalf("Aprovador inesperado: %+v", aprovador)
+	}
+	if aprovador.RegraID != "colab-1" || aprovador.RegraVersao != 1 {
+		t.Fatalf("RegraID/RegraVersao inesperados: %+v", aprovador)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestAutorizadorNominal_Obras_AprovadorGlobal_SemCadastro cobre o mesmo
+// fallback no branch de obras (sem CC, só teto individual).
+func TestAutorizadorNominal_Obras_AprovadorGlobal_SemCadastro(t *testing.T) {
+	db, mock, closeFn := newAprovacaoSQLMock(t)
+	defer closeFn()
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM aprovadores_obra")).
+		WithArgs("colab-1", 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT aprovador FROM usuarios WHERE id = $1")).
+		WithArgs("colab-1").
+		WillReturnRows(sqlmock.NewRows([]string{"aprovador"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT nome FROM usuarios WHERE id = $1")).
+		WithArgs("colab-1").
+		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Diretor Aprovador"))
+
+	nominal := NovoAutorizadorNominal(db)
+	aprovador, err := nominal.Resolve(baseSolicitacaoObras())
+	if err != nil {
+		t.Fatalf("esperado sucesso, obtido erro: %v", err)
+	}
+	if aprovador.Tipo != TipoPessoa || aprovador.ColaboradorID == nil || *aprovador.ColaboradorID != "colab-1" {
+		t.Fatalf("Aprovador inesperado: %+v", aprovador)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
@@ -285,6 +352,9 @@ func TestAutorizadorNominal_Obras_TetoInsuficiente(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("FROM aprovadores_obra")).
 		WithArgs("colab-1", 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT aprovador FROM usuarios WHERE id = $1")).
+		WithArgs("colab-1").
+		WillReturnRows(sqlmock.NewRows([]string{"aprovador"}).AddRow(false))
 
 	nominal := NovoAutorizadorNominal(db)
 	_, err := nominal.Resolve(baseSolicitacaoObras())
@@ -318,6 +388,9 @@ func TestAutorizadorNominal_Obras_SemCadastro(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("FROM aprovadores_obra")).
 		WithArgs("colab-inexistente", 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT aprovador FROM usuarios WHERE id = $1")).
+		WithArgs("colab-inexistente").
+		WillReturnError(sql.ErrNoRows)
 
 	s := baseSolicitacaoObras()
 	s.AutorizadorEscolhidoID = "colab-inexistente"

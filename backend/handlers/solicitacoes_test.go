@@ -938,6 +938,9 @@ func TestAbrirSolicitacaoHandler_Inclusao_AutorizadorForaDoCCOuFaixa(t *testing.
 	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario")).
 		WithArgs("CC1", testSolicitacaoAutorizadorID, 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT aprovador FROM usuarios WHERE id = $1")).
+		WithArgs(testSolicitacaoAutorizadorID).
+		WillReturnRows(sqlmock.NewRows([]string{"aprovador"}).AddRow(false))
 	mock.ExpectRollback()
 
 	handler := AbrirSolicitacaoHandler(db)
@@ -1281,6 +1284,9 @@ func TestAbrirSolicitacaoHandler_Imobilizado_AutorizadorForaDoCCOuFaixa(t *testi
 	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario")).
 		WithArgs("CC1", testSolicitacaoAutorizadorID, 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT aprovador FROM usuarios WHERE id = $1")).
+		WithArgs(testSolicitacaoAutorizadorID).
+		WillReturnRows(sqlmock.NewRows([]string{"aprovador"}).AddRow(false))
 	mock.ExpectRollback()
 
 	handler := AbrirSolicitacaoHandler(db)
@@ -1708,6 +1714,9 @@ func TestAbrirSolicitacaoHandler_Obras_AutorizadorForaDoTeto(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("FROM aprovadores_obra")).
 		WithArgs(testSolicitacaoAutorizadorID, 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT aprovador FROM usuarios WHERE id = $1")).
+		WithArgs(testSolicitacaoAutorizadorID).
+		WillReturnRows(sqlmock.NewRows([]string{"aprovador"}).AddRow(false))
 	mock.ExpectRollback()
 
 	handler := AbrirSolicitacaoHandler(db)

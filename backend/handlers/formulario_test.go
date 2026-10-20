@@ -109,6 +109,40 @@ func TestAutorizadoresHandler_TipoInclusao(t *testing.T) {
 	}
 }
 
+// TestAutorizadoresHandler_IncluiAprovadorGlobal cobre o fallback de
+// aprovador global (20/10, Gestão de Usuários): o UNION com
+// `usuarios.aprovador = true` traz um colaborador mesmo sem cadastro em
+// autorizadores_formulario para o CC/faixa consultado.
+func TestAutorizadoresHandler_IncluiAprovadorGlobal(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario af")).
+		WithArgs("1000", 500.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "nome"}).
+			AddRow("colab-1", "Fulano de Tal").
+			AddRow("colab-9", "Diretor Aprovador"))
+
+	handler := AutorizadoresHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newFormularioRequest(http.MethodGet, "/api/formulario/autorizadores?tipo=inclusao&centro_custo_codigo=1000&valor=500"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, esperado 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Items []autorizadorOpcao `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("resposta não é JSON válido: %v", err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("items = %+v, esperado 2 (nominal + aprovador global)", resp.Items)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
 func TestAutorizadoresHandler_TipoInclusaoSemCentroCusto(t *testing.T) {
 	db, mock := newSQLMock(t)
 

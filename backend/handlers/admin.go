@@ -70,6 +70,12 @@ type AdminUpdateUsuarioRequest struct {
 	// resolvido (dropdown populado por GET /api/admin/cadastros/centros-custo),
 	// nunca um código para resolver aqui.
 	CentroCustoID *string `json:"centro_custo_id,omitempty"`
+	// Aprovador (migration 020): "promove"/"rebaixa" o usuário como
+	// aprovador global — libera-o no dropdown de Autorizador e no resolver
+	// (internal/aprovacao, AutorizadorNominal.resolveAprovadorGlobal) para
+	// qualquer CC/faixa/teto, sem precisar de cadastro específico em
+	// autorizadores_formulario/aprovadores_obra.
+	Aprovador *bool `json:"aprovador,omitempty"`
 }
 
 const errMsgUltimoAdministrador = "operação recusada: deixaria o sistema sem nenhum administrador ativo"
@@ -103,7 +109,7 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		if req.Perfil == nil && req.Ativo == nil && req.CodEmpresa == nil && req.Numcad == nil &&
-			req.Nome == nil && req.Email == nil && req.CentroCustoID == nil {
+			req.Nome == nil && req.Email == nil && req.CentroCustoID == nil && req.Aprovador == nil {
 			jsonErr(w, http.StatusBadRequest, "informe ao menos um campo para atualizar")
 			return
 		}
@@ -160,14 +166,14 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var perfilAnterior, nomeAnterior, emailAnterior string
-		var ativoAnterior bool
+		var ativoAnterior, aprovadorAnterior bool
 		var codEmpresaAnterior, numcadAnterior sql.NullInt64
 		var centroCustoAnterior sql.NullString
 		// FOR UPDATE: trava a linha-alvo pela duração da transação — ver
 		// Design Notes da spec.
 		err = tx.QueryRow(`
-			SELECT perfil, ativo, cod_empresa, numcad, nome, email, cc_proprio_id FROM usuarios WHERE id = $1 FOR UPDATE
-		`, alvoID).Scan(&perfilAnterior, &ativoAnterior, &codEmpresaAnterior, &numcadAnterior, &nomeAnterior, &emailAnterior, &centroCustoAnterior)
+			SELECT perfil, ativo, cod_empresa, numcad, nome, email, cc_proprio_id, aprovador FROM usuarios WHERE id = $1 FOR UPDATE
+		`, alvoID).Scan(&perfilAnterior, &ativoAnterior, &codEmpresaAnterior, &numcadAnterior, &nomeAnterior, &emailAnterior, &centroCustoAnterior, &aprovadorAnterior)
 		if err == sql.ErrNoRows {
 			jsonErr(w, http.StatusNotFound, "usuário não encontrado")
 			return
@@ -206,6 +212,10 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			} else {
 				centroCustoNovo = sql.NullString{String: *req.CentroCustoID, Valid: true}
 			}
+		}
+		aprovadorNovo := aprovadorAnterior
+		if req.Aprovador != nil {
+			aprovadorNovo = *req.Aprovador
 		}
 
 		// Proteção do último admin (FR-2): se esta mudança tira o usuário-alvo
@@ -259,7 +269,8 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		perfilMudou := perfilNovo != perfilAnterior
 		ativoMudou := ativoNovo != ativoAnterior
 		cadastroMudou := codEmpresaNovo != codEmpresaAnterior || numcadNovo != numcadAnterior ||
-			nomeNovo != nomeAnterior || emailNovo != emailAnterior || centroCustoNovo != centroCustoAnterior
+			nomeNovo != nomeAnterior || emailNovo != emailAnterior || centroCustoNovo != centroCustoAnterior ||
+			aprovadorNovo != aprovadorAnterior
 
 		if !perfilMudou && !ativoMudou && !cadastroMudou {
 			// Nada mudou: não é "uma mudança aplicada" (spec), então não grava
@@ -269,16 +280,16 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
 			}
-			writeUsuarioJSON(w, alvoID, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo)
+			writeUsuarioJSON(w, alvoID, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo, aprovadorNovo)
 			return
 		}
 
 		if _, err = tx.Exec(`
 			UPDATE usuarios SET
 				perfil = $1, ativo = $2, cod_empresa = $3, numcad = $4,
-				nome = $5, email = $6, cc_proprio_id = $7, updated_at = now()
-			WHERE id = $8
-		`, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo, nomeNovo, emailNovo, centroCustoNovo, alvoID); err != nil {
+				nome = $5, email = $6, cc_proprio_id = $7, aprovador = $8, updated_at = now()
+			WHERE id = $9
+		`, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo, nomeNovo, emailNovo, centroCustoNovo, aprovadorNovo, alvoID); err != nil {
 			if isUniqueViolationOnConstraint(err, "idx_usuarios_cod_empresa_numcad") {
 				jsonErr(w, http.StatusConflict, "já existe um usuário com esse código de empresa + matrícula")
 				return
@@ -315,10 +326,10 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		log.Printf("[Admin] %s atualizou usuário %s: perfil %q->%q, ativo %v->%v",
-			atorID, alvoID, perfilAnterior, perfilNovo, ativoAnterior, ativoNovo)
+		log.Printf("[Admin] %s atualizou usuário %s: perfil %q->%q, ativo %v->%v, aprovador %v->%v",
+			atorID, alvoID, perfilAnterior, perfilNovo, ativoAnterior, ativoNovo, aprovadorAnterior, aprovadorNovo)
 
-		writeUsuarioJSON(w, alvoID, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo)
+		writeUsuarioJSON(w, alvoID, perfilNovo, ativoNovo, codEmpresaNovo, numcadNovo, aprovadorNovo)
 	}
 }
 
@@ -333,7 +344,7 @@ func auditAction(perfilMudou, ativoMudou bool) string {
 	}
 }
 
-func writeUsuarioJSON(w http.ResponseWriter, id, perfil string, ativo bool, codEmpresa, numcad sql.NullInt64) {
+func writeUsuarioJSON(w http.ResponseWriter, id, perfil string, ativo bool, codEmpresa, numcad sql.NullInt64, aprovador bool) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"id":          id,
@@ -341,6 +352,7 @@ func writeUsuarioJSON(w http.ResponseWriter, id, perfil string, ativo bool, codE
 		"ativo":       ativo,
 		"cod_empresa": nullInt64OuNil(codEmpresa),
 		"numcad":      nullInt64OuNil(numcad),
+		"aprovador":   aprovador,
 	})
 }
 
@@ -520,6 +532,8 @@ type UsuarioListItem struct {
 	Numcad          *int    `json:"numcad"`
 	CentroCustoID   *string `json:"centro_custo_id"`
 	CentroCustoNome *string `json:"centro_custo_nome"`
+	// Aprovador (migration 020): ver AdminUpdateUsuarioRequest.Aprovador.
+	Aprovador bool `json:"aprovador"`
 }
 
 // ListarUsuariosHandler — GET /api/admin/usuarios, paginado (pagina/tamanho,
@@ -538,7 +552,7 @@ func ListarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 
 		rows, err := db.Query(`
 			SELECT u.id, u.email, u.nome, u.perfil, u.ativo, u.created_at, u.cod_empresa, u.numcad,
-			       cc.id, cc.nome
+			       cc.id, cc.nome, u.aprovador
 			FROM usuarios u
 			LEFT JOIN centros_custo cc ON cc.id = u.cc_proprio_id
 			ORDER BY u.created_at, u.id LIMIT $1 OFFSET $2
@@ -553,7 +567,7 @@ func ListarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 		items := make([]UsuarioListItem, 0)
 		for rows.Next() {
 			var item UsuarioListItem
-			if err := rows.Scan(&item.ID, &item.Email, &item.Nome, &item.Perfil, &item.Ativo, &item.CreatedAt, &item.CodEmpresa, &item.Numcad, &item.CentroCustoID, &item.CentroCustoNome); err != nil {
+			if err := rows.Scan(&item.ID, &item.Email, &item.Nome, &item.Perfil, &item.Ativo, &item.CreatedAt, &item.CodEmpresa, &item.Numcad, &item.CentroCustoID, &item.CentroCustoNome, &item.Aprovador); err != nil {
 				log.Printf("[Admin] Erro ao ler usuário: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return

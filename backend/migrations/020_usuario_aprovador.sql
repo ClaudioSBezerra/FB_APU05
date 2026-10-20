@@ -1,0 +1,20 @@
+-- Marca um usuário como aprovador global (Gestão de Usuários, 20/10) —
+-- diferente de autorizadores_formulario/aprovadores_obra (que exigem
+-- cadastro por CC/faixa de valor ou teto individual, em Cadastros Mestres),
+-- este campo libera a pessoa como autorizador para QUALQUER centro de
+-- custo/faixa/teto, sem precisar de uma linha específica cadastrada ali.
+--
+-- Efeito funcional (internal/aprovacao/nominal.go, resolveAprovadorGlobal):
+-- quando o autorizador escolhido pelo solicitante não casa nenhuma linha em
+-- autorizadores_formulario/aprovadores_obra, o resolver consulta este campo
+-- antes de devolver ErrAutorizadorInvalido — se aprovador=true, a
+-- solicitação é aprovada mesmo assim. Também aparece no dropdown de
+-- autorizadores (handlers/formulario.go, AutorizadoresHandler) independente
+-- de CC/faixa/teto.
+--
+-- Uso típico: diretoria e outras pessoas com alçada reconhecida em toda a
+-- empresa (ex. Caio Costa, diretor), sem precisar cadastrar CC por CC.
+-- "Promover"/"rebaixar" de aprovador em Gestão de Usuários é só ligar/
+-- desligar este campo; não cria nem remove nenhuma linha em
+-- autorizadores_formulario/aprovadores_obra/alcadas.
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS aprovador BOOLEAN NOT NULL DEFAULT false;

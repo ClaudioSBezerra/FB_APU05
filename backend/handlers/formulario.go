@@ -194,6 +194,12 @@ func AutorizadoresHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Em ambos os branches, inclui também (via UNION) qualquer usuário
+		// marcado usuarios.aprovador=true (Gestão de Usuários, 20/10) —
+		// esses aparecem na lista independente de CC/faixa/teto, pois são
+		// reconhecidos como aprovadores em qualquer solicitação (ex.
+		// diretoria). UNION (não UNION ALL) evita duplicar quem já esteja
+		// nominalmente cadastrado E marcado como aprovador global.
 		var rows *sql.Rows
 		if tipo == "obras" {
 			rows, err = db.Query(`
@@ -201,7 +207,11 @@ func AutorizadoresHandler(db *sql.DB) http.HandlerFunc {
 				FROM aprovadores_obra ao
 				JOIN usuarios u ON u.id = ao.colaborador_id
 				WHERE ao.ativo = true AND ao.teto >= $1
-				ORDER BY u.nome
+				UNION
+				SELECT u.id, u.nome
+				FROM usuarios u
+				WHERE u.aprovador = true
+				ORDER BY nome
 			`, valor)
 		} else {
 			centroCustoCodigo := r.URL.Query().Get("centro_custo_codigo")
@@ -217,7 +227,11 @@ func AutorizadoresHandler(db *sql.DB) http.HandlerFunc {
 				  AND af.centro_custo_codigo = $1
 				  AND af.valor_minimo <= $2
 				  AND (af.valor_maximo IS NULL OR af.valor_maximo >= $2)
-				ORDER BY u.nome
+				UNION
+				SELECT u.id, u.nome
+				FROM usuarios u
+				WHERE u.aprovador = true
+				ORDER BY nome
 			`, centroCustoCodigo, valor)
 		}
 		if err != nil {
