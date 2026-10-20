@@ -9,11 +9,13 @@ package handlers
 //	SELECT f.cgc, f.razsoc, f.fantas, f.uf FROM forn f
 //
 // Diferente de colaboradores_oracle_sync.go (que só faz UPDATE num usuário
-// já existente): aqui `fornecedores` é uma tabela nova, espelho read-only do
-// FORN — um `cgc` novo vira um registro novo (INSERT), um `cgc` já
-// conhecido tem seus dados atualizados (UPDATE). Nunca editado manualmente
-// pelo admin (ao contrário dos cadastros de cadastros.go) — toda alteração
-// vem do próximo ciclo de sincronização.
+// já existente): aqui `fornecedores` é uma tabela nova — um `cgc` novo vira
+// um registro novo (INSERT), um `cgc` já conhecido tem seus dados
+// atualizados (UPDATE). Desde 20/10, "fornecedores" também está no
+// cadastroRegistry genérico (handlers/cadastros.go) — admin pode fazer
+// carga inicial via CSV e correções pontuais via "Editar"; este handler
+// continua sendo o caminho de sincronização CONTÍNUA (upsert por cgc, sem
+// o teto de "tabela vazia" que ImportarCadastroHandler aplica à carga CSV).
 //
 // POST /api/erp-bridge/fornecedores/sincronizar — autenticado via
 // X-API-Key (erpBridgeAPIKeyValida), mesmo padrão de

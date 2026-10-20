@@ -231,6 +231,17 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
       { nome: 'ativo', label: 'Ativo', kind: 'booleano' },
     ],
   },
+  {
+    tipo: 'fornecedores',
+    label: 'Fornecedores',
+    csvCabecalho: 'cgc;razsoc;fantas;uf',
+    campos: [
+      { nome: 'cgc', label: 'CNPJ', kind: 'texto' },
+      { nome: 'razsoc', label: 'Razão social', kind: 'texto' },
+      { nome: 'fantas', label: 'Nome fantasia', kind: 'texto_opcional' },
+      { nome: 'uf', label: 'UF', kind: 'texto_opcional' },
+    ],
+  },
 ];
 
 type Registro = Record<string, unknown> & { id: string; created_at: string; updated_at: string };

@@ -649,6 +649,25 @@ func decodeCSVObraOrdens(tx *sql.Tx, linha []string) ([]interface{}, error) {
 	return []interface{}{numeroOrdem, localObraID, subgrupoDespesaID, tipoDespesa, tipoFaturamento}, nil
 }
 
+// decodeCSVFornecedores (20/10) — cgc/razsoc obrigatórios, fantas/uf
+// opcionais (vazio -> NULL), mesmo padrão simples de decodeCSVCentrosCusto
+// para a coluna opcional "filial". `cgc` é UNIQUE na tabela (migration
+// 022) — uma linha duplicada esbarra no unique_violation do INSERT, não
+// aqui.
+func decodeCSVFornecedores(_ *sql.Tx, linha []string) ([]interface{}, error) {
+	cgc, err := campoObrigatorio(linha[0], "cgc")
+	if err != nil {
+		return nil, err
+	}
+	razsoc, err := campoObrigatorio(linha[1], "razsoc")
+	if err != nil {
+		return nil, err
+	}
+	fantas := parseStringOpcional(linha[2])
+	uf := parseStringOpcional(linha[3])
+	return []interface{}{cgc, razsoc, fantas, uf}, nil
+}
+
 // decodeCSVAprovadoresObra (Story 3.5) resolve colaborador_email ->
 // colaborador_id (usuarios), mesmo padrão OBRIGATÓRIO de
 // decodeCSVAutorizadoresFormulario (sempre pessoa, nunca cargo). Sem

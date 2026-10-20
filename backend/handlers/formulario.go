@@ -326,9 +326,9 @@ type fornecedorOpcao struct {
 
 // fornecedoresLimiteBusca é o teto de resultados de FornecedoresHandler —
 // mesmo espírito de CampoReferenciaEntidade (frontend/CadastrosMestres.tsx):
-// uma busca list box, não uma listagem paginada completa (`fornecedores`
-// não está no cadastroRegistry — é só leitura, sincronizado via Oracle,
-// handlers/fornecedores_oracle_sync.go).
+// uma busca list box para o formulário de solicitação, não a listagem
+// paginada de administração (essa é GET /api/admin/cadastros/fornecedores,
+// que entrou no cadastroRegistry em 20/10 — handlers/cadastros.go).
 const fornecedoresLimiteBusca = 20
 
 // FornecedoresHandler — GET /api/formulario/fornecedores?busca=. Busca por

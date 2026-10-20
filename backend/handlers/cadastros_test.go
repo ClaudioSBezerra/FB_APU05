@@ -2326,3 +2326,129 @@ func TestAtualizarCadastroHandler_ObraOrdens_SubgrupoDespesaIDInvalido(t *testin
 		t.Fatalf("corpo não cita o campo inválido: %s", rec.Body.String())
 	}
 }
+
+// --- fornecedores (20/10) ---
+//
+// 16º {tipo} no MESMO registry — cgc/razsoc obrigatórios, fantas/uf
+// opcionais (vazio -> NULL), sem FK para resolver (decodeCSVFornecedores/
+// decodeJSONFornecedores são os mais simples do arquivo, mesmo padrão de
+// classes-imobilizado/locais-obra).
+
+// TestImportarCadastroHandler_Fornecedores_Success cobre "Import feliz":
+// CSV com fantas/uf preenchidos -> 201, linha nasce em fornecedores,
+// histórico 'criado'.
+func TestImportarCadastroHandler_Fornecedores_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const fornecedorID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	csv := "cgc;razsoc;fantas;uf\n11222333000181;Fulano Ltda;Fulano;SP\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_fornecedores").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM fornecedores)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO fornecedores (cgc, razsoc, fantas, uf) VALUES ($1, $2, $3, $4) RETURNING id")).
+		WithArgs("11222333000181", "Fulano Ltda", "Fulano", "SP").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(fornecedorID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("fornecedores", fornecedorID, `{"cgc":"11222333000181","fantas":"Fulano","razsoc":"Fulano Ltda","uf":"SP"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "fornecedores", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestImportarCadastroHandler_Fornecedores_FantasUfVazios cobre
+// decodeCSVFornecedores com fantas/uf vazios -> NULL no INSERT, mesmo
+// padrão de decodeCSVCentrosCusto para 'filial'.
+func TestImportarCadastroHandler_Fornecedores_FantasUfVazios(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const fornecedorID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	csv := "cgc;razsoc;fantas;uf\n22333444000199;Ciclano SA;;\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_fornecedores").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM fornecedores)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO fornecedores (cgc, razsoc, fantas, uf) VALUES ($1, $2, $3, $4) RETURNING id")).
+		WithArgs("22333444000199", "Ciclano SA", nil, nil).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(fornecedorID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("fornecedores", fornecedorID, `{"cgc":"22333444000199","fantas":null,"razsoc":"Ciclano SA","uf":null}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "fornecedores", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestCriarRegistroCadastroHandler_Fornecedores_Success cobre
+// decodeJSONFornecedores no caminho de "Novo registro" (POST .../registro).
+func TestCriarRegistroCadastroHandler_Fornecedores_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const fornecedorID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	body := `{"cgc":"11222333000181","razsoc":"Fulano Ltda","fantas":"Fulano","uf":"SP"}`
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO fornecedores (cgc, razsoc, fantas, uf) VALUES ($1, $2, $3, $4) RETURNING id")).
+		WithArgs("11222333000181", "Fulano Ltda", "Fulano", "SP").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(fornecedorID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("fornecedores", fornecedorID, `{"cgc":"11222333000181","fantas":"Fulano","razsoc":"Fulano Ltda","uf":"SP"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := CriarRegistroCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "fornecedores", "", body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestCriarRegistroCadastroHandler_Fornecedores_CgcAusente cobre
+// extractString rejeitando 'cgc' ausente -> 400, nenhuma query tentada.
+func TestCriarRegistroCadastroHandler_Fornecedores_CgcAusente(t *testing.T) {
+	handler := CriarRegistroCadastroHandler(nil)
+	body := `{"razsoc":"Fulano Ltda","fantas":null,"uf":null}`
+	req := newCadastroRequest(http.MethodPost, "fornecedores", "", body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cgc") {
+		t.Fatalf("corpo não cita o campo ausente: %s", rec.Body.String())
+	}
+}

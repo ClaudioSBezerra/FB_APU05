@@ -279,6 +279,27 @@ var cadastroRegistry = map[string]cadastroTipo{
 		DecodeCSV:  decodeCSVAprovadoresObra,
 		DecodeJSON: decodeJSONAprovadoresObra,
 	},
+	// "fornecedores" (20/10) — mesmo registry/Handler Factory dos demais 15
+	// tipos: carga CSV, criar/editar registro avulso, histórico, restaurar.
+	// `cgc` é UNIQUE (migration 022) — uma segunda carga CSV depois que o
+	// ERP Bridge já tiver sincronizado algo esbarra no mesmo 409 "tabela já
+	// possui dados" dos outros tipos (ImportarCadastroHandler é só para
+	// carga inicial); daí em diante, correções pontuais passam por
+	// "Editar", não por reimportação. POST /api/erp-bridge/fornecedores/
+	// sincronizar (fornecedores_oracle_sync.go) continua sendo o caminho de
+	// sincronização contínua, em paralelo.
+	"fornecedores": {
+		Tabela:       "fornecedores",
+		CSVCabecalho: []string{"cgc", "razsoc", "fantas", "uf"},
+		Colunas: []colunaDef{
+			{Nome: "cgc", Kind: colString},
+			{Nome: "razsoc", Kind: colString},
+			{Nome: "fantas", Kind: colStringNulo},
+			{Nome: "uf", Kind: colStringNulo},
+		},
+		DecodeCSV:  decodeCSVFornecedores,
+		DecodeJSON: decodeJSONFornecedores,
+	},
 }
 
 // --- DecodeJSON por tipo (corpo de PUT .../{id}) — mesma ordem de Colunas.
@@ -710,6 +731,29 @@ func decodeJSONObraOrdens(corpo map[string]interface{}) ([]interface{}, error) {
 		}
 	}
 	return []interface{}{numeroOrdem, localObraID, subgrupoDespesaID, tipoDespesa, tipoFaturamento}, nil
+}
+
+// decodeJSONFornecedores (20/10) aceita cgc/razsoc/fantas/uf diretamente no
+// corpo de PUT — mesmo padrão simples de decodeJSONClassesImobilizado, sem
+// FK para resolver.
+func decodeJSONFornecedores(corpo map[string]interface{}) ([]interface{}, error) {
+	cgc, err := extractString(corpo, "cgc")
+	if err != nil {
+		return nil, err
+	}
+	razsoc, err := extractString(corpo, "razsoc")
+	if err != nil {
+		return nil, err
+	}
+	fantas, err := extractStringOpcional(corpo, "fantas")
+	if err != nil {
+		return nil, err
+	}
+	uf, err := extractStringOpcional(corpo, "uf")
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{cgc, razsoc, fantas, uf}, nil
 }
 
 // decodeJSONAprovadoresObra (Story 3.5) aceita colaborador_id JÁ RESOLVIDO
