@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -133,6 +133,94 @@ function OrdemInvestimentoSelect({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+interface FornecedorOpcao {
+  id: string;
+  cgc: string;
+  razsoc: string;
+  fantas: string;
+  uf: string;
+}
+
+// CampoFornecedor (20/10) — autocomplete contra o cadastro de fornecedores
+// sincronizado do Oracle (GET /api/formulario/fornecedores?busca=,
+// handlers/fornecedores_oracle_sync.go), no lugar do texto livre anterior.
+// Guarda só a razão social no campo `fornecedor` — continua um VARCHAR(255)
+// livre em solicitacoes, igual ao formulário legado, só a forma de
+// preencher que muda. Debounce de 300ms: a rota é ILIKE sem índice de
+// trigram, não dá pra disparar uma query por tecla.
+function CampoFornecedor({ valor, onChange }: { valor: string; onChange: (v: string) => void }) {
+  const [busca, setBusca] = useState('');
+  const [buscaDebounced, setBuscaDebounced] = useState('');
+  const [trocando, setTrocando] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setBuscaDebounced(busca.trim()), 300);
+    return () => clearTimeout(t);
+  }, [busca]);
+
+  const { data, isFetching } = useQuery({
+    queryKey: ['fornecedores', buscaDebounced],
+    queryFn: () =>
+      fetchJSON<{ items: FornecedorOpcao[] }>(`/api/formulario/fornecedores?busca=${encodeURIComponent(buscaDebounced)}`),
+    enabled: buscaDebounced.length >= 2,
+  });
+
+  function selecionar(f: FornecedorOpcao) {
+    onChange(f.razsoc);
+    setTrocando(false);
+    setBusca('');
+  }
+
+  if (valor && !trocando) {
+    return (
+      <div className="grid gap-1.5">
+        <Label>Fornecedor da despesa</Label>
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate rounded-md border border-border px-3 py-2 text-sm">{valor}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => { setTrocando(true); setBusca(''); }}>
+            Trocar
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-1.5">
+      <Label>Fornecedor da despesa</Label>
+      <Input
+        placeholder="Opcional — buscar por nome ou CNPJ..."
+        value={busca}
+        onChange={(e) => setBusca(e.target.value)}
+      />
+      {buscaDebounced.length >= 2 && (
+        <div className="max-h-40 overflow-y-auto rounded-md border border-border">
+          {isFetching && <p className="p-2 text-xs text-muted-foreground">Buscando...</p>}
+          {!isFetching && (data?.items.length ?? 0) === 0 && (
+            <p className="p-2 text-xs text-muted-foreground">Nenhum resultado</p>
+          )}
+          {(data?.items ?? []).map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              className="block w-full px-3 py-1.5 text-left text-sm hover:bg-muted"
+              onClick={() => selecionar(f)}
+            >
+              {f.razsoc}
+              {f.fantas ? ` (${f.fantas})` : ''} — {f.cgc}
+            </button>
+          ))}
+        </div>
+      )}
+      {valor && (
+        <Button type="button" size="sm" variant="ghost" className="self-start" onClick={() => { onChange(''); setTrocando(false); }}>
+          Limpar
+        </Button>
+      )}
+    </div>
   );
 }
 
@@ -529,10 +617,7 @@ const AbrirSolicitacao = () => {
         </>
       )}
 
-      <div className="grid gap-1.5">
-        <Label>Fornecedor da despesa</Label>
-        <Input value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} placeholder="Opcional" />
-      </div>
+      <CampoFornecedor valor={fornecedor} onChange={setFornecedor} />
 
       <div className="grid gap-1.5">
         <Label>Descrição detalhada</Label>

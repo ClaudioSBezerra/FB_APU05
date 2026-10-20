@@ -315,3 +315,68 @@ func ObraOrdensHandler(db *sql.DB) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"items": ordens})
 	}
 }
+
+type fornecedorOpcao struct {
+	ID     string `json:"id"`
+	CGC    string `json:"cgc"`
+	Razsoc string `json:"razsoc"`
+	Fantas string `json:"fantas"`
+	UF     string `json:"uf"`
+}
+
+// fornecedoresLimiteBusca é o teto de resultados de FornecedoresHandler —
+// mesmo espírito de CampoReferenciaEntidade (frontend/CadastrosMestres.tsx):
+// uma busca list box, não uma listagem paginada completa (`fornecedores`
+// não está no cadastroRegistry — é só leitura, sincronizado via Oracle,
+// handlers/fornecedores_oracle_sync.go).
+const fornecedoresLimiteBusca = 20
+
+// FornecedoresHandler — GET /api/formulario/fornecedores?busca=. Busca por
+// cgc/razsoc/fantas (ILIKE, case-insensitive) — sem `busca`, devolve vazio
+// (nunca a tabela inteira: pensado para autocomplete, não para listagem).
+func FornecedoresHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		busca := r.URL.Query().Get("busca")
+		itens := make([]fornecedorOpcao, 0)
+		if busca != "" {
+			padrao := "%" + busca + "%"
+			rows, err := db.Query(`
+				SELECT id, cgc, razsoc, COALESCE(fantas, ''), COALESCE(uf, '')
+				FROM fornecedores
+				WHERE cgc ILIKE $1 OR razsoc ILIKE $1 OR fantas ILIKE $1
+				ORDER BY razsoc
+				LIMIT $2
+			`, padrao, fornecedoresLimiteBusca)
+			if err != nil {
+				log.Printf("[Formulario] Erro ao consultar fornecedores: %v", err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				var item fornecedorOpcao
+				if err := rows.Scan(&item.ID, &item.CGC, &item.Razsoc, &item.Fantas, &item.UF); err != nil {
+					log.Printf("[Formulario] Erro ao ler linha de fornecedores: %v", err)
+					jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+					return
+				}
+				itens = append(itens, item)
+			}
+			if err := rows.Err(); err != nil {
+				log.Printf("[Formulario] Erro ao iterar fornecedores: %v", err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"items": itens})
+	}
+}

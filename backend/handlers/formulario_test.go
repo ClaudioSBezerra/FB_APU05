@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -174,6 +175,57 @@ func TestAutorizadoresHandler_TipoObras(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
+// TestFornecedoresHandler_Busca cobre o caso feliz: busca não vazia ->
+// ILIKE contra cgc/razsoc/fantas, resultado limitado e ordenado por nome.
+func TestFornecedoresHandler_Busca(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM fornecedores")).
+		WithArgs("%fulano%", fornecedoresLimiteBusca).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "cgc", "razsoc", "fantas", "uf"}).
+			AddRow("forn-1", "11222333000181", "Fulano Ltda", "Fulano", "SP"))
+
+	handler := FornecedoresHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newFormularioRequest(http.MethodGet, "/api/formulario/fornecedores?busca=fulano"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, esperado 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Items []map[string]string `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("resposta não é JSON válido: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0]["razsoc"] != "Fulano Ltda" {
+		t.Fatalf("items = %+v, inesperado", resp.Items)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
+// TestFornecedoresHandler_SemBusca garante que, sem `busca`, a rota nunca
+// toca o banco (nunca devolve a tabela inteira — pensada para autocomplete).
+func TestFornecedoresHandler_SemBusca(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	handler := FornecedoresHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newFormularioRequest(http.MethodGet, "/api/formulario/fornecedores"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, esperado 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"items":[]`) {
+		t.Fatalf("esperado items vazio sem busca: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas (nada deveria tocar o banco): %v", err)
 	}
 }
 

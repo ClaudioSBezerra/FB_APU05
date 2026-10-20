@@ -1,0 +1,19 @@
+# Config do conector ERP Bridge Fornecedores (isolado dos demais conectores
+# do FB_APU05). Copie para config.yaml e preencha. NÃO versionar o
+# config.yaml real (contém a API key).
+
+fbtax:
+  url: "https://controladoria.fbtax.cloud"   # backend do FB_APU05
+  api_key: "COLOQUE_A_API_KEY"               # a MESMA API key do erp-bridge-colaboradores — gerada em Configurações > ERP Bridge — Credenciais
+
+# Horário da execução diária automática (só usado com --daemon).
+horario_diario: "03:30"
+
+# Opcional: só usado se GET /api/erp-bridge/credentials falhar (ex.: testar
+# localmente sem bater no backend). Em uso normal, o conector busca
+# DSN/usuário/senha do Oracle automaticamente a partir da tela de
+# credenciais do FB_APU05 — não duplique o segredo aqui.
+# oracle:
+#   dsn: "10.131.1.118:1521/fccorp"
+#   usuario: "fcosta"
+#   senha: "COLOQUE_A_SENHA"

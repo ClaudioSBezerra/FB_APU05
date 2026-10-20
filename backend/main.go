@@ -398,6 +398,7 @@ func main() {
 	// (Oracle/FCCORP) — autenticada via X-API-Key (não JWT), chamada pelo
 	// mesmo conector externo que busca as credenciais acima.
 	http.HandleFunc("POST /api/erp-bridge/colaboradores/sincronizar", withDB(handlers.SincronizarColaboradoresOracleHandler))
+	http.HandleFunc("POST /api/erp-bridge/fornecedores/sincronizar", withDB(handlers.SincronizarFornecedoresOracleHandler))
 
 	// Abrir solicitação (Story 3.1, FR-5/FR-10) — primeira rota do FB_APU05
 	// que não exige perfil `administrador` (RequireAuth(..., "") — qualquer
@@ -415,6 +416,7 @@ func main() {
 	http.HandleFunc("GET /api/formulario/opcoes", handlers.RequireAuth(withDB(handlers.OpcoesFormularioHandler), ""))
 	http.HandleFunc("GET /api/formulario/autorizadores", handlers.RequireAuth(withDB(handlers.AutorizadoresHandler), ""))
 	http.HandleFunc("GET /api/formulario/obra-ordens", handlers.RequireAuth(withDB(handlers.ObraOrdensHandler), ""))
+	http.HandleFunc("GET /api/formulario/fornecedores", handlers.RequireAuth(withDB(handlers.FornecedoresHandler), ""))
 
 	// Fila do administrador (Story 4.1, Epic 4) — primeiras rotas que fazem
 	// UPDATE em aprovador_snapshot/versao/status/administrador_id de
