@@ -2406,6 +2406,43 @@ func TestImportarCadastroHandler_Fornecedores_FantasUfVazios(t *testing.T) {
 	}
 }
 
+// TestImportarCadastroHandler_Fornecedores_CabecalhoCaixaAlta cobre
+// cabecalhoBate case-insensitive (20/10): um export cru de SQL/Oracle
+// normalmente devolve "CGC;RAZSOC;FANTAS;UF" em caixa alta — mesmo header,
+// letras diferentes, ainda bate -> 201 (não 400).
+func TestImportarCadastroHandler_Fornecedores_CabecalhoCaixaAlta(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const fornecedorID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	csv := "CGC;RAZSOC;FANTAS;UF\n11222333000181;Fulano Ltda;Fulano;SP\n"
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_fornecedores").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM fornecedores)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO fornecedores (cgc, razsoc, fantas, uf) VALUES ($1, $2, $3, $4) RETURNING id")).
+		WithArgs("11222333000181", "Fulano Ltda", "Fulano", "SP").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(fornecedorID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("fornecedores", fornecedorID, `{"cgc":"11222333000181","fantas":"Fulano","razsoc":"Fulano Ltda","uf":"SP"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "fornecedores", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
 // TestCriarRegistroCadastroHandler_Fornecedores_Success cobre
 // decodeJSONFornecedores no caminho de "Novo registro" (POST .../registro).
 func TestCriarRegistroCadastroHandler_Fornecedores_Success(t *testing.T) {

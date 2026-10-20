@@ -32,10 +32,15 @@ type linhaCSV struct {
 }
 
 // lerCadastroCSV descarta um BOM UTF-8 inicial se presente, faz parse com
-// separador ';', valida que o cabeçalho bate EXATAMENTE (mesmo número de
-// colunas, mesmo texto, mesma ordem) com cabecalhoEsperado, e devolve as
-// linhas de dado (nunca inclui o cabeçalho). Qualquer divergência de
-// cabeçalho ou de corpo vazio é um erro só de leitura/formatação — ainda não
+// separador ';', valida que o cabeçalho bate (mesmo número de colunas,
+// mesmo texto IGNORANDO MAIÚSCULA/MINÚSCULA, mesma ordem) com
+// cabecalhoEsperado, e devolve as linhas de dado (nunca inclui o
+// cabeçalho). Comparação case-insensitive (20/10) — um export cru de
+// SQL/Oracle normalmente devolve nomes de coluna em CAIXA ALTA
+// (ex. "CGC;RAZSOC;FANTAS;UF" de um `SELECT cgc, razsoc, fantas, uf FROM
+// forn`), e não há razão para exigir que quem exportou tenha baixado a
+// caixa manualmente antes de subir aqui. Qualquer divergência de cabeçalho
+// ou de corpo vazio é um erro só de leitura/formatação — ainda não
 // validação de valor por linha (isso é DecodeCSV, chamado pelo handler).
 func lerCadastroCSV(corpo []byte, cabecalhoEsperado []string) ([]linhaCSV, error) {
 	corpo = bytes.TrimPrefix(corpo, bomUTF8)
@@ -79,7 +84,7 @@ func cabecalhoBate(recebido, esperado []string) bool {
 		return false
 	}
 	for i := range esperado {
-		if recebido[i] != esperado[i] {
+		if !strings.EqualFold(strings.TrimSpace(recebido[i]), esperado[i]) {
 			return false
 		}
 	}
