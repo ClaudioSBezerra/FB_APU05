@@ -15,6 +15,7 @@ import (
 	"io"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
@@ -115,6 +116,56 @@ func TestRecuperar_NaoEncontrado(t *testing.T) {
 	_, _, err := Recuperar(db, "anexo-inexistente")
 	if !errors.Is(err, ErrAnexoNaoEncontrado) {
 		t.Fatalf("esperado ErrAnexoNaoEncontrado, obtido %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestListar_DevolveMetadadosSemConteudo cobre o caso feliz de Listar
+// (20/10): devolve nome/tipo/tamanho/data de cada anexo, mas nunca a coluna
+// `dados` (nem a consulta pede essa coluna).
+func TestListar_DevolveMetadadosSemConteudo(t *testing.T) {
+	db, mock, closeFn := newAnexosSQLMock(t)
+	defer closeFn()
+
+	criadoEm := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, nome_arquivo, content_type, tamanho_bytes, created_at")).
+		WithArgs("sol-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "nome_arquivo", "content_type", "tamanho_bytes", "created_at"}).
+			AddRow("anexo-1", "cotacao.pdf", "application/pdf", int64(1234), criadoEm))
+
+	itens, err := Listar(db, "sol-1")
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if len(itens) != 1 {
+		t.Fatalf("esperado 1 item, obtido %d", len(itens))
+	}
+	if itens[0].ID != "anexo-1" || itens[0].NomeArquivo != "cotacao.pdf" || itens[0].TamanhoBytes != 1234 {
+		t.Fatalf("item inesperado: %+v", itens[0])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestListar_SemAnexos cobre a solicitação sem nenhum anexo — slice vazia,
+// nunca nil (I/O consistente com os demais handlers de listagem).
+func TestListar_SemAnexos(t *testing.T) {
+	db, mock, closeFn := newAnexosSQLMock(t)
+	defer closeFn()
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, nome_arquivo, content_type, tamanho_bytes, created_at")).
+		WithArgs("sol-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "nome_arquivo", "content_type", "tamanho_bytes", "created_at"}))
+
+	itens, err := Listar(db, "sol-1")
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if itens == nil || len(itens) != 0 {
+		t.Fatalf("esperado slice vazia (não nil), obtido %+v", itens)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectativas do mock não satisfeitas: %v", err)

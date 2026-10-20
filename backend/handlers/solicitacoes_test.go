@@ -512,6 +512,76 @@ func TestAbrirSolicitacaoHandler_Success(t *testing.T) {
 	}
 }
 
+// TestAbrirSolicitacaoHandler_ComFornecedorDescricaoEAnexo cobre a paridade
+// com o formulário legado (20/10): fornecedor/descricao/anexo são aceitos
+// (e gravados) também para Transferência, não só Imobilizado — nenhum dos
+// três é obrigatório para este tipo.
+func TestAbrirSolicitacaoHandler_ComFornecedorDescricaoEAnexo(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const solicitacaoID = "so000000-0000-0000-0000-000000000001"
+	const alcadaID = "al000000-0000-0000-0000-000000000001"
+
+	corpo := fmt.Sprintf(
+		`{"tipo_solicitacao":"transferencia","fornecedor":"Fornecedor Teste Ltda","descricao":"Transferência para cobrir despesa X","anexos":[%s],"lancamentos":[%s,%s]}`,
+		anexoJSON("nota.pdf", "application/pdf", testAnexoConteudoBase64),
+		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", 1000),
+		linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 1000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo, divisao_id, filial FROM centros_custo WHERE id = $1")).
+		WithArgs(testSolicitacaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"codigo", "divisao_id", "filial"}).
+			AddRow("CC1", testSolicitacaoDivisaoID, "F1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT cc_proprio_id FROM usuarios WHERE id = $1")).
+		WithArgs(testAtorID).
+		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
+		WithArgs(testSolicitacaoContaOrigem).
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
+		WithArgs(testSolicitacaoContaDestino).
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM regras_aprovacao")).
+		WithArgs("F1", "CC1", 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM alcadas")).
+		WithArgs("F1", "CC1", 1000.0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "papel_aprovador"}).AddRow(alcadaID, "Gerente Financeiro"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico")).
+		WithArgs("alcadas", alcadaID).
+		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(3))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
+		WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), "Fornecedor Teste Ltda", "Transferência para cobrir despesa X").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
+		WithArgs(solicitacaoID, "origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", nil, 1000.0).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
+		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", nil, 1000.0).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacao_anexos")).
+		WithArgs(solicitacaoID, "nota.pdf", "application/pdf", len(testAnexoConteudo), sha256HexDeTeste(testAnexoConteudo), testAnexoConteudo).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("anexo-1"))
+	mock.ExpectCommit()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Fornecedor Teste Ltda") || !strings.Contains(rec.Body.String(), "Transferência para cobrir despesa X") {
+		t.Fatalf("corpo não ecoa fornecedor/descricao: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
 // --- Story 3.2 — Abrir Inclusão SFC com aprovação calculada ---
 //
 // Resolver calculado (as 5 etapas do encadeamento) já está coberto pelos
@@ -1674,7 +1744,7 @@ func TestAbrirSolicitacaoHandler_Obras_OrdemCasaLocalSubgrupoCaseInsensitive(t *
 		WithArgs(testSolicitacaoAutorizadorID).
 		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Aprovador de Obras"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao").
+		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
 		WithArgs(solicitacaoID, nil, testObraLocalObraID, testObraSubgrupoDespesaID, "OI-001", 1000.0).
@@ -1768,7 +1838,7 @@ func TestAbrirSolicitacaoHandler_Obras_Success(t *testing.T) {
 		WithArgs(testSolicitacaoAutorizadorID).
 		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Aprovador de Obras"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao").
+		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
 		WithArgs(solicitacaoID, nil, testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).
@@ -1838,7 +1908,7 @@ func TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoBalanceada_Success(t *t
 		WithArgs(testSolicitacaoAutorizadorID).
 		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Aprovador de Obras"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs(testAtorID, sqlmock.AnyArg(), classificacaoTransferenciaSaldo).
+		WithArgs(testAtorID, sqlmock.AnyArg(), classificacaoTransferenciaSaldo, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
 		WithArgs(solicitacaoID, "retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).
@@ -1867,7 +1937,7 @@ func TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoBalanceada_Success(t *t
 // validação limpo.
 func TestValidarAnexos_NomeArquivoExcede255(t *testing.T) {
 	nomeLongo := strings.Repeat("a", 256)
-	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: nomeLongo, ContentType: "application/pdf", ConteudoBase64: testAnexoConteudoBase64}})
+	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: nomeLongo, ContentType: "application/pdf", ConteudoBase64: testAnexoConteudoBase64}}, true)
 	if !strings.Contains(msg, "'nome_arquivo' excede 255 caracteres") {
 		t.Fatalf("esperada mensagem de nome_arquivo excedendo 255 caracteres, obtido: %q", msg)
 	}
@@ -1877,7 +1947,7 @@ func TestValidarAnexos_NomeArquivoExcede255(t *testing.T) {
 // para `content_type`/VARCHAR(100).
 func TestValidarAnexos_ContentTypeExcede100(t *testing.T) {
 	contentTypeLongo := strings.Repeat("a", 101)
-	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: "cotacao.pdf", ContentType: contentTypeLongo, ConteudoBase64: testAnexoConteudoBase64}})
+	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: "cotacao.pdf", ContentType: contentTypeLongo, ConteudoBase64: testAnexoConteudoBase64}}, true)
 	if !strings.Contains(msg, "'content_type' excede 100 caracteres") {
 		t.Fatalf("esperada mensagem de content_type excedendo 100 caracteres, obtido: %q", msg)
 	}
@@ -1894,7 +1964,7 @@ func TestValidarAnexos_NomeArquivoComAcentosDentroDoLimite(t *testing.T) {
 	if len(nome255Runas) <= 255 {
 		t.Fatalf("pré-condição do teste inválida: nome deveria exceder 255 bytes (tem %d)", len(nome255Runas))
 	}
-	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: nome255Runas, ContentType: "application/pdf", ConteudoBase64: testAnexoConteudoBase64}})
+	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: nome255Runas, ContentType: "application/pdf", ConteudoBase64: testAnexoConteudoBase64}}, true)
 	if msg != "" {
 		t.Fatalf("nome com 255 caracteres (ainda que >255 bytes) não deveria ser rejeitado, obtido: %q", msg)
 	}

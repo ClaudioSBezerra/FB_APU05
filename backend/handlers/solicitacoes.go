@@ -48,6 +48,18 @@ import (
 	"fb_apu05/internal/aprovacao"
 )
 
+// stringOuNulo (20/10) converte um campo de texto livre opcional
+// (fornecedor/descricao) em sql.NullString — vazio (após trim) vira NULL,
+// nunca uma string vazia gravada, mesmo padrão de parseStringOpcional
+// (cadastros_csv.go) adaptado para database/sql em vez de interface{}.
+func stringOuNulo(valor string) sql.NullString {
+	trimmed := strings.TrimSpace(valor)
+	if trimmed == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: trimmed, Valid: true}
+}
+
 // toleranciaBalanceamento é a margem aceita entre soma(origem) e
 // soma(destino) — R$0,01 (I/O Matrix da spec). Um epsilon extra absorve
 // erro de arredondamento de ponto flutuante na soma de float64.
@@ -71,8 +83,15 @@ type abrirSolicitacaoRequest struct {
 	AutorizadorID string `json:"autorizador_id"`
 	// Anexos (Story 3.4) é a lista de anexos de cotação em base64 — campo
 	// no nível da solicitação, exigida (len>=1) exclusivamente para
-	// tipo_solicitacao="imobilizado". Ignorado para os demais tipos.
+	// tipo_solicitacao="imobilizado"; opcional (len>=0) para os demais
+	// tipos (20/10, paridade com o anexo do formulário legado de
+	// Transferência).
 	Anexos []anexoRequest `json:"anexos"`
+	// Fornecedor/Descricao (20/10) — paridade com o formulário legado
+	// (Jira): texto livre, opcionais, nunca validados além de um limite de
+	// tamanho. Aceitos para todos os tipos, inclusive obras.
+	Fornecedor string `json:"fornecedor"`
+	Descricao  string `json:"descricao"`
 	// Classificacao (Story 3.5) é um dos 4 valores {inclusao, fl,
 	// retirada_saldo, transferencia_saldo} — campo no nível da solicitação,
 	// obrigatório exclusivamente para tipo_solicitacao="obras". Ignorado
@@ -219,18 +238,14 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
-		// Story 3.4: Imobilizado exige ao menos 1 anexo de cotação —
-		// validação puramente estrutural (sem acesso a banco), mesma faixa
-		// das demais checagens de formato acima do tx.Begin(). anexosParaSalvar
-		// fica vazio para os demais tipos (Anexos é ignorado por eles).
-		var anexosParaSalvar []anexos.ArquivoDecodificado
-		if req.TipoSolicitacao == "imobilizado" {
-			var msgErroAnexo string
-			anexosParaSalvar, msgErroAnexo = validarAnexos(req.Anexos)
-			if msgErroAnexo != "" {
-				jsonErr(w, http.StatusBadRequest, msgErroAnexo)
-				return
-			}
+		// Story 3.4: Imobilizado exige ao menos 1 anexo de cotação; os demais
+		// tipos aceitam anexo também, mas opcional (20/10) — validação
+		// puramente estrutural (sem acesso a banco), mesma faixa das demais
+		// checagens de formato acima do tx.Begin().
+		anexosParaSalvar, msgErroAnexo := validarAnexos(req.Anexos, req.TipoSolicitacao == "imobilizado")
+		if msgErroAnexo != "" {
+			jsonErr(w, http.StatusBadRequest, msgErroAnexo)
+			return
 		}
 
 		centroCustoID, msgErro := validarMesmoCentroCusto(lancamentos)
@@ -406,12 +421,15 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		fornecedor := stringOuNulo(req.Fornecedor)
+		descricao := stringOuNulo(req.Descricao)
+
 		var solicitacaoID string
 		err = tx.QueryRow(`
-			INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao)
-			VALUES ($1, $2, $3, 'aberta', $4, 1)
+			INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, fornecedor, descricao)
+			VALUES ($1, $2, $3, 'aberta', $4, 1, $5, $6)
 			RETURNING id
-		`, req.TipoSolicitacao, solicitanteID, centroCustoID, string(snapshotJSON)).Scan(&solicitacaoID)
+		`, req.TipoSolicitacao, solicitanteID, centroCustoID, string(snapshotJSON), fornecedor, descricao).Scan(&solicitacaoID)
 		if err != nil {
 			log.Printf("[Solicitacoes] Erro ao inserir solicitacao: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -441,17 +459,17 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
-		// Story 3.4: anexos de cotação são gravados na MESMA transação —
-		// solicitação+lançamento+anexos, tudo ou nada (Boundaries "Always"
-		// da spec). Upload passa exclusivamente por internal/anexos (AD-13)
-		// — nenhuma outra lógica de persistência de anexo aqui.
-		if req.TipoSolicitacao == "imobilizado" {
-			for _, a := range anexosParaSalvar {
-				if _, err := anexos.Salvar(tx, solicitacaoID, a.NomeArquivo, a.ContentType, a.Dados); err != nil {
-					log.Printf("[Solicitacoes] Erro ao salvar anexo (solicitacao=%s): %v", solicitacaoID, err)
-					jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
-					return
-				}
+		// Story 3.4 (+ 20/10 para os demais tipos): anexos de cotação são
+		// gravados na MESMA transação — solicitação+lançamento+anexos, tudo
+		// ou nada (Boundaries "Always" da spec). Upload passa exclusivamente
+		// por internal/anexos (AD-13) — nenhuma outra lógica de persistência
+		// de anexo aqui. anexosParaSalvar fica vazio quando o tipo não é
+		// imobilizado e o cliente não enviou nenhum.
+		for _, a := range anexosParaSalvar {
+			if _, err := anexos.Salvar(tx, solicitacaoID, a.NomeArquivo, a.ContentType, a.Dados); err != nil {
+				log.Printf("[Solicitacoes] Erro ao salvar anexo (solicitacao=%s): %v", solicitacaoID, err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
 			}
 		}
 
@@ -473,6 +491,8 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			"status":             "aberta",
 			"versao":             1,
 			"aprovador_snapshot": snapshot,
+			"fornecedor":         nullStringOuNil(fornecedor),
+			"descricao":          nullStringOuNil(descricao),
 		})
 	}
 }
@@ -579,14 +599,19 @@ func validarContagemELadoPorTipo(tipo string, linhas []lancamentoValidado) strin
 }
 
 // validarAnexos aplica a parte puramente estrutural (sem acesso a banco) da
-// I/O Matrix de anexo (Story 3.4): lista vazia é recusada, cada item exige
-// nome_arquivo não vazio e conteudo_base64 decodificável e não vazio.
-// Devolve os anexos já decodificados para anexos.Salvar gravar dentro da
-// mesma transação mais adiante (Boundaries "Always" da spec: solicitação +
-// lançamento + anexos, tudo ou nada).
-func validarAnexos(itens []anexoRequest) ([]anexos.ArquivoDecodificado, string) {
+// I/O Matrix de anexo (Story 3.4): lista vazia só é recusada quando
+// `obrigatorio` (true para imobilizado; false para os demais tipos, 20/10
+// — anexo passou a ser aceito, mas opcional, em todos eles). Cada item
+// enviado exige nome_arquivo não vazio e conteudo_base64 decodificável e
+// não vazio. Devolve os anexos já decodificados para anexos.Salvar gravar
+// dentro da mesma transação mais adiante (Boundaries "Always" da spec:
+// solicitação + lançamento + anexos, tudo ou nada).
+func validarAnexos(itens []anexoRequest, obrigatorio bool) ([]anexos.ArquivoDecodificado, string) {
 	if len(itens) == 0 {
-		return nil, "Imobilizado exige ao menos um anexo de cotação"
+		if obrigatorio {
+			return nil, "Imobilizado exige ao menos um anexo de cotação"
+		}
+		return nil, ""
 	}
 
 	decodificados := make([]anexos.ArquivoDecodificado, 0, len(itens))
@@ -827,6 +852,14 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 		}
 	}
 
+	// Anexo opcional também para Obras (20/10, mesmo precedente dos demais
+	// tipos não-imobilizado) — nunca obrigatório aqui.
+	anexosParaSalvar, msgErroAnexo := validarAnexos(req.Anexos, false)
+	if msgErroAnexo != "" {
+		jsonErr(w, http.StatusBadRequest, msgErroAnexo)
+		return
+	}
+
 	solicitanteID := GetUserIDFromContext(r)
 
 	tx, err := db.Begin()
@@ -895,14 +928,17 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 		return
 	}
 
+	fornecedor := stringOuNulo(req.Fornecedor)
+	descricao := stringOuNulo(req.Descricao)
+
 	// centro_custo_id fica NULL para obras (migration 009: CHECK XOR com
 	// classificacao torna essa relação um invariante de schema).
 	var solicitacaoID string
 	err = tx.QueryRow(`
-		INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, classificacao)
-		VALUES ('obras', $1, NULL, 'aberta', $2, 1, $3)
+		INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, classificacao, fornecedor, descricao)
+		VALUES ('obras', $1, NULL, 'aberta', $2, 1, $3, $4, $5)
 		RETURNING id
-	`, solicitanteID, string(snapshotJSON), req.Classificacao).Scan(&solicitacaoID)
+	`, solicitanteID, string(snapshotJSON), req.Classificacao, fornecedor, descricao).Scan(&solicitacaoID)
 	if err != nil {
 		log.Printf("[Solicitacoes] Erro ao inserir solicitacao (obras): %v", err)
 		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -915,6 +951,14 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 			VALUES ($1, $2, $3, $4, $5, $6)
 		`, solicitacaoID, l.Lado, l.LocalObraID, l.SubgrupoDespesaID, l.OrdemInvestimento, l.Valor); err != nil {
 			log.Printf("[Solicitacoes] Erro ao inserir linha de obras (solicitacao=%s): %v", solicitacaoID, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+	}
+
+	for _, a := range anexosParaSalvar {
+		if _, err := anexos.Salvar(tx, solicitacaoID, a.NomeArquivo, a.ContentType, a.Dados); err != nil {
+			log.Printf("[Solicitacoes] Erro ao salvar anexo (solicitacao=%s): %v", solicitacaoID, err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
@@ -939,6 +983,8 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 		"status":             "aberta",
 		"versao":             1,
 		"aprovador_snapshot": snapshot,
+		"fornecedor":         nullStringOuNil(fornecedor),
+		"descricao":          nullStringOuNil(descricao),
 	})
 }
 

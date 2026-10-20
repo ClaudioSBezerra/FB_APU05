@@ -54,11 +54,22 @@ interface Comentario {
   created_at: string;
 }
 
+interface AnexoDetalhe {
+  id: string;
+  nome_arquivo: string;
+  content_type: string;
+  tamanho_bytes: number;
+  created_at: string;
+}
+
 interface DetalheSolicitacao {
   id: string;
   tipo_solicitacao: string;
   status: string;
   versao: number;
+  fornecedor: string | null;
+  descricao: string | null;
+  anexos: AnexoDetalhe[];
   comentarios: Comentario[];
 }
 
@@ -103,6 +114,29 @@ function baixarArquivoBase64(nomeArquivo: string, base64: string) {
   a.download = nomeArquivo;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// baixarAnexo usa fetch (não um <a href> cru) porque o Authorization é
+// injetado só nas chamadas via window.fetch (interceptor de
+// AuthContext.tsx) — uma navegação nativa de <a> não carrega esse header e
+// voltaria 401.
+async function baixarAnexo(anexo: { id: string; nome_arquivo: string }) {
+  try {
+    const resp = await fetch(`/api/solicitacoes/anexos/${anexo.id}`);
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data?.error || `Erro HTTP ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = anexo.nome_arquivo;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : 'Erro ao baixar anexo');
+  }
 }
 
 function PrazoBadge({ atrasada, prazo }: { atrasada: boolean; prazo: string }) {
@@ -419,6 +453,35 @@ const FilaAdministrador = () => {
           <DialogHeader>
             <DialogTitle>Histórico da solicitação</DialogTitle>
           </DialogHeader>
+          {(detalheQuery.data?.fornecedor || detalheQuery.data?.descricao || (detalheQuery.data?.anexos.length ?? 0) > 0) && (
+            <div className="flex flex-col gap-1.5 rounded-md border border-border p-3 text-sm">
+              {detalheQuery.data?.fornecedor && (
+                <p>
+                  <span className="font-medium">Fornecedor:</span> {detalheQuery.data.fornecedor}
+                </p>
+              )}
+              {detalheQuery.data?.descricao && (
+                <p>
+                  <span className="font-medium">Descrição:</span> {detalheQuery.data.descricao}
+                </p>
+              )}
+              {(detalheQuery.data?.anexos.length ?? 0) > 0 && (
+                <div className="flex flex-col gap-1">
+                  <span className="font-medium">Anexos:</span>
+                  {detalheQuery.data?.anexos.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => baixarAnexo(a)}
+                      className="text-left text-primary underline underline-offset-2"
+                    >
+                      {a.nome_arquivo} ({Math.ceil(a.tamanho_bytes / 1024)} KB)
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex max-h-72 flex-col gap-2 overflow-y-auto">
             {(detalheQuery.data?.comentarios ?? []).map((c) => (
               <div key={c.id} className="rounded-md border border-border p-2 text-sm">

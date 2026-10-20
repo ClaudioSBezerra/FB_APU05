@@ -14,12 +14,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"fb_apu05/internal/anexos"
 	"fb_apu05/internal/fila"
 )
 
@@ -216,6 +218,18 @@ type comentarioDetalhe struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// anexoDetalhe (20/10) é o metadado de um anexo em GET /api/solicitacoes/{id}
+// — nunca o conteúdo (ver internal/anexos.AnexoListado/Recuperar). CreatedAt
+// já formatado (RFC3339) para o mesmo padrão simples de outras respostas
+// JSON deste handler.
+type anexoDetalhe struct {
+	ID           string `json:"id"`
+	NomeArquivo  string `json:"nome_arquivo"`
+	ContentType  string `json:"content_type"`
+	TamanhoBytes int64  `json:"tamanho_bytes"`
+	CreatedAt    string `json:"created_at"`
+}
+
 // ObterSolicitacaoHandler — GET /api/solicitacoes/{id}. Registrado em
 // main.go atrás de RequireAuth(withDB(...), "") — só leitura (conexão
 // GERAL, fb_apu05_app), qualquer perfil autenticado pode chamar a rota, mas
@@ -239,11 +253,12 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		var tipoSolicitacao, status, solicitanteID string
 		var administradorID sql.NullString
+		var fornecedor, descricao sql.NullString
 		var versao int
 		err := db.QueryRow(`
-			SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id
+			SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao
 			FROM solicitacoes WHERE id = $1
-		`, id).Scan(&tipoSolicitacao, &status, &versao, &solicitanteID, &administradorID)
+		`, id).Scan(&tipoSolicitacao, &status, &versao, &solicitanteID, &administradorID, &fornecedor, &descricao)
 		if err == sql.ErrNoRows {
 			jsonErr(w, http.StatusNotFound, "solicitação não encontrada")
 			return
@@ -293,6 +308,26 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Anexos (20/10): só metadado (nunca o conteúdo) — download é uma
+		// rota própria (GET /api/solicitacoes/anexos/{anexoId}), mesma
+		// checagem de permissão desta rota.
+		anexosMeta, err := anexos.Listar(db, id)
+		if err != nil {
+			log.Printf("[Fila] Erro ao listar anexos de %s: %v", id, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		anexosResposta := make([]anexoDetalhe, len(anexosMeta))
+		for i, a := range anexosMeta {
+			anexosResposta[i] = anexoDetalhe{
+				ID:           a.ID,
+				NomeArquivo:  a.NomeArquivo,
+				ContentType:  a.ContentType,
+				TamanhoBytes: a.TamanhoBytes,
+				CreatedAt:    a.CreatedAt.Format(time.RFC3339),
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id":               id,
@@ -301,7 +336,76 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			"versao":           versao,
 			"solicitante_id":   solicitanteID,
 			"administrador_id": nullStringOuNil(administradorID),
+			"fornecedor":       nullStringOuNil(fornecedor),
+			"descricao":        nullStringOuNil(descricao),
+			"anexos":           anexosResposta,
 			"comentarios":      comentarios,
 		})
+	}
+}
+
+// BaixarAnexoHandler — GET /api/solicitacoes/anexos/{anexoId} (20/10).
+// Mesma checagem de permissão de ObterSolicitacaoHandler (solicitante dono
+// OU administrador responsável pela solicitação-mãe) — quem não pode ver a
+// solicitação também não pode baixar nada anexado a ela. Conteúdo via
+// internal/anexos.Recuperar (AD-13) — nenhuma outra leitura de
+// `solicitacao_anexos` aqui.
+func BaixarAnexoHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		anexoID := r.PathValue("anexoId")
+		if !uuidFormatRegexp.MatchString(anexoID) {
+			jsonErr(w, http.StatusNotFound, "anexo não encontrado")
+			return
+		}
+
+		var solicitanteID string
+		var administradorID sql.NullString
+		err := db.QueryRow(`
+			SELECT s.solicitante_id, s.administrador_id
+			FROM solicitacao_anexos sa
+			JOIN solicitacoes s ON s.id = sa.solicitacao_id
+			WHERE sa.id = $1
+		`, anexoID).Scan(&solicitanteID, &administradorID)
+		if err == sql.ErrNoRows {
+			jsonErr(w, http.StatusNotFound, "anexo não encontrado")
+			return
+		}
+		if err != nil {
+			log.Printf("[Fila] Erro ao checar dono do anexo %s: %v", anexoID, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		chamadorID := GetUserIDFromContext(r)
+		souAdministrador := administradorID.Valid && administradorID.String == chamadorID
+		if chamadorID != solicitanteID && !souAdministrador {
+			jsonErr(w, http.StatusForbidden, "você não tem permissão para baixar este anexo")
+			return
+		}
+
+		conteudo, meta, err := anexos.Recuperar(db, anexoID)
+		if errors.Is(err, anexos.ErrAnexoNaoEncontrado) {
+			jsonErr(w, http.StatusNotFound, "anexo não encontrado")
+			return
+		}
+		if err != nil {
+			log.Printf("[Fila] Erro ao recuperar anexo %s: %v", anexoID, err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
+		contentType := meta.ContentType
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", meta.NomeArquivo))
+		_, _ = io.Copy(w, conteudo)
 	}
 }

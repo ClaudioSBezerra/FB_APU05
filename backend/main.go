@@ -442,6 +442,7 @@ func main() {
 	http.HandleFunc("POST /api/solicitacoes/{id}/pendencia", handlers.RequireAuth(withPrivilegedDB(handlers.MarcarPendenciaHandler), "administrador"))
 	http.HandleFunc("POST /api/solicitacoes/{id}/comentarios", handlers.RequireAuth(withPrivilegedDB(handlers.ComentarSolicitacaoHandler), ""))
 	http.HandleFunc("GET /api/solicitacoes/{id}", handlers.RequireAuth(withDB(handlers.ObterSolicitacaoHandler), ""))
+	http.HandleFunc("GET /api/solicitacoes/anexos/{anexoId}", handlers.RequireAuth(withDB(handlers.BaixarAnexoHandler), ""))
 
 	// Gerar lote Despesa (Story 4.3, Epic 4, FR-15/AD-3) — primeira rota de
 	// internal/exportacao: recalcula elegibilidade (dono=sessão,

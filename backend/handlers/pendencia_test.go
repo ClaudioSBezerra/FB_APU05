@@ -392,15 +392,18 @@ func TestComentarSolicitacaoHandler_NaoEncontrada(t *testing.T) {
 func TestObterSolicitacaoHandler_PorSolicitanteDono(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao")).
 		WithArgs(testPendenciaSolicitacaoID).
-		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id"}).
-			AddRow("transferencia", "pendente", 2, testPendenciaSolicitanteID, testPendenciaAdministradorID))
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao"}).
+			AddRow("transferencia", "pendente", 2, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_comentarios")).
 		WithArgs(testPendenciaSolicitacaoID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "tipo", "texto", "created_at"}).
 			AddRow("c1111111-1111-1111-1111-111111111111", testPendenciaAdministradorID, "pendencia", "falta nota", testTimeFixo).
 			AddRow("c2222222-2222-2222-2222-222222222222", testPendenciaSolicitanteID, "comentario", "anexei", testTimeFixo.Add(1)))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_anexos")).
+		WithArgs(testPendenciaSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "nome_arquivo", "content_type", "tamanho_bytes", "created_at"}))
 
 	handler := ObterSolicitacaoHandler(db)
 	req := newPendenciaRequest(http.MethodGet, "/api/solicitacoes/"+testPendenciaSolicitacaoID,
@@ -441,13 +444,16 @@ func TestObterSolicitacaoHandler_PorSolicitanteDono(t *testing.T) {
 func TestObterSolicitacaoHandler_PorAdministradorDono(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao")).
 		WithArgs(testPendenciaSolicitacaoID).
-		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id"}).
-			AddRow("transferencia", "em_atendimento", 1, testPendenciaSolicitanteID, testPendenciaAdministradorID))
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao"}).
+			AddRow("transferencia", "em_atendimento", 1, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_comentarios")).
 		WithArgs(testPendenciaSolicitacaoID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "tipo", "texto", "created_at"}))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_anexos")).
+		WithArgs(testPendenciaSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "nome_arquivo", "content_type", "tamanho_bytes", "created_at"}))
 
 	handler := ObterSolicitacaoHandler(db)
 	req := newPendenciaRequest(http.MethodGet, "/api/solicitacoes/"+testPendenciaSolicitacaoID,
@@ -468,10 +474,10 @@ func TestObterSolicitacaoHandler_PorAdministradorDono(t *testing.T) {
 func TestObterSolicitacaoHandler_Terceiro(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao")).
 		WithArgs(testPendenciaSolicitacaoID).
-		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id"}).
-			AddRow("transferencia", "em_atendimento", 1, testPendenciaSolicitanteID, testPendenciaAdministradorID))
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao"}).
+			AddRow("transferencia", "em_atendimento", 1, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil))
 
 	handler := ObterSolicitacaoHandler(db)
 	req := newPendenciaRequest(http.MethodGet, "/api/solicitacoes/"+testPendenciaSolicitacaoID,
@@ -516,6 +522,108 @@ func TestObterSolicitacaoHandler_IDFormatoInvalido(t *testing.T) {
 		"nao-e-uuid", testPendenciaSolicitanteID, "solicitante", "")
 	rec := httptest.NewRecorder()
 	handler(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, esperado 404 (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// --- BaixarAnexoHandler ---
+
+const testAnexoIDBaixar = "c3333333-3333-3333-3333-333333333333"
+
+func newBaixarAnexoRequest(anexoID, userID string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/api/solicitacoes/anexos/"+anexoID, nil)
+	req.SetPathValue("anexoId", anexoID)
+	claims := jwt.MapClaims{"user_id": userID}
+	ctx := context.WithValue(req.Context(), ClaimsContextKey, claims)
+	return req.WithContext(ctx)
+}
+
+// TestBaixarAnexoHandler_SolicitanteDono cobre "baixar anexo por quem abriu
+// a solicitação" — 200, corpo = conteúdo bruto, Content-Disposition com o
+// nome original.
+func TestBaixarAnexoHandler_SolicitanteDono(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_anexos sa")).
+		WithArgs(testAnexoIDBaixar).
+		WillReturnRows(sqlmock.NewRows([]string{"solicitante_id", "administrador_id"}).
+			AddRow(testPendenciaSolicitanteID, testPendenciaAdministradorID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT nome_arquivo, content_type, dados FROM solicitacao_anexos WHERE id = $1")).
+		WithArgs(testAnexoIDBaixar).
+		WillReturnRows(sqlmock.NewRows([]string{"nome_arquivo", "content_type", "dados"}).
+			AddRow("cotacao.pdf", "application/pdf", []byte("conteudo")))
+
+	handler := BaixarAnexoHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newBaixarAnexoRequest(testAnexoIDBaixar, testPendenciaSolicitanteID))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, esperado 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "conteudo" {
+		t.Fatalf("corpo = %q, esperado o conteúdo bruto do anexo", rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Disposition"), "cotacao.pdf") {
+		t.Fatalf("Content-Disposition não cita o nome do arquivo: %q", rec.Header().Get("Content-Disposition"))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
+// TestBaixarAnexoHandler_Terceiro cobre 403 para quem não é nem o
+// solicitante nem o administrador responsável — mesmo princípio de
+// ObterSolicitacaoHandler.
+func TestBaixarAnexoHandler_Terceiro(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_anexos sa")).
+		WithArgs(testAnexoIDBaixar).
+		WillReturnRows(sqlmock.NewRows([]string{"solicitante_id", "administrador_id"}).
+			AddRow(testPendenciaSolicitanteID, testPendenciaAdministradorID))
+
+	handler := BaixarAnexoHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newBaixarAnexoRequest(testAnexoIDBaixar, testPendenciaOutroID))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, esperado 403 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
+// TestBaixarAnexoHandler_NaoEncontrado cobre id de anexo inexistente -> 404.
+func TestBaixarAnexoHandler_NaoEncontrado(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_anexos sa")).
+		WithArgs(testAnexoIDBaixar).
+		WillReturnError(sql.ErrNoRows)
+
+	handler := BaixarAnexoHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newBaixarAnexoRequest(testAnexoIDBaixar, testPendenciaSolicitanteID))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, esperado 404 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas não cumpridas: %v", err)
+	}
+}
+
+// TestBaixarAnexoHandler_IDFormatoInvalido garante 404 (nunca 400) para um
+// {anexoId} malformado, sem tocar o banco.
+func TestBaixarAnexoHandler_IDFormatoInvalido(t *testing.T) {
+	db, _ := newSQLMock(t)
+
+	handler := BaixarAnexoHandler(db)
+	rec := httptest.NewRecorder()
+	handler(rec, newBaixarAnexoRequest("nao-e-uuid", testPendenciaSolicitanteID))
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, esperado 404 (body=%s)", rec.Code, rec.Body.String())

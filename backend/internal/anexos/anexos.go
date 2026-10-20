@@ -14,17 +14,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
 // DBTX é o subconjunto mínimo de *sql.DB/*sql.Tx que este módulo precisa —
 // mesma convenção local de `internal/aprovacao.DBTX` (interface mínima
 // satisfeita estruturalmente por *sql.Tx, sem import cruzado entre os dois
-// domínios de internal/): só QueryRow, já que tanto o INSERT...RETURNING de
-// Salvar quanto o SELECT de Recuperar dispensam Exec. Permite ao handler
-// passar a MESMA transação que grava `solicitacoes`/`solicitacao_lancamentos`
-// (tudo atômico — Boundaries "Always" da spec 3.4).
+// domínios de internal/). Query (20/10) foi adicionado para Listar — a
+// mesma transação que grava `solicitacoes`/`solicitacao_lancamentos`
+// continua servindo (Boundaries "Always" da spec 3.4).
 type DBTX interface {
 	QueryRow(query string, args ...interface{}) *sql.Row
+	Query(query string, args ...interface{}) (*sql.Rows, error)
 }
 
 // ArquivoDecodificado é um anexo já validado estruturalmente pelo handler
@@ -71,6 +72,45 @@ func Salvar(tx DBTX, solicitacaoID string, nomeArquivo, contentType string, dado
 	}
 
 	return AnexoRef{ID: id, HashSHA256: hashHex}, nil
+}
+
+// AnexoListado é um item de Listar — metadado sem o conteúdo (`dados`),
+// usado por telas de listagem (ex. Fila do Administrador revisando o que
+// foi anexado antes de abrir/baixar).
+type AnexoListado struct {
+	ID           string
+	NomeArquivo  string
+	ContentType  string
+	TamanhoBytes int64
+	CreatedAt    time.Time
+}
+
+// Listar devolve os metadados dos anexos de uma solicitação, mais antigo
+// primeiro — nunca o conteúdo (`dados`), que só Recuperar expõe.
+func Listar(tx DBTX, solicitacaoID string) ([]AnexoListado, error) {
+	rows, err := tx.Query(`
+		SELECT id, nome_arquivo, content_type, tamanho_bytes, created_at
+		FROM solicitacao_anexos
+		WHERE solicitacao_id = $1
+		ORDER BY created_at ASC, id ASC
+	`, solicitacaoID)
+	if err != nil {
+		return nil, fmt.Errorf("anexos: listar solicitacao_anexos (%s): %w", solicitacaoID, err)
+	}
+	defer rows.Close()
+
+	itens := make([]AnexoListado, 0)
+	for rows.Next() {
+		var a AnexoListado
+		if err := rows.Scan(&a.ID, &a.NomeArquivo, &a.ContentType, &a.TamanhoBytes, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("anexos: ler linha de solicitacao_anexos (%s): %w", solicitacaoID, err)
+		}
+		itens = append(itens, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("anexos: iterar solicitacao_anexos (%s): %w", solicitacaoID, err)
+	}
+	return itens, nil
 }
 
 // Recuperar lê um anexo de `solicitacao_anexos` pelo id. Implementado para

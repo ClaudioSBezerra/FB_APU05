@@ -145,6 +145,10 @@ const AbrirSolicitacao = () => {
   ]);
   const [autorizadorId, setAutorizadorId] = useState('');
   const [anexo, setAnexo] = useState<{ nome: string; contentType: string; base64: string } | null>(null);
+  // Fornecedor/Descrição (20/10) — paridade com o formulário legado (Jira):
+  // texto livre, opcionais para todos os tipos, inclusive Obras.
+  const [fornecedor, setFornecedor] = useState('');
+  const [descricao, setDescricao] = useState('');
   const [classificacao, setClassificacao] = useState('inclusao');
   const [obrasLinhas, setObrasLinhas] = useState<LinhaObra[]>([novaLinhaObra()]);
   const [enviando, setEnviando] = useState(false);
@@ -163,6 +167,8 @@ const AbrirSolicitacao = () => {
     setTipo(novoTipo);
     setAutorizadorId('');
     setAnexo(null);
+    setFornecedor('');
+    setDescricao('');
     if (novoTipo === 'transferencia') {
       setLinhas([novaLinhaLancamento('origem'), novaLinhaLancamento('destino')]);
     } else if (novoTipo === 'obras') {
@@ -227,6 +233,8 @@ const AbrirSolicitacao = () => {
     setCentroCustoId('');
     setAutorizadorId('');
     setAnexo(null);
+    setFornecedor('');
+    setDescricao('');
     if (tipo === 'transferencia') {
       setLinhas([novaLinhaLancamento('origem'), novaLinhaLancamento('destino')]);
     } else if (tipo === 'obras') {
@@ -242,11 +250,22 @@ const AbrirSolicitacao = () => {
     try {
       let payload: Record<string, unknown>;
 
+      // Fornecedor/Descrição/Anexo (20/10) — mesmos 3 campos opcionais para
+      // todos os tipos, inclusive Obras (paridade com o formulário legado).
+      const camposComuns = {
+        ...(fornecedor.trim() ? { fornecedor: fornecedor.trim() } : {}),
+        ...(descricao.trim() ? { descricao: descricao.trim() } : {}),
+        ...(anexo
+          ? { anexos: [{ nome_arquivo: anexo.nome, content_type: anexo.contentType, conteudo_base64: anexo.base64 }] }
+          : {}),
+      };
+
       if (tipo === 'obras') {
         payload = {
           tipo_solicitacao: 'obras',
           classificacao,
           autorizador_id: autorizadorId,
+          ...camposComuns,
           obras_linhas: obrasLinhas.map((l) => ({
             local_obra_id: l.localObraId,
             subgrupo_despesa_id: l.subgrupoDespesaId,
@@ -260,13 +279,7 @@ const AbrirSolicitacao = () => {
         payload = {
           tipo_solicitacao: tipo,
           ...(tipo === 'inclusao' || tipo === 'imobilizado' ? { autorizador_id: autorizadorId } : {}),
-          ...(tipo === 'imobilizado' && anexo
-            ? {
-                anexos: [
-                  { nome_arquivo: anexo.nome, content_type: anexo.contentType, conteudo_base64: anexo.base64 },
-                ],
-              }
-            : {}),
+          ...camposComuns,
           lancamentos: linhas.map((l) => ({
             lado: l.lado,
             divisao_id: divisaoId,
@@ -424,14 +437,6 @@ const AbrirSolicitacao = () => {
         </div>
       )}
 
-      {tipo === 'imobilizado' && (
-        <div className="grid gap-1.5">
-          <Label>Anexo de cotação (obrigatório)</Label>
-          <Input type="file" onChange={handleAnexoChange} />
-          {anexo && <p className="text-xs text-muted-foreground">Selecionado: {anexo.nome}</p>}
-        </div>
-      )}
-
       {tipo === 'obras' && (
         <>
           <div className="grid gap-1.5">
@@ -523,6 +528,22 @@ const AbrirSolicitacao = () => {
           </Button>
         </>
       )}
+
+      <div className="grid gap-1.5">
+        <Label>Fornecedor da despesa</Label>
+        <Input value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} placeholder="Opcional" />
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label>Descrição detalhada</Label>
+        <Input value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Opcional — item e onde será aplicado" />
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label>Anexo{tipo === 'imobilizado' ? ' de cotação (obrigatório)' : ' (opcional)'}</Label>
+        <Input type="file" onChange={handleAnexoChange} />
+        {anexo && <p className="text-xs text-muted-foreground">Selecionado: {anexo.nome}</p>}
+      </div>
 
       {precisaAutorizador && (
         <div className="grid gap-1.5">
