@@ -85,10 +85,17 @@ func init() {
 
 // getJWTSecret lê JWT_SECRET do ambiente a cada chamada — garante que
 // godotenv.Load() em main() já tenha efeito antes do primeiro uso.
+//
+// Sem fallback hardcoded (removido 21/10): ValidateJWTSecret() já derruba o
+// processo no boot se a env estiver ausente, então em operação normal esta
+// função nunca vê string vazia — um `log.Fatal` aqui é só a rede de
+// segurança caso algum caminho futuro (um teste, um worker) chame isto sem
+// passar por esse boot-check; um valor conhecido e previsível no binário
+// seria pior do que simplesmente falhar.
 func getJWTSecret() []byte {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		return []byte("super-secret-key-change-me-in-prod")
+		log.Fatal("FATAL: getJWTSecret chamado sem JWT_SECRET setado — ValidateJWTSecret() deveria ter impedido o processo de chegar aqui.")
 	}
 	return []byte(secret)
 }

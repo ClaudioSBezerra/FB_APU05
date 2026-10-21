@@ -105,6 +105,44 @@ services:
       - "traefik.http.routers.fb-apu05-web-http.middlewares=fb-apu05-redirect-https"
       - "traefik.http.middlewares.fb-apu05-redirect-https.redirectscheme.scheme=https"
 
+  # Cloudflare Tunnel (21/10) — conector de saída que expõe este app via
+  # Cloudflare sem abrir nenhuma porta pública na VPS (hoje o IP de origem
+  # fica exposto direto, sem WAF/DDoS/CDN na frente — confirmado via
+  # `curl -I https://controladoria.fbtax.cloud`, headers batem com nginx
+  # puro, sem `cf-ray`). Adicionado em modo DORMENTE de propósito: sem
+  # `CLOUDFLARE_TUNNEL_TOKEN` setado no Coolify, este container fica só
+  # reiniciando e falhando sozinho (restart: always) — não afeta `api`/
+  # `web`/`db` em nada, é um serviço isolado.
+  #
+  # Passo a passo pra ativar (manual, painel Cloudflare — não dá pra
+  # automatizar daqui):
+  #   1. Zero Trust -> Networks -> Tunnels -> Create a tunnel (tipo
+  #      "Cloudflared"), nome ex. "fb-apu05-prod".
+  #   2. Copiar o token gerado e setar CLOUDFLARE_TUNNEL_TOKEN no Coolify
+  #      (nunca commitar o valor real aqui).
+  #   3. Na aba "Public Hostname" do túnel: Subdomain=controladoria,
+  #      Domain=fbtax.cloud, Service=http://web:80 (nome do serviço nesta
+  #      mesma rede docker, não um IP).
+  #   4. Confirmar que o site responde via esse hostname (DNS já é
+  #      apontado automaticamente pelo Cloudflare ao criar o Public
+  #      Hostname — não precisa mexer no DNS manualmente).
+  #   5. SÓ DEPOIS de confirmar que funciona: remover os labels
+  #      `traefik.*` do serviço `web` abaixo (eles ficam de fallback
+  #      enquanto o túnel não está validado) — sem isso, o IP de origem
+  #      continua respondendo em paralelo ao túnel, o que anula boa parte
+  #      do ganho de segurança (DDoS/WAF só protegem quem passa pelo
+  #      Cloudflare).
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: fb_apu05-cloudflared-prod
+    restart: always
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - fb_net
+    depends_on:
+      web:
+        condition: service_healthy
+
   # Banco de Dados
   db:
     image: postgres:15-alpine
