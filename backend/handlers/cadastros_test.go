@@ -2349,6 +2349,62 @@ func TestAtualizarCadastroHandler_ObraOrdens_Success(t *testing.T) {
 	}
 }
 
+// --- centros (21/10) ---
+//
+// 17º {tipo} no MESMO registry — código + nome, sem FK, mesmo padrão
+// simples de classes-imobilizado/locais-obra.
+
+// TestImportarCadastroHandler_Centros_Success cobre "Import feliz".
+func TestImportarCadastroHandler_Centros_Success(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	const centroID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+	csv := "codigo;nome\nC1;Centro Um\n"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
+		WithArgs("cadastro_import_centros").
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM centros)")).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO centros (codigo, nome) VALUES ($1, $2) RETURNING id")).
+		WithArgs("C1", "Centro Um").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(centroID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
+		WithArgs("centros", centroID, `{"codigo":"C1","nome":"Centro Um"}`, testAtorID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	handler := ImportarCadastroHandler(db)
+	req := newCadastroRequest(http.MethodPost, "centros", "", csv)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+// TestCriarRegistroCadastroHandler_Centros_CodigoAusente cobre
+// decodeJSONCentros rejeitando 'codigo' ausente -> 400.
+func TestCriarRegistroCadastroHandler_Centros_CodigoAusente(t *testing.T) {
+	handler := CriarRegistroCadastroHandler(nil)
+	body := `{"nome":"Centro Um"}`
+	req := newCadastroRequest(http.MethodPost, "centros", "", body)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "codigo") {
+		t.Fatalf("corpo não cita o campo ausente: %s", rec.Body.String())
+	}
+}
+
 // TestAtualizarCadastroHandler_ObraOrdens_LocalObraIDInvalido cobre
 // decodeJSONObraOrdens rejeitando 'local_obra_id' que não bate com o
 // formato UUID -> 400, nenhuma query tentada (mesmo padrão de

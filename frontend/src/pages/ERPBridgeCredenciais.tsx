@@ -154,7 +154,7 @@ const ERPBridgeCredenciais = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="oracle_xml">Oracle XML (legado)</SelectItem>
-                  <SelectItem value="sap_s4hana">SAP S/4HANA (FCCORP)</SelectItem>
+                  <SelectItem value="sap_s4hana">Conexão SFC (FCCORP)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

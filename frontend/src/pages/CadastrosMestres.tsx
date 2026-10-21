@@ -242,6 +242,15 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
       { nome: 'uf', label: 'UF', kind: 'texto_opcional' },
     ],
   },
+  {
+    tipo: 'centros',
+    label: 'Centros',
+    csvCabecalho: 'codigo;nome',
+    campos: [
+      { nome: 'codigo', label: 'Código', kind: 'texto' },
+      { nome: 'nome', label: 'Nome', kind: 'texto' },
+    ],
+  },
 ];
 
 type Registro = Record<string, unknown> & { id: string; created_at: string; updated_at: string };

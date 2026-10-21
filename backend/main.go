@@ -400,6 +400,15 @@ func main() {
 	http.HandleFunc("POST /api/erp-bridge/colaboradores/sincronizar", withDB(handlers.SincronizarColaboradoresOracleHandler))
 	http.HandleFunc("POST /api/erp-bridge/fornecedores/sincronizar", withDB(handlers.SincronizarFornecedoresOracleHandler))
 
+	// Sincronização de centros/centros_custo/contas a partir do SAP
+	// S/4HANA (pedido do Marlos, 21/10) — mesma autenticação X-API-Key
+	// acima, mas aqui é o lado ABAP (Maria Eduarda/Duda) quem chama
+	// (empurra), não um conector nosso puxando de lá. Ver
+	// docs/referencia/03-INTEGRACAO-SAP-S4HANA.md.
+	http.HandleFunc("POST /api/erp-bridge/centros/sincronizar", withDB(handlers.SincronizarCentrosSAPHandler))
+	http.HandleFunc("POST /api/erp-bridge/centros-custo/sincronizar", withDB(handlers.SincronizarCentrosCustoSAPHandler))
+	http.HandleFunc("POST /api/erp-bridge/contas/sincronizar", withDB(handlers.SincronizarContasSAPHandler))
+
 	// Abrir solicitação (Story 3.1, FR-5/FR-10) — primeira rota do FB_APU05
 	// que não exige perfil `administrador` (RequireAuth(..., "") — qualquer
 	// solicitante autenticado). Só tipo_solicitacao="transferencia" tem

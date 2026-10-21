@@ -300,6 +300,21 @@ var cadastroRegistry = map[string]cadastroTipo{
 		DecodeCSV:  decodeCSVFornecedores,
 		DecodeJSON: decodeJSONFornecedores,
 	},
+	// "centros" (21/10) — conceito SAP de Plant/Werk (filial/local físico),
+	// pedido do Marlos — mesmo padrão simples de classes-imobilizado/
+	// locais-obra (código + nome, sem FK). Sincronização contínua via SAP
+	// S/4HANA em POST /api/erp-bridge/centros/sincronizar
+	// (centros_sap_sync.go), em paralelo, mesmo princípio de "fornecedores".
+	"centros": {
+		Tabela:       "centros",
+		CSVCabecalho: []string{"codigo", "nome"},
+		Colunas: []colunaDef{
+			{Nome: "codigo", Kind: colString},
+			{Nome: "nome", Kind: colString},
+		},
+		DecodeCSV:  decodeCSVCentros,
+		DecodeJSON: decodeJSONCentros,
+	},
 }
 
 // --- DecodeJSON por tipo (corpo de PUT .../{id}) — mesma ordem de Colunas.
@@ -754,6 +769,20 @@ func decodeJSONFornecedores(corpo map[string]interface{}) ([]interface{}, error)
 		return nil, err
 	}
 	return []interface{}{cgc, razsoc, fantas, uf}, nil
+}
+
+// decodeJSONCentros (21/10) — código + nome diretamente no corpo de PUT,
+// mesmo padrão simples de decodeJSONClassesImobilizado.
+func decodeJSONCentros(corpo map[string]interface{}) ([]interface{}, error) {
+	codigo, err := extractString(corpo, "codigo")
+	if err != nil {
+		return nil, err
+	}
+	nome, err := extractString(corpo, "nome")
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{codigo, nome}, nil
 }
 
 // decodeJSONAprovadoresObra (Story 3.5) aceita colaborador_id JÁ RESOLVIDO

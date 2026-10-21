@@ -673,6 +673,21 @@ func decodeCSVFornecedores(_ *sql.Tx, linha []string) ([]interface{}, error) {
 	return []interface{}{cgc, razsoc, fantas, uf}, nil
 }
 
+// decodeCSVCentros (21/10) — código + nome, sem FK, mesmo padrão simples
+// de decodeCSVClassesImobilizado/decodeCSVLocaisObra. "Centro" aqui é o
+// conceito SAP de Plant/Werk, não tem relação com `divisoes`/`centros_custo`.
+func decodeCSVCentros(_ *sql.Tx, linha []string) ([]interface{}, error) {
+	codigo, err := campoObrigatorio(linha[0], "codigo")
+	if err != nil {
+		return nil, err
+	}
+	nome, err := campoObrigatorio(linha[1], "nome")
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{codigo, nome}, nil
+}
+
 // decodeCSVAprovadoresObra (Story 3.5) resolve colaborador_email ->
 // colaborador_id (usuarios), mesmo padrão OBRIGATÓRIO de
 // decodeCSVAutorizadoresFormulario (sempre pessoa, nunca cargo). Sem
