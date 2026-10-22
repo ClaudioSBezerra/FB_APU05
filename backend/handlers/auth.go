@@ -18,6 +18,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -288,6 +289,12 @@ func LoginHandler(db *sql.DB) http.HandlerFunc {
 		}
 		if req.Email == "" || req.Password == "" {
 			jsonErr(w, http.StatusBadRequest, "Informe e-mail e senha")
+			return
+		}
+
+		accountKey := strings.ToLower(strings.TrimSpace(req.Email))
+		if !LoginByAccountRL.Allow(accountKey) {
+			jsonErr(w, http.StatusTooManyRequests, "Muitas tentativas de login. Tente novamente mais tarde.")
 			return
 		}
 
