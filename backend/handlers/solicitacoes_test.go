@@ -1953,6 +1953,24 @@ func TestValidarAnexos_ContentTypeExcede100(t *testing.T) {
 	}
 }
 
+// TestValidarAnexos_ContentTypeNaoPermitido (22/10, migração de segurança)
+// cobre a allowlist — antes QUALQUER content_type era aceito.
+func TestValidarAnexos_ContentTypeNaoPermitido(t *testing.T) {
+	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: "script.sh", ContentType: "application/x-sh", ConteudoBase64: testAnexoConteudoBase64}}, true)
+	if !strings.Contains(msg, "não permitido") {
+		t.Fatalf("esperada mensagem de content_type não permitido, obtido: %q", msg)
+	}
+}
+
+// TestValidarAnexos_ContentTypePermitidoCaseInsensitive garante que a
+// allowlist não é sensível a maiúsculas (ex. cliente manda "APPLICATION/PDF").
+func TestValidarAnexos_ContentTypePermitidoCaseInsensitive(t *testing.T) {
+	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: "cotacao.pdf", ContentType: "APPLICATION/PDF", ConteudoBase64: testAnexoConteudoBase64}}, true)
+	if msg != "" {
+		t.Fatalf("esperado sem erro (content_type case-insensitive), obtido: %q", msg)
+	}
+}
+
 // TestValidarAnexos_NomeArquivoComAcentosDentroDoLimite prova que a checagem
 // de 255 conta caracteres (runas), não bytes: um nome com exatamente 255
 // caracteres acentuados (multi-byte em UTF-8, portanto >255 bytes) deve ser

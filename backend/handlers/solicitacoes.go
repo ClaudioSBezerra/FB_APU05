@@ -606,6 +606,23 @@ func validarContagemELadoPorTipo(tipo string, linhas []lancamentoValidado) strin
 // não vazio. Devolve os anexos já decodificados para anexos.Salvar gravar
 // dentro da mesma transação mais adiante (Boundaries "Always" da spec:
 // solicitação + lançamento + anexos, tudo ou nada).
+// contentTypesPermitidos (22/10, migração de segurança) — allowlist de
+// anexo de cotação: documento/planilha/imagem são os formatos reais que um
+// fornecedor manda numa cotação; qualquer outro content_type (ex.
+// text/html, application/x-sh) é rejeitado aqui mesmo que o nome do
+// arquivo pareça inofensivo. Antes aceitava QUALQUER content_type
+// informado pelo cliente — mitigado parcialmente pelo `nosniff` do nginx
+// no download, mas é melhor nem persistir o que não deveria.
+var contentTypesPermitidos = map[string]bool{
+	"application/pdf":    true,
+	"image/jpeg":         true,
+	"image/png":          true,
+	"application/msword": true,
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+	"application/vnd.ms-excel": true,
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true,
+}
+
 func validarAnexos(itens []anexoRequest, obrigatorio bool) ([]anexos.ArquivoDecodificado, string) {
 	if len(itens) == 0 {
 		if obrigatorio {
@@ -625,6 +642,9 @@ func validarAnexos(itens []anexoRequest, obrigatorio bool) ([]anexos.ArquivoDeco
 		}
 		if utf8.RuneCountInString(a.ContentType) > 100 {
 			return nil, fmt.Sprintf("anexo %d: campo 'content_type' excede 100 caracteres", n)
+		}
+		if !contentTypesPermitidos[strings.ToLower(strings.TrimSpace(a.ContentType))] {
+			return nil, fmt.Sprintf("anexo %d: tipo de arquivo '%s' não permitido (aceito: PDF, imagem, Word, Excel)", n, a.ContentType)
 		}
 		dados, err := base64.StdEncoding.DecodeString(a.ConteudoBase64)
 		if err != nil || len(dados) == 0 {
