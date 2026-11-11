@@ -91,7 +91,7 @@ const ChangePassword = () => {
               autoComplete="current-password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
-              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
             />
           </div>
           <div>
@@ -106,7 +106,7 @@ const ChangePassword = () => {
               autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
             />
           </div>
           <div>
@@ -121,7 +121,7 @@ const ChangePassword = () => {
               autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
             />
           </div>
           <button

@@ -1,38 +1,44 @@
+@import './styles/catalogo-tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Tema shadcn mapeado para os tokens do Catálogo 2.0 (workspace Business).
+   Formato "H S% L%" porque o tailwind.config usa hsl(var(--x)) para permitir
+   modificadores de opacidade (bg-primary/10). Cada linha cita o token de
+   origem em catalogo-tokens.css — ao mudar um, mude o outro. */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    --background: 210 10% 96.1%;            /* --bg-canvas   #f4f5f6 */
+    --foreground: 200 3.9% 15.1%;           /* --fg-1        #252728 */
 
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card: 0 0% 100%;                      /* --bg-card     #ffffff */
+    --card-foreground: 200 3.9% 15.1%;      /* --fg-1 */
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
+    --popover-foreground: 200 3.9% 15.1%;
 
-    --primary: 222 47% 11%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 93.6 48.4% 43.3%;            /* --green-150   #68a439 (CTA) */
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
+    --secondary: 209 100% 93.9%;            /* --blue-l850   #e0f0ff (CTA secundário soft) */
+    --secondary-foreground: 208.9 55.2% 47.3%; /* --blue-d250 #367bbb */
 
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
+    --muted: 180 5.9% 96.7%;                /* --bg-soft     #f6f7f7 */
+    --muted-foreground: 220 3.2% 37.3%;     /* --fg-helper   #5c5e62 */
 
-    --accent: 210 40% 96%;
-    --accent-foreground: 222 47% 11%;
+    --accent: 210 10% 96.1%;                /* --bg-canvas (hover de menus) */
+    --accent-foreground: 200 3.9% 15.1%;
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 352.6 80.9% 50.8%;       /* --brand-red   #e71c35 */
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 222 47% 11%;
+    --border: 180 2% 90%;                   /* --br-soft     #e5e6e6 */
+    --input: 210 2.4% 83.5%;                /* --br-strong   #d4d5d6 */
+    --ring: 208.8 93.7% 62.9%;              /* --blue        #48a4f9 (foco) */
 
-    --radius: 0.5rem;
+    --radius: 8px;                          /* --r-card */
   }
 }
 
@@ -41,6 +47,9 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-family);
+    font-size: var(--fs-14);
+    line-height: var(--lh-base);
   }
 }

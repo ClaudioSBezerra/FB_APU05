@@ -1,0 +1,207 @@
+/* ════════════════════════════════════════════════════════════════
+   Catálogo 2.0 — Design Tokens
+   Ferreira Costa Parceiros
+   Single source of truth for colors, type, spacing, radii, shadows
+
+   Fonte: colors_and_type.css do artefato "Catálogo 2.0 Design System"
+   (Marlos, 2026-11-11). FB_APU05 adota o workspace Business (--ws-business).
+   Única alteração em relação ao original: a Inter é servida localmente via
+   @fontsource-variable/inter (importada em main.tsx) em vez do @import do
+   Google Fonts — o proxy corporativo bloqueia domínios externos.
+   ════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ─────────────── BRAND ─────────────── */
+  /* Ferreira Costa identity red — used in logo, Catálogo workspace,
+     destructive actions, and the inline "Voltar" back-button text.   */
+  --brand-red:        #e71c35;
+  --brand-red-strong: #b52a40;   /* badge red border + text          */
+  --brand-red-tint:   #fef4f5;   /* error / catálogo soft bg         */
+
+  /* ─────────────── PRIMARY (Green — main CTA family) ─────────────── */
+  --green-50:   #74b740;   /* solid hover                            */
+  --green-150:  #68a439;   /* solid default · stepper active         */
+  --green-250:  #5a8f19;   /* solid pressed · outlined/soft/plain fg */
+  --green-350:  #4f7d2c;   /* stepper label selected                 */
+  --green-l550: #c3e3aa;   /* outlined border · AI loading           */
+  --green-l700: #d8edca;   /* soft hover                             */
+  --green-l850: #ebf6e3;   /* soft default · plain hover bg          */
+
+  /* AI button — angular (conic) gradient border, 4 stops */
+  --ai-stop-1: #8eca5f;    /* 15%  green                             */
+  --ai-stop-2: #eb3e53;    /* 60%  red                               */
+  --ai-stop-3: #ff824e;    /* 82%  orange                            */
+  --ai-stop-4: #cade4e;    /* 100% yellow-green                      */
+  --ai-gradient: conic-gradient(from 180deg, var(--ai-stop-1) 15%, var(--ai-stop-2) 60%, var(--ai-stop-3) 82%, var(--ai-stop-4) 100%);
+  --ai-border:  #8eca5f;   /* fallback / loading-state solid color   */
+
+  /* ─────────────── SECONDARY (Blue — focus, info, secondary CTA) ─── */
+  --blue:       #48a4f9;   /* focus ring · toggle on · radio checked */
+  --blue-d50:   #449ced;   /* checkbox checked bg                    */
+  --blue-d150:  #3d8bd4;   /* secondary solid · badge azul           */
+  --blue-d250:  #367bbb;   /* secondary pressed · switch text        */
+  --blue-d350:  #2f6ba2;   /* modal chip text                        */
+  --blue-l550:  #b3d6f8;
+  --blue-l650:  #bfdffd;   /* switch tab selected border             */
+  --blue-l750:  #d1e8fe;   /* modal chip selected bg                 */
+  --blue-l850:  #e0f0ff;   /* secondary soft bg                      */
+  --blue-l950:  #f6faff;   /* switch tab selected bg · badge azul bg */
+
+  /* ─────────────── SEMANTIC — Alerts ─────────────── */
+  --warn-bg:  #fffcf2; --warn-br:  #f2bd00; --warn-tx:  #594600;
+  --err-bg:   #fef4f5; --err-br:   #be0f2c; --err-tx:   #960c23;
+  --suc-bg:   #f2faf3; --suc-br:   #17a74a; --suc-tx:   #0d5c28;
+  --info-bg:  #f0f8ff; --info-br:  #48a4f9; --info-tx:  #1a4a6b;
+
+  /* ─────────────── SEMANTIC — Score ─────────────── */
+  --score-low:       #eb3e53;  /* baixo */
+  --score-medium:    #ff824e;  /* médio */
+  --score-good:      #cade4e;  /* bom   */
+  --score-excellent: #74b740;  /* ótimo */
+  --score-off:       #d4d5d6;
+
+  /* ─────────────── SEMANTIC — Badges ─────────────── */
+  --badge-blue-bg:   #f6faff; --badge-blue-br:   #3d8bd4; --badge-blue-tx:   #3d8bd4;
+  --badge-gray-bg:   #f5f5f5; --badge-gray-br:   #8f9194; --badge-gray-tx:   #8f9194;
+  --badge-green-bg:  #f0f7e8; --badge-green-br:  #68a439; --badge-green-tx:  #5a8f19;
+  --badge-red-bg:    #fef4f5; --badge-red-br:    #b52a40; --badge-red-tx:    #b52a40;
+  --badge-yellow-bg: #fffcf2; --badge-yellow-br: #c49a00; --badge-yellow-tx: #7a6000;
+
+  /* ─────────────── WORKSPACE IDENTITY ─────────────── */
+  --ws-catalogo:    #e71c35;  /* red       */
+  --ws-pricing:     #74b740;  /* green     */
+  --ws-business:    #e71c35;  /* red       */
+  --ws-ecommerce:   #74b740;  /* green     */
+  --ws-logistic:    #74b740;  /* green     */
+  --ws-gift:        #74b740;  /* green     */
+  --ws-marketplace: #e71c35;  /* red       */
+  /* Workspace deste app (FB_APU05 → Business) */
+  --ws-current:     var(--ws-business);
+
+  /* ─────────────── NEUTRALS ─────────────── */
+  --fg-1:      #252728;  /* primary text · labels                    */
+  --fg-2:      #36383b;  /* AI button active text                    */
+  --fg-3:      #3e4144;  /* "weAd works" wordmark                    */
+  --fg-secondary: #4f5256;  /* tooltips · modal body · sidebar text  */
+  --fg-helper: #5c5e62;  /* helper text                              */
+  --fg-table:  #7e8083;  /* table header                             */
+  --fg-muted:  #8f9194;  /* placeholder · checkbox border · disabled */
+  --fg-faint:  #a0a2a4;  /* score legend                             */
+  --fg-ghost:  #b2b3b5;  /* AI loading label                         */
+  --br-strong: #d4d5d6;  /* table border · score bar off             */
+  --br-soft:   #e5e6e6;  /* card border · modal border               */
+  --br-faint:  #f0f0f0;  /* divider                                  */
+  --bg-canvas: #f4f5f6;  /* app canvas behind cards                  */
+  --bg-soft:   #f6f7f7;  /* sub-canvas · inset                       */
+  --bg-card:   #ffffff;  /* default card                             */
+  --bg-input-disabled: #fafafa;
+  --white:     #ffffff;
+  --black:     #000000;
+
+  /* ─────────────── SPACING ─────────────── */
+  --sp-tiny:    4px;
+  --sp-x-small: 8px;
+  --sp-small:   12px;
+  --sp-medium:  16px;
+  --sp-large:   24px;
+  --sp-x-large: 32px;
+  --sp-huge:    48px;
+
+  /* ─────────────── RADII ─────────────── */
+  --r-button:  4px;   /* buttons · inputs · badges · alerts          */
+  --r-card:    8px;   /* modal · cards · media · upload area         */
+  --r-toggle:  16px;  /* toggle switch track                         */
+  --r-pill:    24px;  /* multiselect tag · modal chip                */
+  --r-ai:      32px;  /* AI button (full pill)                       */
+  --r-stepper: 63px;  /* stepper bar capsule                         */
+  --r-avatar:  100px; /* circular avatar                             */
+
+  /* ─────────────── SHADOWS ─────────────── */
+  --shadow-modal:    0 2px 8px rgba(0,0,0,.12), 0 24px 32px 10px rgba(0,0,0,.08);
+  --shadow-tooltip:  0 4px 2px rgba(0,0,0,.25);
+  --shadow-ai-info:  0 6px 8.5px rgba(0,0,0,.12);
+  --shadow-card:     0 1px 3px rgba(0,0,0,.06);
+  --shadow-popover:  0 4px 16px rgba(0,0,0,.10);
+
+  /* ─────────────── FOCUS RING ─────────────── */
+  --focus-ring: 0 0 0 2px var(--blue);
+
+  /* ─────────────── MOTION ─────────────── */
+  --t-fast:   .15s ease;
+  --t-base:   .2s  ease;
+  --t-slow:   .25s ease;
+  --t-toggle: transform .2s ease;
+  --t-sidebar: width .25s ease;
+
+  /* ─────────────── TYPOGRAPHY — SCALE TOKENS ─────────────── */
+  --font-family:   'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:     ui-monospace, SFMono-Regular, 'SF Mono', Consolas, monospace;
+
+  --fs-9:  9px;   /* badge tiny / icon caption  */
+  --fs-10: 10px;  /* badge · button tiny · AI subtext */
+  --fs-11: 11px;
+  --fs-12: 12px;  /* small button · tooltip · helper · avatar */
+  --fs-13: 13px;  /* placeholder · table cell   */
+  --fs-14: 14px;  /* body · label · medium button */
+  --fs-16: 16px;  /* modal title · large heading */
+  --fs-18: 18px;  /* product header              */
+  --fs-20: 20px;
+  --fs-24: 24px;
+  --fs-32: 32px;  /* score number · page H1     */
+  --fs-64: 64px;  /* display only               */
+
+  --fw-light:    300;
+  --fw-regular:  400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+  --fw-bold:     700;
+
+  --lh-tight: 1.2;
+  --lh-base:  1.5;
+  --lh-loose: 1.75;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   SEMANTIC TYPE STYLES — apply these directly
+   ════════════════════════════════════════════════════════════════ */
+
+html { font-family: var(--font-family); color: var(--fg-1); }
+
+.t-display {
+  font: var(--fw-bold) var(--fs-32)/1.1 var(--font-family);
+  letter-spacing: -.01em;
+  color: var(--fg-1);
+}
+
+.t-h1     { font: var(--fw-bold)     var(--fs-32)/1.15 var(--font-family); letter-spacing: -.005em; color: var(--fg-1); }
+.t-h2     { font: var(--fw-semibold) var(--fs-24)/1.2  var(--font-family); color: var(--fg-1); }
+.t-h3     { font: var(--fw-semibold) var(--fs-18)/1.3  var(--font-family); color: var(--fg-1); }
+.t-h4     { font: var(--fw-semibold) var(--fs-16)/1.3  var(--font-family); color: var(--fg-secondary); } /* modal title */
+
+.t-body         { font: var(--fw-regular) var(--fs-14)/var(--lh-base) var(--font-family); color: var(--fg-1); }
+.t-body-secondary { font: var(--fw-regular) var(--fs-14)/var(--lh-base) var(--font-family); color: var(--fg-secondary); }
+.t-body-sm      { font: var(--fw-regular) var(--fs-12)/var(--lh-base) var(--font-family); color: var(--fg-1); }
+
+.t-label        { font: var(--fw-regular)  var(--fs-14)/var(--lh-base) var(--font-family); color: var(--fg-1); }
+.t-label-sm     { font: var(--fw-regular)  var(--fs-12)/var(--lh-tight) var(--font-family); color: var(--fg-1); }
+.t-helper       { font: var(--fw-regular)  var(--fs-12)/1.3 var(--font-family); color: var(--fg-helper); }
+.t-placeholder  { font: var(--fw-regular)  var(--fs-13)/var(--lh-tight) var(--font-family); color: var(--fg-muted); }
+.t-error        { font: var(--fw-regular)  var(--fs-12)/1.3 var(--font-family); color: var(--err-tx); }
+
+.t-btn-tiny     { font: var(--fw-semibold) var(--fs-10)/16px var(--font-family); text-transform: uppercase; letter-spacing: .04em; }
+.t-btn-small    { font: var(--fw-medium)   var(--fs-12)/16px var(--font-family); }
+.t-btn-medium   { font: var(--fw-medium)   var(--fs-14)/20px var(--font-family); }
+
+.t-badge        { font: var(--fw-medium)   var(--fs-10)/10px var(--font-family); text-transform: uppercase; letter-spacing: .04em; }
+.t-tooltip      { font: var(--fw-medium)   var(--fs-12)/var(--lh-base) var(--font-family); color: var(--fg-secondary); }
+.t-tag          { font: var(--fw-medium)   var(--fs-12)/1.2 var(--font-family); }
+
+.t-table-th     { font: var(--fw-medium)   var(--fs-13)/var(--lh-tight) var(--font-family); color: var(--fg-table); }
+.t-table-td     { font: var(--fw-regular)  var(--fs-13)/var(--lh-base) var(--font-family); color: var(--fg-1); }
+
+.t-eyebrow      { font: var(--fw-bold) var(--fs-10)/1 var(--font-family);
+                  text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
+.t-mono         { font-family: var(--font-mono); }
+
+.t-link         { color: var(--blue-d150); text-decoration: none; cursor: pointer; }
+.t-link:hover   { text-decoration: underline; }

@@ -143,12 +143,12 @@ export function AppRail() {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex flex-col w-14 shrink-0 border-r bg-white h-screen z-20">
+      <div className="flex flex-col w-[54px] shrink-0 border-r bg-card h-screen z-20">
         <div className="flex items-center justify-center h-14 border-b shrink-0">
           <img src="/favicon-fc.png" alt="FC" className="size-8 rounded-lg object-cover" />
         </div>
 
-        <nav className="flex flex-col items-center gap-1 p-2 flex-1 pt-3">
+        <nav className="flex flex-col items-center gap-1 py-2 flex-1 pt-3">
           {items.map((item) => (
             <Tooltip key={item.id}>
               <TooltipTrigger asChild>
@@ -158,7 +158,7 @@ export function AppRail() {
                     'flex items-center justify-center w-10 h-10 rounded-lg transition-colors',
                     active === item.id
                       ? 'bg-primary/10 text-primary'
-                      : 'text-muted-foreground hover:bg-gray-100 hover:text-foreground',
+                      : 'text-muted-foreground hover:bg-border hover:text-foreground',
                   )}
                 >
                   <item.icon className="h-5 w-5" />
@@ -171,7 +171,7 @@ export function AppRail() {
           ))}
         </nav>
 
-        <div className="flex flex-col items-center gap-1 p-2 border-t shrink-0">
+        <div className="flex flex-col items-center gap-1 py-2 border-t shrink-0">
           <DropdownMenu>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -201,7 +201,7 @@ export function AppRail() {
                 {forgotLoading ? 'Enviando...' : 'Esqueci minha senha'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-xs text-red-600 focus:text-red-600 cursor-pointer" onClick={logout}>
+              <DropdownMenuItem className="text-xs text-destructive focus:text-destructive cursor-pointer" onClick={logout}>
                 <LogOut className="mr-2 h-3.5 w-3.5" />
                 Sair
               </DropdownMenuItem>

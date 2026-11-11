@@ -67,7 +67,7 @@ const ForgotPassword = () => {
                 autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
               />
             </div>
             <button
@@ -80,7 +80,7 @@ const ForgotPassword = () => {
           </form>
         )}
 
-        <Link to="/login" className="mt-4 block text-center text-xs text-primary underline hover:no-underline">
+        <Link to="/login" className="mt-4 block text-center text-xs text-link underline hover:no-underline">
           Voltar para o login
         </Link>
       </div>

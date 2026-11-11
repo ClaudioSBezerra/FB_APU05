@@ -48,11 +48,53 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Tokens diretos do Catálogo 2.0 (sem modificador de opacidade).
+        ws: "var(--ws-current)",
+        brand: {
+          red: "var(--brand-red)",
+          "red-strong": "var(--brand-red-strong)",
+          "red-tint": "var(--brand-red-tint)",
+        },
+        cta: {
+          DEFAULT: "var(--green-150)",
+          hover: "var(--green-50)",
+          pressed: "var(--green-250)",
+          soft: "var(--green-l850)",
+          "soft-hover": "var(--green-l700)",
+          outline: "var(--green-l550)",
+        },
+        info: { bg: "var(--info-bg)", border: "var(--info-br)", text: "var(--info-tx)" },
+        success: { bg: "var(--suc-bg)", border: "var(--suc-br)", text: "var(--suc-tx)" },
+        warning: { bg: "var(--warn-bg)", border: "var(--warn-br)", text: "var(--warn-tx)" },
+        danger: { bg: "var(--err-bg)", border: "var(--err-br)", text: "var(--err-tx)" },
+        fg: {
+          secondary: "var(--fg-secondary)",
+          helper: "var(--fg-helper)",
+          table: "var(--fg-table)",
+          muted: "var(--fg-muted)",
+        },
+        canvas: "var(--bg-canvas)",
+        link: "var(--blue-d150)",
       },
+      // Catálogo 2.0: 8px em cards/modais (lg), 4px em tudo que encosta em
+      // texto — botão, input, badge, alerta (md/sm). Ver --r-* em catalogo-tokens.css.
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        lg: "var(--r-card)",
+        md: "var(--r-button)",
+        sm: "var(--r-button)",
+        pill: "var(--r-pill)",
+        avatar: "var(--r-avatar)",
+      },
+      fontFamily: {
+        sans: ["var(--font-family)"],
+        mono: ["var(--font-mono)"],
+      },
+      boxShadow: {
+        card: "var(--shadow-card)",
+        modal: "var(--shadow-modal)",
+        popover: "var(--shadow-popover)",
+        tooltip: "var(--shadow-tooltip)",
+        focus: "var(--focus-ring)",
       },
       keyframes: {
         "accordion-down": {

@@ -184,7 +184,7 @@ const Login = () => {
                 autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
               />
             </div>
             <div>
@@ -198,7 +198,7 @@ const Login = () => {
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
               />
             </div>
             <button
@@ -208,7 +208,7 @@ const Login = () => {
             >
               {submitting ? 'Entrando...' : 'Entrar'}
             </button>
-            <Link to="/esqueci-senha" className="text-center text-xs text-primary underline hover:no-underline">
+            <Link to="/esqueci-senha" className="text-center text-xs text-link underline hover:no-underline">
               Esqueci minha senha
             </Link>
           </form>

@@ -183,7 +183,7 @@ const ERPBridgeCredenciais = () => {
             </div>
             <div className="flex min-w-48 flex-1 flex-col gap-1.5">
               <Label className="text-xs text-muted-foreground">
-                Senha {cfg?.fbtax_password_set && <span className="ml-1 text-green-600">✓ configurada</span>}
+                Senha {cfg?.fbtax_password_set && <span className="ml-1 text-success-text">✓ configurada</span>}
               </Label>
               <div className="relative">
                 <Input
@@ -214,7 +214,7 @@ const ERPBridgeCredenciais = () => {
             </div>
             <div className="flex min-w-36 flex-1 flex-col gap-1.5">
               <Label className="text-xs text-muted-foreground">
-                Senha {cfg?.oracle_senha_set && <span className="ml-1 text-green-600">✓ configurada</span>}
+                Senha {cfg?.oracle_senha_set && <span className="ml-1 text-success-text">✓ configurada</span>}
               </Label>
               <div className="relative">
                 <Input

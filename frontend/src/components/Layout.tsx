@@ -15,7 +15,7 @@ function AppHeader() {
   if (!title) return null;
 
   return (
-    <header className="flex items-center h-12 border-b bg-white px-4 shrink-0">
+    <header className="flex items-center h-12 border-b bg-card px-4 shrink-0">
       <span className="text-sm font-semibold text-foreground">{title}</span>
     </header>
   );

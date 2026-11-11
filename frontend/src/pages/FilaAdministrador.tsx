@@ -473,7 +473,7 @@ const FilaAdministrador = () => {
                       key={a.id}
                       type="button"
                       onClick={() => baixarAnexo(a)}
-                      className="text-left text-primary underline underline-offset-2"
+                      className="text-left text-link underline underline-offset-2"
                     >
                       {a.nome_arquivo} ({Math.ceil(a.tamanho_bytes / 1024)} KB)
                     </button>
