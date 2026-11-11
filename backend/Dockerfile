@@ -19,7 +19,8 @@ COPY backend/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o server .
 
 # Run Stage
-FROM alpine:latest
+# Versão fixa (Trivy DS-0001) — atualizar junto com o golang acima.
+FROM alpine:3.22
 # curl: só para o HEALTHCHECK do docker-compose.prod.yml (GET /api/health)
 RUN apk --no-cache add tzdata ca-certificates curl && \
     ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime
