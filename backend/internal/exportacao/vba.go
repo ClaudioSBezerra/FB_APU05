@@ -72,6 +72,7 @@ type infoSolicitacao struct {
 // GerarLoteDespesa implementa ExportadorSAP.GerarLoteDespesa — ver ordem de
 // validação no cabeçalho do arquivo.
 func (e ExportadorVBA) GerarLoteDespesa(db *sql.DB, solicitacaoIDs []string, administradorID, chaveIdempotencia string, ignorarAvisoVerbaDuplicada bool) (Lote, *Aviso, error) {
+	solicitacaoIDs = deduplicarIDs(solicitacaoIDs) // DW-12
 	if len(solicitacaoIDs) == 0 {
 		return Lote{}, nil, fmt.Errorf("exportacao: lista de solicitacao_ids vazia")
 	}
@@ -307,6 +308,10 @@ func gravarLote(db *sql.DB, solicitacaoIDs []string, administradorID, chaveIdemp
 		return "", fmt.Errorf("exportacao: iniciar transação do lote: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	if err := revalidarSobLock(tx, solicitacaoIDs, administradorID); err != nil { // DW-13
+		return "", err
+	}
 
 	var loteCandidato string
 	if err := tx.QueryRow(`SELECT gen_random_uuid()`).Scan(&loteCandidato); err != nil {

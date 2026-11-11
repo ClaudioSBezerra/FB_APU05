@@ -231,6 +231,10 @@ func TestGerarLoteDespesaHandler_Sucesso(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	mock.ExpectBegin()
+	// revalidarSobLock (DW-13): relê status/dono sob FOR UPDATE antes de gravar.
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT status, administrador_id FROM solicitacoes WHERE id = $1 FOR UPDATE")).
+		WithArgs(testExportSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "administrador_id"}).AddRow("em_atendimento", testExportAdministradorID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT gen_random_uuid()")).
 		WillReturnRows(sqlmock.NewRows([]string{"gen_random_uuid"}).AddRow(testExportLoteID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO exportacoes_sap (lote_id, solicitacao_id, administrador_id, chave_idempotencia)")).
@@ -416,6 +420,10 @@ func TestGerarLoteObraHandler_Sucesso(t *testing.T) {
 			AddRow(nil, "LO1", "SG1", "9999", 100.0))
 
 	mock.ExpectBegin()
+	// revalidarSobLock (DW-13): relê status/dono sob FOR UPDATE antes de gravar.
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT status, administrador_id FROM solicitacoes WHERE id = $1 FOR UPDATE")).
+		WithArgs(testExportObraSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "administrador_id"}).AddRow("em_atendimento", testExportAdministradorID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT lote_id FROM exportacoes_sap WHERE administrador_id = $1 AND chave_idempotencia = $2 LIMIT 1")).
 		WithArgs(testExportAdministradorID, testExportChave).
 		WillReturnError(sql.ErrNoRows)

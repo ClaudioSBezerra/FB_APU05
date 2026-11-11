@@ -62,6 +62,7 @@ const motivoBloqueioSemLinhaValida = "nenhuma linha com ordem de investimento j�
 // GerarLoteObra implementa ExportadorSAP.GerarLoteObra — ver ordem de
 // validação no cabeçalho do arquivo.
 func (e ExportadorVBA) GerarLoteObra(db *sql.DB, solicitacaoIDs []string, administradorID, chaveIdempotencia string) (Lote, []Bloqueio, error) {
+	solicitacaoIDs = deduplicarIDs(solicitacaoIDs) // DW-12
 	if len(solicitacaoIDs) == 0 {
 		return Lote{}, nil, fmt.Errorf("exportacao: lista de solicitacao_ids vazia")
 	}
@@ -219,6 +220,10 @@ func gravarLoteObra(db *sql.DB, solicitacaoIDs []string, administradorID, chaveI
 		return "", fmt.Errorf("exportacao: iniciar transação do lote obra: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	if err := revalidarSobLock(tx, solicitacaoIDs, administradorID); err != nil { // DW-13
+		return "", err
+	}
 
 	loteCandidato, err := loteIDExistenteOuNovo(tx, administradorID, chaveIdempotencia)
 	if err != nil {

@@ -479,7 +479,7 @@ const GestaoUsuarios = () => {
                 <TableCell>
                   <Select
                     value={u.perfil}
-                    onValueChange={(v) => updateMutation.mutate({ id: u.id, body: { perfil: v } })}
+                    onValueChange={(v) => updateMutation.mutate({ id: u.id, body: { perfil: v as 'solicitante' | 'administrador' } })}
                   >
                     <SelectTrigger className="h-8 w-40">
                       <SelectValue />
