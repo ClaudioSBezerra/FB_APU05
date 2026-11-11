@@ -237,9 +237,9 @@ func TestListarFilaHandler_DecoraComSLA(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacoes")).
 		WithArgs(20, 0).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "centro_custo_id", "status", "versao", "created_at"}).
-			AddRow("aaaaaaaa-0000-0000-0000-000000000001", "transferencia", "cc00000-0000-0000-0000-000000000001", "aberta", 1, antiga).
-			AddRow("bbbbbbbb-0000-0000-0000-000000000002", "obras", nil, "aberta", 1, recente))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "centro_custo_id", "codigo", "nome", "status", "versao", "created_at"}).
+			AddRow("aaaaaaaa-0000-0000-0000-000000000001", "transferencia", "cc00000-0000-0000-0000-000000000001", "CC101", "Controladoria", "aberta", 1, antiga).
+			AddRow("bbbbbbbb-0000-0000-0000-000000000002", "obras", nil, nil, nil, "aberta", 1, recente))
 
 	handler := ListarFilaHandler(db)
 	req := newFilaListRequest("")
@@ -270,6 +270,12 @@ func TestListarFilaHandler_DecoraComSLA(t *testing.T) {
 	if resp.Items[1]["centro_custo_id"] != nil {
 		t.Fatalf("centro_custo_id de obras deveria ser nil: %+v", resp.Items[1]["centro_custo_id"])
 	}
+	if resp.Items[0]["centro_custo_codigo"] != "CC101" || resp.Items[0]["centro_custo_nome"] != "Controladoria" {
+		t.Fatalf("código/nome do CC ausentes: %+v", resp.Items[0])
+	}
+	if resp.Items[1]["centro_custo_nome"] != nil {
+		t.Fatalf("centro_custo_nome de obras deveria ser nil: %+v", resp.Items[1]["centro_custo_nome"])
+	}
 	if resp.Items[0]["prazo_limite"] == nil {
 		t.Fatalf("prazo_limite ausente no item: %+v", resp.Items[0])
 	}
@@ -288,8 +294,8 @@ func TestMinhasSolicitacoesHandler_FiltraPorAdministradorLogado(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacoes")).
 		WithArgs(testFilaHandlerAdministradorID, 20, 0).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "centro_custo_id", "status", "versao", "created_at"}).
-			AddRow(testFilaHandlerSolicitacaoID, "inclusao", "cc0000-0000-0000-0000-000000000001", "em_atendimento", 2, time.Now()))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "centro_custo_id", "codigo", "nome", "status", "versao", "created_at"}).
+			AddRow(testFilaHandlerSolicitacaoID, "inclusao", "cc0000-0000-0000-0000-000000000001", "CC101", "Controladoria", "em_atendimento", 2, time.Now()))
 
 	handler := MinhasSolicitacoesHandler(db)
 	req := newFilaListRequest("")
