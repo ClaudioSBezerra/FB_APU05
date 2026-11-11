@@ -58,8 +58,10 @@ interface LinhaLancamento {
   valor: string;
 }
 
+// O local de obra NÃO fica na linha: é escolhido uma vez para a solicitação
+// inteira (obraLocalId) e repetido em cada linha só no payload — o backend
+// continua gravando local_obra_id por linha (solicitacao_obras_linhas).
 interface LinhaObra {
-  localObraId: string;
   subgrupoDespesaId: string;
   ordemInvestimento: string;
   valor: string;
@@ -78,7 +80,7 @@ function novaLinhaLancamento(lado: 'origem' | 'destino'): LinhaLancamento {
 }
 
 function novaLinhaObra(): LinhaObra {
-  return { localObraId: '', subgrupoDespesaId: '', ordemInvestimento: '', valor: '', lado: 'retirada' };
+  return { subgrupoDespesaId: '', ordemInvestimento: '', valor: '', lado: 'retirada' };
 }
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
@@ -130,7 +132,7 @@ function OrdemInvestimentoSelect({
   return (
     <Select value={value} onValueChange={onChange} disabled={!habilitado}>
       <SelectTrigger className="h-9">
-        <SelectValue placeholder={habilitado ? 'Ordem de investimento' : 'Escolha local e subgrupo'} />
+        <SelectValue placeholder={habilitado ? 'Ordem de investimento' : !localObraId ? 'Escolha o local de obra' : 'Escolha o subgrupo'} />
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="CRIAR">CRIAR (nova ordem, só na finalização)</SelectItem>
@@ -279,6 +281,7 @@ const AbrirSolicitacao = () => {
   const [descricao, setDescricao] = useState('');
   const [classificacao, setClassificacao] = useState('inclusao');
   const [obrasLinhas, setObrasLinhas] = useState<LinhaObra[]>([novaLinhaObra()]);
+  const [obraLocalId, setObraLocalId] = useState('');
   const [enviando, setEnviando] = useState(false);
 
   const { data: opcoes, error: opcoesError } = useQuery({
@@ -301,6 +304,7 @@ const AbrirSolicitacao = () => {
       setLinhas([novaLinhaLancamento('origem'), novaLinhaLancamento('destino')]);
     } else if (novoTipo === 'obras') {
       setObrasLinhas([novaLinhaObra()]);
+      setObraLocalId('');
     } else {
       setLinhas([novaLinhaLancamento('destino')]);
     }
@@ -368,6 +372,7 @@ const AbrirSolicitacao = () => {
     } else if (tipo === 'obras') {
       setClassificacao('inclusao');
       setObrasLinhas([novaLinhaObra()]);
+      setObraLocalId('');
     } else {
       setLinhas([novaLinhaLancamento('destino')]);
     }
@@ -395,7 +400,7 @@ const AbrirSolicitacao = () => {
           autorizador_id: autorizadorId,
           ...camposComuns,
           obras_linhas: obrasLinhas.map((l) => ({
-            local_obra_id: l.localObraId,
+            local_obra_id: obraLocalId,
             subgrupo_despesa_id: l.subgrupoDespesaId,
             ordem_investimento: l.ordemInvestimento,
             valor: parseFloat(l.valor) || 0,
@@ -443,7 +448,7 @@ const AbrirSolicitacao = () => {
   const contasDisponiveis = tipo === 'inclusao_sfc' ? opcoes?.contas_sfc ?? [] : opcoes?.contas_bifc ?? [];
   const podeEnviar =
     tipo === 'obras'
-      ? Boolean(autorizadorId) && obrasLinhas.every((l) => l.localObraId && l.subgrupoDespesaId && l.ordemInvestimento && l.valor)
+      ? Boolean(autorizadorId) && Boolean(obraLocalId) && obrasLinhas.every((l) => l.subgrupoDespesaId && l.ordemInvestimento && l.valor)
       : Boolean(centroCustoId) &&
         linhas.every((l) => l.valor && (tipo === 'imobilizado' ? l.classeImobilizadoId : l.contaId && l.mes)) &&
         (tipo !== 'inclusao' && tipo !== 'imobilizado' ? true : Boolean(autorizadorId)) &&
@@ -583,22 +588,45 @@ const AbrirSolicitacao = () => {
             </Select>
           </div>
 
+          <div className="grid gap-1.5">
+            <Label>Local de obra</Label>
+            <Select
+              value={obraLocalId}
+              onValueChange={(v) => {
+                setObraLocalId(v);
+                // A ordem de investimento depende do local — as já escolhidas
+                // podem não existir no local novo, então são limpas.
+                setObrasLinhas((atual) => atual.map((l) => ({ ...l, ordemInvestimento: '' })));
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Escolha o local de obra" />
+              </SelectTrigger>
+              <SelectContent>
+                {(opcoes?.locais_obra ?? []).map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.codigo} — {o.nome}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-fg-helper">Vale para todas as linhas desta solicitação.</p>
+          </div>
+
           {obrasLinhas.map((linha, i) => (
             <div key={i} className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card p-4">
-              <div className="grid gap-1.5">
-                <Label>Local de obra</Label>
-                <Select value={linha.localObraId} onValueChange={(v) => atualizarLinhaObra(i, 'localObraId', v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Escolha" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(opcoes?.locais_obra ?? []).map((o) => (
-                      <SelectItem key={o.id} value={o.id}>
-                        {o.codigo} — {o.nome}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="col-span-2 flex items-center justify-between">
+                <span className="text-sm font-medium text-foreground">Linha {i + 1}</span>
+                {obrasLinhas.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setObrasLinhas((atual) => atual.filter((_, j) => j !== i))}
+                  >
+                    Remover linha
+                  </Button>
+                )}
               </div>
               <div className="grid gap-1.5">
                 <Label>Subgrupo de despesa</Label>
@@ -618,7 +646,7 @@ const AbrirSolicitacao = () => {
               <div className="grid gap-1.5">
                 <Label>Ordem de investimento</Label>
                 <OrdemInvestimentoSelect
-                  localObraId={linha.localObraId}
+                  localObraId={obraLocalId}
                   subgrupoDespesaId={linha.subgrupoDespesaId}
                   value={linha.ordemInvestimento}
                   onChange={(v) => atualizarLinhaObra(i, 'ordemInvestimento', v)}
@@ -635,7 +663,7 @@ const AbrirSolicitacao = () => {
                 />
               </div>
               {classificacao === 'transferencia_saldo' && (
-                <div className="col-span-2 grid gap-1.5">
+                <div className="grid gap-1.5">
                   <Label>Lado</Label>
                   <Select value={linha.lado} onValueChange={(v) => atualizarLinhaObra(i, 'lado', v)}>
                     <SelectTrigger>
@@ -651,7 +679,7 @@ const AbrirSolicitacao = () => {
             </div>
           ))}
 
-          <Button type="button" variant="outline" size="sm" onClick={() => setObrasLinhas((a) => [...a, novaLinhaObra()])}>
+          <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setObrasLinhas((a) => [...a, novaLinhaObra()])}>
             + linha
           </Button>
         </>
