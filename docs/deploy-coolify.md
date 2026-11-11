@@ -1,5 +1,7 @@
 # Deploy FB_APU05 no Coolify — controladoria.fbtax.cloud
 
+> **Obsoleto desde 11/11/2026** — o código migrou para o GitLab interno, que a Hostinger não alcança. Ver [deploy/HOSTINGER-SEM-COOLIFY.md](deploy/HOSTINGER-SEM-COOLIFY.md).
+
 Preparado para o serviço Coolify já existente
 (`claudio-s-bezerra/-f-b_-a-p-u05:main-...`, app "FB_APU05 - Controladoria
 Ferreira Costa", production). Replica a topologia Coolify do FB_APU02
