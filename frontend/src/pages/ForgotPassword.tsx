@@ -73,7 +73,7 @@ const ForgotPassword = () => {
             <button
               type="submit"
               disabled={submitting}
-              className="mt-1 w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              className="mt-1 w-full rounded-md bg-cta px-4 py-2 text-sm font-medium text-white transition-colors duration-150 enabled:hover:bg-cta-hover enabled:active:bg-cta-pressed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
             >
               {submitting ? 'Enviando...' : 'Enviar link de redefinição'}
             </button>

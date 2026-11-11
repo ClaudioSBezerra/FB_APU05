@@ -34,7 +34,7 @@ type PainelConsolidadoResponse = {
 
 function ListaAgrupamento({ titulo, itens }: { titulo: string; itens: PainelItem[] }) {
   return (
-    <div className="flex w-full flex-col gap-2 rounded-md border border-border p-4">
+    <div className="flex w-full flex-col gap-2 rounded-lg border border-border bg-card p-4">
       <h2 className="text-lg font-semibold">{titulo}</h2>
       {itens.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nenhum dado disponível ainda.</p>
@@ -110,7 +110,7 @@ function PainelConsolidado() {
   return (
     <div className="flex flex-col items-center gap-6 bg-background p-6 text-foreground">
       <div className="flex w-full max-w-3xl items-center justify-between">
-        <h1 className="text-2xl font-bold">Painel consolidado de solicitações</h1>
+        <h1 className="text-lg font-semibold text-foreground">Painel consolidado de solicitações</h1>
         {user?.perfil === 'administrador' && (
           <Button size="sm" variant="outline" onClick={recalcularAgora} disabled={recalculando}>
             {recalculando ? 'Recalculando...' : 'Recalcular agora'}

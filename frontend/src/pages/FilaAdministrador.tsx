@@ -454,7 +454,7 @@ const FilaAdministrador = () => {
             <DialogTitle>Histórico da solicitação</DialogTitle>
           </DialogHeader>
           {(detalheQuery.data?.fornecedor || detalheQuery.data?.descricao || (detalheQuery.data?.anexos.length ?? 0) > 0) && (
-            <div className="flex flex-col gap-1.5 rounded-md border border-border p-3 text-sm">
+            <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-card p-3 text-sm">
               {detalheQuery.data?.fornecedor && (
                 <p>
                   <span className="font-medium">Fornecedor:</span> {detalheQuery.data.fornecedor}
@@ -484,7 +484,7 @@ const FilaAdministrador = () => {
           )}
           <div className="flex max-h-72 flex-col gap-2 overflow-y-auto">
             {(detalheQuery.data?.comentarios ?? []).map((c) => (
-              <div key={c.id} className="rounded-md border border-border p-2 text-sm">
+              <div key={c.id} className="rounded-lg border border-border bg-card p-2 text-sm">
                 <p className="text-xs text-muted-foreground">
                   {c.tipo} · {new Date(c.created_at).toLocaleString('pt-BR')}
                 </p>

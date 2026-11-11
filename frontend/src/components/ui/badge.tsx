@@ -4,14 +4,17 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-0",
+  "inline-flex items-center rounded-sm border px-1.5 py-[3px] text-[10px] font-medium uppercase leading-[10px] tracking-[.04em] whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-0",
   {
     variants: {
       variant: {
-        default: "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
-        secondary: "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        destructive: "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
-        outline: "text-foreground",
+        // Nomes shadcn mantidos (usados nas páginas); cores = --badge-* do Catálogo 2.0
+        default: "border-[var(--badge-green-br)] bg-[var(--badge-green-bg)] text-[var(--badge-green-tx)]",
+        secondary: "border-[var(--badge-gray-br)] bg-[var(--badge-gray-bg)] text-[var(--badge-gray-tx)]",
+        destructive: "border-[var(--badge-red-br)] bg-[var(--badge-red-bg)] text-[var(--badge-red-tx)]",
+        outline: "border-[var(--badge-gray-br)] bg-card text-[var(--badge-gray-tx)]",
+        info: "border-[var(--badge-blue-br)] bg-[var(--badge-blue-bg)] text-[var(--badge-blue-tx)]",
+        warning: "border-[var(--badge-yellow-br)] bg-[var(--badge-yellow-bg)] text-[var(--badge-yellow-tx)]",
       },
     },
     defaultVariants: {

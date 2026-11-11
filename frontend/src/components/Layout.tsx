@@ -1,22 +1,35 @@
 import { useLocation } from 'react-router-dom';
 import { AppRail } from '@/components/AppRail';
+import { WORKSPACE } from '@/lib/workspace';
 
-// Header + rail — réplica do AppHeader/AppLayout do FB_APU02 (ver App.tsx de
-// lá), simplificado: sem módulos com abas (FB_APU05 não tem esse conceito
-// ainda, só duas páginas), sem FilialSelector/CompanySwitcher (AD-7).
-const titles: Record<string, string> = {
-  '/painel': 'Painel Consolidado',
-  '/admin/usuarios': 'Gestão de Usuários',
-};
+// Breadcrumb do Catálogo 2.0: navegação real, sempre enraizada no workspace
+// ("Business › Página"), separador › (U+203A). Prefixo mais longo vence.
+const titles: [prefix: string, title: string][] = [
+  ['/solicitacoes/nova', 'Nova solicitação'],
+  ['/admin/usuarios', 'Gestão de usuários'],
+  ['/admin/cadastros', 'Cadastros mestres'],
+  ['/admin/erp-bridge', 'ERP Bridge — credenciais'],
+  ['/painel', 'Painel'],
+  ['/fila', 'Fila do administrador'],
+];
 
 function AppHeader() {
-  const location = useLocation();
-  const title = titles[location.pathname];
-  if (!title) return null;
+  const { pathname } = useLocation();
+  const title = titles.find(([prefix]) => pathname.startsWith(prefix))?.[1];
 
   return (
-    <header className="flex items-center h-12 border-b bg-card px-4 shrink-0">
-      <span className="text-sm font-semibold text-foreground">{title}</span>
+    <header className="flex h-12 shrink-0 items-center border-b bg-card px-4">
+      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-sm">
+        <span className="text-fg-helper">{WORKSPACE}</span>
+        {title && (
+          <>
+            <span aria-hidden className="text-fg-muted">›</span>
+            <span className="font-medium text-foreground" aria-current="page">
+              {title}
+            </span>
+          </>
+        )}
+      </nav>
     </header>
   );
 }
@@ -25,7 +38,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen">
       <AppRail />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-hidden">
         <AppHeader />
         <main className="flex-1 overflow-auto">{children}</main>
       </div>

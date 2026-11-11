@@ -133,7 +133,7 @@ const ERPBridgeCredenciais = () => {
 
       {error && <p className="text-sm text-destructive">{(error as Error).message}</p>}
 
-      <div className="flex flex-col gap-5 rounded-md border border-border p-4">
+      <div className="flex flex-col gap-5 rounded-lg border border-border bg-card p-4">
         <p className="flex items-center gap-2 text-sm font-medium">
           <KeyRound className="h-4 w-4" /> Credenciais do Daemon Bridge
         </p>
@@ -183,7 +183,7 @@ const ERPBridgeCredenciais = () => {
             </div>
             <div className="flex min-w-48 flex-1 flex-col gap-1.5">
               <Label className="text-xs text-muted-foreground">
-                Senha {cfg?.fbtax_password_set && <span className="ml-1 text-success-text">✓ configurada</span>}
+                Senha {cfg?.fbtax_password_set && <span className="ml-1 text-success-text">(configurada)</span>}
               </Label>
               <div className="relative">
                 <Input
@@ -214,7 +214,7 @@ const ERPBridgeCredenciais = () => {
             </div>
             <div className="flex min-w-36 flex-1 flex-col gap-1.5">
               <Label className="text-xs text-muted-foreground">
-                Senha {cfg?.oracle_senha_set && <span className="ml-1 text-success-text">✓ configurada</span>}
+                Senha {cfg?.oracle_senha_set && <span className="ml-1 text-success-text">(configurada)</span>}
               </Label>
               <div className="relative">
                 <Input
@@ -263,7 +263,7 @@ const ERPBridgeCredenciais = () => {
                     type="button"
                     onClick={() => {
                       navigator.clipboard.writeText(apiKey);
-                      toast.success('Chave copiada!');
+                      toast.success('Chave copiada');
                     }}
                     className="p-1 text-muted-foreground hover:text-foreground"
                     title="Copiar"

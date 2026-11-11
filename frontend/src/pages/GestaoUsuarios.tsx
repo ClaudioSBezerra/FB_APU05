@@ -348,7 +348,7 @@ const GestaoUsuarios = () => {
                     atualizados, <strong>{resultadoCarga.ignorados}</strong> ignorados (de {resultadoCarga.total}).
                   </p>
                   {resultadoCarga.erros.length > 0 && (
-                    <div className="max-h-48 overflow-y-auto rounded-md border border-border p-2 text-xs text-destructive">
+                    <div className="max-h-48 overflow-y-auto rounded-lg border border-border bg-card p-2 text-xs text-destructive">
                       {resultadoCarga.erros.map((erro, i) => (
                         <p key={i}>{erro}</p>
                       ))}

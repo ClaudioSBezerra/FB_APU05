@@ -83,7 +83,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   },
   {
     tipo: 'centros-custo',
-    label: 'Centros de Custo',
+    label: 'Centros de custo',
     csvCabecalho: 'codigo;nome;divisao_codigo;filial',
     campos: [
       { nome: 'codigo', label: 'Código', kind: 'texto' },
@@ -104,7 +104,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   },
   {
     tipo: 'classes-imobilizado',
-    label: 'Classes de Imobilizado',
+    label: 'Classes de imobilizado',
     csvCabecalho: 'codigo;nome',
     campos: [
       { nome: 'codigo', label: 'Código', kind: 'texto' },
@@ -153,7 +153,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   },
   {
     tipo: 'regras-aprovacao',
-    label: 'Regras de Aprovação',
+    label: 'Regras de aprovação',
     csvCabecalho: 'precedencia;filial;centro_custo_codigo;valor_minimo;valor_maximo;colaborador_email;papel_aprovador;ativo',
     campos: [
       { nome: 'precedencia', label: 'Precedência', kind: 'numero' },
@@ -168,7 +168,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   },
   {
     tipo: 'gerentes-aprovacao',
-    label: 'Gerentes de Aprovação',
+    label: 'Gerentes de aprovação',
     csvCabecalho: 'centro_custo_codigo;divisao_codigo;colaborador_email;papel_aprovador;teto;ativo',
     campos: [
       { nome: 'centro_custo_id', label: 'Centro de custo', kind: 'uuid_opcional', ref: 'centros-custo', ajuda: 'informe isto OU divisão, não os dois (ambos vazios = global)' },
@@ -181,7 +181,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   },
   {
     tipo: 'autorizadores-formulario',
-    label: 'Autorizadores do Formulário',
+    label: 'Autorizadores do formulário',
     csvCabecalho: 'centro_custo_codigo;valor_minimo;valor_maximo;colaborador_email;ativo',
     campos: [
       { nome: 'centro_custo_codigo', label: 'Centro de custo (código)', kind: 'texto' },
@@ -193,7 +193,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   },
   {
     tipo: 'locais-obra',
-    label: 'Locais de Obra',
+    label: 'Locais de obra',
     csvCabecalho: 'codigo;nome',
     campos: [
       { nome: 'codigo', label: 'Código', kind: 'texto' },
@@ -202,7 +202,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   },
   {
     tipo: 'subgrupos-despesa',
-    label: 'Subgrupos de Despesa',
+    label: 'Subgrupos de despesa',
     csvCabecalho: 'codigo;nome',
     campos: [
       { nome: 'codigo', label: 'Código', kind: 'texto' },
@@ -211,7 +211,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   },
   {
     tipo: 'obra-ordens',
-    label: 'Ordens de Obra',
+    label: 'Ordens de obra',
     csvCabecalho: 'numero_ordem;local_obra_codigo;subgrupo_despesa_codigo;tipo_despesa;tipo_faturamento',
     campos: [
       { nome: 'numero_ordem', label: 'Número da ordem', kind: 'texto' },
@@ -223,7 +223,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   },
   {
     tipo: 'aprovadores-obra',
-    label: 'Aprovadores de Obra',
+    label: 'Aprovadores de obra',
     csvCabecalho: 'colaborador_email;teto;ativo',
     campos: [
       { nome: 'colaborador_id', label: 'Colaborador', kind: 'uuid', ref: 'usuarios' },
@@ -365,7 +365,7 @@ function CampoReferenciaEntidade({
       <div className="flex min-w-0 flex-col gap-1.5">
         <Label>{campo.label}</Label>
         <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 flex-1 truncate rounded-md border border-border px-3 py-2 text-sm">{selecionado.rotulo}</span>
+          <span className="min-w-0 flex-1 truncate rounded-md border border-input bg-card px-3 py-2 text-sm">{selecionado.rotulo}</span>
           <Button type="button" size="sm" variant="outline" onClick={() => { setTrocando(true); setBusca(''); }}>
             Trocar
           </Button>
@@ -383,7 +383,7 @@ function CampoReferenciaEntidade({
         value={busca}
         onChange={(e) => setBusca(e.target.value)}
       />
-      <div className="max-h-40 overflow-y-auto rounded-md border border-border">
+      <div className="max-h-40 overflow-y-auto rounded-md border border-border bg-card">
         {isLoading && <p className="p-2 text-xs text-muted-foreground">Carregando...</p>}
         {!isLoading && filtradas.length === 0 && <p className="p-2 text-xs text-muted-foreground">Nenhum resultado</p>}
         {filtradas.map((o) => (
@@ -630,7 +630,7 @@ const CadastrosMestres = () => {
   return (
     <div className="p-6 flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-foreground">Cadastros Mestres</h1>
+        <h1 className="text-lg font-semibold text-foreground">Cadastros mestres</h1>
         <div className="flex gap-2">
         <Button size="sm" onClick={abrirNovoRegistro}>
           <Plus className="mr-2 h-4 w-4" />

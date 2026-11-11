@@ -229,7 +229,7 @@ function CampoFornecedor({ valor, onChange }: { valor: string; onChange: (v: str
             onChange={(e) => setBusca(e.target.value)}
             onKeyDown={handleKeyDown}
           />
-          <div className="max-h-72 overflow-y-auto rounded-md border border-border">
+          <div className="max-h-72 overflow-y-auto rounded-md border border-border bg-card">
             {buscaDebounced.length < 2 && (
               <p className="p-3 text-xs text-muted-foreground">Digite ao menos 2 caracteres.</p>
             )}
@@ -498,7 +498,7 @@ const AbrirSolicitacao = () => {
 
       {tipo !== 'obras' &&
         linhas.map((linha, i) => (
-          <div key={i} className="grid grid-cols-2 gap-3 rounded-md border border-border p-4">
+          <div key={i} className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card p-4">
             {tipo === 'transferencia' && (
               <div className="col-span-2 text-sm font-medium capitalize">{linha.lado}</div>
             )}
@@ -584,7 +584,7 @@ const AbrirSolicitacao = () => {
           </div>
 
           {obrasLinhas.map((linha, i) => (
-            <div key={i} className="grid grid-cols-2 gap-3 rounded-md border border-border p-4">
+            <div key={i} className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card p-4">
               <div className="grid gap-1.5">
                 <Label>Local de obra</Label>
                 <Select value={linha.localObraId} onValueChange={(v) => atualizarLinhaObra(i, 'localObraId', v)}>

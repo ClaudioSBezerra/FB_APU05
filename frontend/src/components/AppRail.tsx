@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database } from 'lucide-react';
+import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { WORKSPACE } from '@/lib/workspace';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import {
@@ -34,8 +35,10 @@ import { toast } from 'sonner';
 // ser renderizados, são código morto, não copiados aqui). Sem
 // FilialSelector/CompanySwitcher (AD-7, single-company) nem trial_ends_at
 // (sem conceito de trial no FB_APU05).
+const RAIL_KEY = 'fb_apu05.rail.expanded';
+
 const mainItems = [
-  { id: 'nova-solicitacao', icon: FilePlus, label: 'Nova Solicitação', path: '/solicitacoes/nova' },
+  { id: 'nova-solicitacao', icon: FilePlus, label: 'Nova solicitação', path: '/solicitacoes/nova' },
   { id: 'painel', icon: LayoutDashboard, label: 'Painel', path: '/painel' },
 ];
 
@@ -61,6 +64,25 @@ export function AppRail() {
   const [pwConfirm, setPwConfirm] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
+
+  // Preferência por navegador; storage pode falhar (modo privado) — cai em fechado.
+  const [expanded, setExpanded] = useState(() => {
+    try {
+      return localStorage.getItem(RAIL_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  function toggleExpanded() {
+    setExpanded((v) => {
+      try {
+        localStorage.setItem(RAIL_KEY, v ? '0' : '1');
+      } catch {
+        /* sem persistência */
+      }
+      return !v;
+    });
+  }
 
   // Dispara o mesmo fluxo de "esqueci minha senha" da tela de login, mas já
   // com o e-mail do usuário logado — serve para testar se o envio de e-mail
@@ -133,57 +155,91 @@ export function AppRail() {
     ...mainItems,
     ...(user?.perfil === 'administrador'
       ? [
-          { id: 'fila', icon: ListChecks, label: 'Fila do Administrador', path: '/fila' },
-          { id: 'usuarios', icon: Users, label: 'Gestão de Usuários', path: '/admin/usuarios' },
-          { id: 'cadastros', icon: Database, label: 'Cadastros Mestres', path: '/admin/cadastros' },
-          { id: 'erp-bridge', icon: Plug, label: 'ERP Bridge — Credenciais', path: '/admin/erp-bridge' },
+          { id: 'fila', icon: ListChecks, label: 'Fila do administrador', path: '/fila' },
+          { id: 'usuarios', icon: Users, label: 'Gestão de usuários', path: '/admin/usuarios' },
+          { id: 'cadastros', icon: Database, label: 'Cadastros mestres', path: '/admin/cadastros' },
+          { id: 'erp-bridge', icon: Plug, label: 'ERP Bridge — credenciais', path: '/admin/erp-bridge' },
         ]
       : []),
   ];
 
+  const navItemCls = (isActive: boolean) =>
+    cn(
+      'mx-[7px] flex h-10 items-center gap-3 rounded-md px-[10px] text-sm whitespace-nowrap transition-colors duration-150',
+      isActive
+        ? 'bg-cta-soft font-medium text-cta-pressed'
+        : 'text-fg-secondary hover:bg-border hover:text-foreground',
+    );
+
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex flex-col w-[54px] shrink-0 border-r bg-card h-screen z-20">
-        <div className="flex items-center justify-center h-14 border-b shrink-0">
-          <img src="/favicon-fc.png" alt="FC" className="size-8 rounded-lg object-cover" />
+      {/* Catálogo 2.0: sidebar 54px fechada / 240px aberta (contrato do DS),
+          transição de largura .25s. Chip do workspace no topo-esquerdo. */}
+      <div
+        className={cn(
+          'z-20 flex h-screen shrink-0 flex-col overflow-hidden border-r bg-card transition-[width] duration-[250ms] ease-in-out',
+          expanded ? 'w-[240px]' : 'w-[54px]',
+        )}
+      >
+        <div className="flex h-14 shrink-0 items-center gap-3 border-b px-[11px]">
+          <img src="/favicon-fc.png" alt="Ferreira Costa" className="size-8 shrink-0 rounded-md object-cover" />
+          {expanded && (
+            <div className="min-w-0 leading-tight">
+              <p className="truncate text-sm font-semibold text-foreground">{WORKSPACE}</p>
+              <p className="truncate text-xs text-fg-helper">Controladoria</p>
+            </div>
+          )}
         </div>
 
-        <nav className="flex flex-col items-center gap-1 py-2 flex-1 pt-3">
+        <nav className="flex flex-1 flex-col gap-1 py-2 pt-3">
           {items.map((item) => (
             <Tooltip key={item.id}>
               <TooltipTrigger asChild>
                 <button
                   onClick={() => navigate(item.path)}
-                  className={cn(
-                    'flex items-center justify-center w-10 h-10 rounded-lg transition-colors',
-                    active === item.id
-                      ? 'bg-primary/10 text-primary'
-                      : 'text-muted-foreground hover:bg-border hover:text-foreground',
-                  )}
+                  aria-label={item.label}
+                  aria-current={active === item.id ? 'page' : undefined}
+                  className={navItemCls(active === item.id)}
                 >
-                  <item.icon className="h-5 w-5" />
+                  <item.icon className="size-5 shrink-0" />
+                  {expanded && <span className="truncate">{item.label}</span>}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="right" className="text-xs">
-                {item.label}
-              </TooltipContent>
+              {!expanded && (
+                <TooltipContent side="right">{item.label}</TooltipContent>
+              )}
             </Tooltip>
           ))}
         </nav>
 
-        <div className="flex flex-col items-center gap-1 py-2 border-t shrink-0">
+        <div className="flex shrink-0 flex-col gap-1 border-t py-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={toggleExpanded}
+                aria-label={expanded ? 'Recolher menu' : 'Expandir menu'}
+                className={navItemCls(false)}
+              >
+                {expanded ? <PanelLeftClose className="size-5 shrink-0" /> : <PanelLeftOpen className="size-5 shrink-0" />}
+                {expanded && <span className="truncate">Recolher menu</span>}
+              </button>
+            </TooltipTrigger>
+            {!expanded && <TooltipContent side="right">Expandir menu</TooltipContent>}
+          </Tooltip>
+
           <DropdownMenu>
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
-                  <button className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-colors">
-                    {initials}
+                  <button aria-label="Conta" className={cn(navItemCls(false), 'px-[6px]')}>
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-avatar bg-cta-soft text-xs font-semibold text-cta-pressed">
+                      {initials}
+                    </span>
+                    {expanded && <span className="truncate">{user?.nome}</span>}
                   </button>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
-              <TooltipContent side="right" className="text-xs">
-                {user?.nome}
-              </TooltipContent>
+              {!expanded && <TooltipContent side="right">{user?.nome}</TooltipContent>}
             </Tooltip>
 
             <DropdownMenuContent side="right" align="end" className="w-52">
@@ -223,7 +279,7 @@ export function AppRail() {
       >
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Trocar Senha</DialogTitle>
+            <DialogTitle>Trocar senha</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid gap-1.5">
