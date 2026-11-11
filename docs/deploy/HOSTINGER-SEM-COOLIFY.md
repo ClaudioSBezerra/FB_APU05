@@ -1,6 +1,13 @@
-# Deploy FB_APU05 na Hostinger sem Coolify
+# Deploy FB_APU05 na Hostinger: Coolify e script
 
-Substitui [../deploy-coolify.md](../deploy-coolify.md) a partir de 11/11/2026.
+> **Desde 12/11/2026:** o GitHub voltou a funcionar na rede da FC. O código vai para **os dois**
+> repositórios (GitLab oficial, com o pipeline da AppSec, e GitHub). O deploy normal volta a ser
+> pelo **Coolify**, que puxa do GitHub. O `scripts/deploy_hostinger.sh`, que puxa do GitLab, fica
+> como **plano B** se o GitHub for bloqueado de novo. Os dois usam o **mesmo volume do banco**
+> (`fb_apu05_postgres_data_prod`). Veja a seção [Coolify e script](#coolify-e-script).
+
+Histórico: este documento substituiu [../deploy-coolify.md](../deploy-coolify.md) em 11/11/2026,
+quando o GitHub foi bloqueado.
 
 ## Por que mudou
 
@@ -159,3 +166,53 @@ volume antigo, que a migração não alterou.
 
 Apague o recurso FB_APU05 no Coolify e, por último, o volume antigo. Faça isso só depois de
 conferir que o backup do passo 2 existe.
+
+---
+
+## Coolify e script
+
+### Repositórios
+
+- `origin`: busca no GitLab e envia para **GitLab e GitHub** ao mesmo tempo (dois `pushurl`).
+  Um `git push origin main` atualiza os dois.
+- `gitlab`: só o GitLab. Use para branches de merge request, porque as opções
+  `-o merge_request.*` só existem no GitLab:
+  `git push -u gitlab <branch> -o merge_request.create -o merge_request.target=main`.
+- `github`: só o GitHub.
+
+O merge request é aprovado e mesclado no GitLab. Depois, `git pull origin main && git push origin main`
+leva o merge também ao GitHub, e o Coolify publica.
+
+### Regra de ouro
+
+**Só um dos dois pode estar rodando:** o recurso FB_APU05 do Coolify ou a stack `fb_apu05` do script.
+Os dois `cloudflared` usam o mesmo token de túnel, então rodando juntos o tráfego se divide. Os dois
+Postgres também montariam o mesmo volume ao mesmo tempo e corromperiam o banco.
+
+- O script **recusa** subir se o Coolify estiver rodando.
+- O Coolify **não** sabe da stack do script. Antes de dar Deploy ou Start nele, derrube a stack:
+
+```bash
+ssh hostinger-fc 'cd /opt/apps/fb_apu05/current && docker compose -p fb_apu05 -f docker-compose.prod.yml --env-file /opt/apps/fb_apu05/.env down'
+```
+
+Use `down` **sem `-v`**: o volume é externo e o compose não o apaga, mas não arrisque.
+
+### Script → Coolify (modo normal)
+
+1. Com o `docker-compose.prod.yml` já usando o volume externo (12/11), garanta que o GitHub está
+   atualizado: `git push origin main`.
+2. Derrube a stack do script (comando acima).
+3. No Coolify, no app **FB_APU05**, clique em **Deploy** e depois religue o **Auto Deploy**.
+4. Confira que o Postgres do Coolify montou o volume certo. A saída tem que ser `fb_apu05_postgres_data_prod`:
+   ```bash
+   ssh hostinger-fc 'docker inspect $(docker ps -q --filter name=db-d0g84w44sso0k8okwgsco4g4) --format "{{range .Mounts}}{{.Name}}{{end}}"'
+   ```
+   Se aparecer outro nome, o Coolify criou um volume novo (banco vazio). Pare o app no Coolify e
+   suba a stack do script de novo; os dados reais continuam intactos no volume externo.
+5. `https://controladoria.fbtax.cloud/api/health` deve responder `{"status":"ok"}`.
+
+### Coolify → script (GitHub bloqueado)
+
+1. No Coolify, desligue o **Auto Deploy** e clique em **Stop** no app FB_APU05.
+2. Rode `./scripts/deploy_hostinger.sh` do WSL. Ele publica o `main` do GitLab no mesmo banco.
