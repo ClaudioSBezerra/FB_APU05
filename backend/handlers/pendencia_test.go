@@ -392,10 +392,10 @@ func TestComentarSolicitacaoHandler_NaoEncontrada(t *testing.T) {
 func TestObterSolicitacaoHandler_PorSolicitanteDono(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material")).
 		WithArgs(testPendenciaSolicitacaoID).
-		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao"}).
-			AddRow("transferencia", "pendente", 2, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao", "fornecedor_cnpj", "fornecedor_nao_cadastrado", "quantidade_material"}).
+			AddRow("transferencia", "pendente", 2, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil, nil, false, nil))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_comentarios")).
 		WithArgs(testPendenciaSolicitacaoID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "tipo", "texto", "created_at"}).
@@ -444,10 +444,10 @@ func TestObterSolicitacaoHandler_PorSolicitanteDono(t *testing.T) {
 func TestObterSolicitacaoHandler_PorAdministradorDono(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material")).
 		WithArgs(testPendenciaSolicitacaoID).
-		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao"}).
-			AddRow("transferencia", "em_atendimento", 1, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao", "fornecedor_cnpj", "fornecedor_nao_cadastrado", "quantidade_material"}).
+			AddRow("transferencia", "em_atendimento", 1, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil, nil, false, nil))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_comentarios")).
 		WithArgs(testPendenciaSolicitacaoID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "tipo", "texto", "created_at"}))
@@ -474,10 +474,10 @@ func TestObterSolicitacaoHandler_PorAdministradorDono(t *testing.T) {
 func TestObterSolicitacaoHandler_Terceiro(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material")).
 		WithArgs(testPendenciaSolicitacaoID).
-		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao"}).
-			AddRow("transferencia", "em_atendimento", 1, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao", "fornecedor_cnpj", "fornecedor_nao_cadastrado", "quantidade_material"}).
+			AddRow("transferencia", "em_atendimento", 1, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil, nil, false, nil))
 
 	handler := ObterSolicitacaoHandler(db)
 	req := newPendenciaRequest(http.MethodGet, "/api/solicitacoes/"+testPendenciaSolicitacaoID,

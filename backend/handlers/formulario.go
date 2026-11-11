@@ -58,6 +58,24 @@ func listarOpcoes(db *sql.DB, query string) ([]opcaoItem, error) {
 	return itens, rows.Err()
 }
 
+// todosCentrosCusto lista todos os CCs (destino de Transferência).
+func todosCentrosCusto(db *sql.DB) ([]centroCustoOpcao, error) {
+	rows, err := db.Query(`SELECT id, codigo, nome, divisao_id FROM centros_custo ORDER BY codigo`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	itens := make([]centroCustoOpcao, 0)
+	for rows.Next() {
+		var item centroCustoOpcao
+		if err := rows.Scan(&item.ID, &item.Codigo, &item.Nome, &item.DivisaoID); err != nil {
+			return nil, err
+		}
+		itens = append(itens, item)
+	}
+	return itens, rows.Err()
+}
+
 func centrosCustoAutorizados(db *sql.DB, usuarioID string) ([]centroCustoOpcao, error) {
 	rows, err := db.Query(`
 		SELECT cc.id, cc.codigo, cc.nome, cc.divisao_id
@@ -154,15 +172,25 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Destino de Transferência (11/11, item 2): pode ser QUALQUER CC, não
+		// só os autorizados ao solicitante (a permissão vale para a origem).
+		centrosCustoDestino, err := todosCentrosCusto(db)
+		if err != nil {
+			log.Printf("[Formulario] Erro ao consultar centros de custo de destino: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"centros_custo":       centrosCusto,
-			"divisoes":            divisoes,
-			"contas_bifc":         contasBifc,
-			"contas_sfc":          contasSfc,
-			"classes_imobilizado": classesImobilizado,
-			"locais_obra":         locaisObra,
-			"subgrupos_despesa":   subgruposDespesa,
+			"centros_custo":         centrosCusto,
+			"centros_custo_destino": centrosCustoDestino,
+			"divisoes":              divisoes,
+			"contas_bifc":           contasBifc,
+			"contas_sfc":            contasSfc,
+			"classes_imobilizado":   classesImobilizado,
+			"locais_obra":           locaisObra,
+			"subgrupos_despesa":     subgruposDespesa,
 		})
 	}
 }

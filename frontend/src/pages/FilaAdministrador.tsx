@@ -73,6 +73,9 @@ interface DetalheSolicitacao {
   descricao: string | null;
   anexos: AnexoDetalhe[];
   comentarios: Comentario[];
+  fornecedor_cnpj?: string | null;
+  fornecedor_nao_cadastrado?: boolean;
+  quantidade_material?: number | null;
 }
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
@@ -537,11 +540,20 @@ const FilaAdministrador = () => {
           <DialogHeader>
             <DialogTitle>Histórico da solicitação</DialogTitle>
           </DialogHeader>
-          {(detalheQuery.data?.fornecedor || detalheQuery.data?.descricao || (detalheQuery.data?.anexos.length ?? 0) > 0) && (
+          {(detalheQuery.data?.fornecedor || detalheQuery.data?.descricao || detalheQuery.data?.quantidade_material || (detalheQuery.data?.anexos.length ?? 0) > 0) && (
             <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-card p-3 text-sm">
+              {detalheQuery.data?.quantidade_material ? (
+                <p>
+                  <span className="font-medium">Quantidade do material:</span> {detalheQuery.data.quantidade_material.toLocaleString('pt-BR')}
+                </p>
+              ) : null}
               {detalheQuery.data?.fornecedor && (
                 <p>
                   <span className="font-medium">Fornecedor:</span> {detalheQuery.data.fornecedor}
+                  {detalheQuery.data.fornecedor_cnpj && <span className="text-fg-helper"> · {detalheQuery.data.fornecedor_cnpj}</span>}
+                  {detalheQuery.data.fornecedor_nao_cadastrado && (
+                    <Badge variant="warning" className="ml-2">Não cadastrado</Badge>
+                  )}
                 </p>
               )}
               {detalheQuery.data?.descricao && (

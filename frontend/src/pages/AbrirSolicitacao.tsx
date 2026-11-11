@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -42,6 +42,8 @@ interface CentroCustoOpcao extends OpcaoItem {
 
 interface OpcoesFormulario {
   centros_custo: CentroCustoOpcao[];
+  // Todos os CCs (destino de Transferência, 11/11) — centros_custo traz só os autorizados.
+  centros_custo_destino?: CentroCustoOpcao[];
   divisoes: OpcaoItem[];
   contas_bifc: OpcaoItem[];
   contas_sfc: OpcaoItem[];
@@ -146,6 +148,136 @@ function OrdemInvestimentoSelect({
   );
 }
 
+// Busca sem acento/caixa: "manutencao" acha "Manutenção".
+const normalizar = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+const reais = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
+// ContaCombobox (11/11, item 1) — escolha de conta com busca por qualquer
+// parte do código OU da descrição (todos os termos digitados precisam
+// aparecer, em qualquer ordem). Teclado: ↑/↓ navega, Enter escolhe, Esc fecha.
+function ContaCombobox({
+  value,
+  onChange,
+  opcoes,
+  placeholder = 'Escolha a conta',
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  opcoes: OpcaoItem[];
+  placeholder?: string;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [busca, setBusca] = useState('');
+  const [indice, setIndice] = useState(0);
+  const raiz = useRef<HTMLDivElement>(null);
+  const selecionada = opcoes.find((o) => o.id === value);
+
+  const resultados = useMemo(() => {
+    const termos = normalizar(busca).split(/\s+/).filter(Boolean);
+    if (termos.length === 0) return opcoes;
+    return opcoes.filter((o) => {
+      const alvo = normalizar(`${o.codigo} ${o.nome}`);
+      return termos.every((t) => alvo.includes(t));
+    });
+  }, [busca, opcoes]);
+  const visiveis = resultados.slice(0, 60);
+
+  useEffect(() => {
+    if (!aberto) return;
+    function fora(e: MouseEvent) {
+      if (raiz.current && !raiz.current.contains(e.target as Node)) setAberto(false);
+    }
+    document.addEventListener('mousedown', fora);
+    return () => document.removeEventListener('mousedown', fora);
+  }, [aberto]);
+
+  function escolher(o: OpcaoItem) {
+    onChange(o.id);
+    setAberto(false);
+    setBusca('');
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setIndice((i) => Math.min(i + 1, visiveis.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setIndice((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter' && visiveis[indice]) {
+      e.preventDefault();
+      escolher(visiveis[indice]);
+    } else if (e.key === 'Escape') {
+      setAberto(false);
+    }
+  }
+
+  return (
+    <div ref={raiz} className="relative">
+      {aberto ? (
+        <Input
+          autoFocus
+          role="combobox"
+          aria-expanded="true"
+          placeholder="Digite parte do código ou da descrição"
+          value={busca}
+          onChange={(e) => {
+            setBusca(e.target.value);
+            setIndice(0);
+          }}
+          onKeyDown={handleKeyDown}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            setAberto(true);
+            setIndice(0);
+          }}
+          className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-card px-3 py-2 text-left text-sm focus:outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+        >
+          <span className={selecionada ? 'truncate text-foreground' : 'truncate text-fg-muted'}>
+            {selecionada ? `${selecionada.codigo} — ${selecionada.nome}` : placeholder}
+          </span>
+          <Search className="size-4 shrink-0 text-fg-muted" />
+        </button>
+      )}
+      {aberto && (
+        <div className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-md border border-border bg-card shadow-popover" role="listbox">
+          {visiveis.length === 0 && <p className="p-3 text-xs text-fg-helper">Nenhuma conta encontrada.</p>}
+          {visiveis.map((o, i) => (
+            <button
+              key={o.id}
+              type="button"
+              role="option"
+              aria-selected={o.id === value}
+              className={`block w-full px-3 py-2 text-left text-sm ${i === indice ? 'bg-muted' : 'hover:bg-muted/60'}`}
+              onMouseEnter={() => setIndice(i)}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => escolher(o)}
+            >
+              <span className="font-medium">{o.codigo}</span> — {o.nome}
+            </button>
+          ))}
+          {resultados.length > visiveis.length && (
+            <p className="border-t border-border p-2 text-xs text-fg-helper">
+              Mostrando {visiveis.length} de {resultados.length}. Digite mais para refinar.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// CNPJ (14) / CPF (11) com máscara — só exibição; o backend guarda dígitos.
+function formatarDocumento(valor: string) {
+  const d = valor.replace(/\D/g, '').slice(0, 14);
+  if (d.length <= 11) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})$/, '$1.$2.$3-$4');
+  return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{1,2})$/, '$1.$2.$3/$4-$5');
+}
+
 interface FornecedorOpcao {
   id: string;
   cgc: string;
@@ -163,7 +295,21 @@ interface FornecedorOpcao {
 // (seta ↑/↓ troca, Enter ou clique confirma), igual ao pedido do negócio.
 // Debounce de 300ms: a rota é ILIKE sem índice de trigram, não dá pra
 // disparar uma query por tecla.
-function CampoFornecedor({ valor, onChange }: { valor: string; onChange: (v: string) => void }) {
+function CampoFornecedor({
+  valor,
+  onChange,
+  cnpj,
+  onCnpjChange,
+  naoCadastrado,
+  onNaoCadastradoChange,
+}: {
+  valor: string;
+  onChange: (v: string) => void;
+  cnpj: string;
+  onCnpjChange: (v: string) => void;
+  naoCadastrado: boolean;
+  onNaoCadastradoChange: (v: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [busca, setBusca] = useState('');
   const [buscaDebounced, setBuscaDebounced] = useState('');
@@ -191,8 +337,11 @@ function CampoFornecedor({ valor, onChange }: { valor: string; onChange: (v: str
     setOpen(true);
   }
 
+  // A consulta traz o CNPJ junto (11/11, item 4) e desmarca "não cadastrado".
   function selecionar(f: FornecedorOpcao) {
     onChange(f.razsoc);
+    onCnpjChange(f.cgc);
+    onNaoCadastradoChange(false);
     setOpen(false);
   }
 
@@ -212,12 +361,30 @@ function CampoFornecedor({ valor, onChange }: { valor: string; onChange: (v: str
   return (
     <div className="grid gap-1.5">
       <Label>Fornecedor da despesa</Label>
-      <div className="flex gap-2">
-        <Input value={valor} onChange={(e) => onChange(e.target.value)} placeholder="Opcional" />
-        <Button type="button" variant="outline" size="icon" onClick={abrirPopup} title="Consultar fornecedor cadastrado">
-          <Search className="h-4 w-4" />
-        </Button>
+      <div className="grid gap-2 sm:grid-cols-[1fr_200px]">
+        <div className="flex gap-2">
+          <Input value={valor} onChange={(e) => onChange(e.target.value)} placeholder="Opcional" />
+          <Button type="button" variant="outline" size="icon" onClick={abrirPopup} title="Consultar fornecedor cadastrado">
+            <Search className="h-4 w-4" />
+          </Button>
+        </div>
+        <Input
+          value={formatarDocumento(cnpj)}
+          onChange={(e) => onCnpjChange(e.target.value.replace(/\D/g, '').slice(0, 14))}
+          placeholder="CNPJ"
+          inputMode="numeric"
+          aria-label="CNPJ do fornecedor"
+        />
       </div>
+      <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-fg-secondary">
+        <input
+          type="checkbox"
+          className="size-4 cursor-pointer accent-[var(--blue-d50)]"
+          checked={naoCadastrado}
+          onChange={(e) => onNaoCadastradoChange(e.target.checked)}
+        />
+        Fornecedor não cadastrado
+      </label>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
@@ -250,7 +417,7 @@ function CampoFornecedor({ valor, onChange }: { valor: string; onChange: (v: str
                 onClick={() => selecionar(f)}
               >
                 <span className="font-medium">{f.razsoc}</span>
-                {f.fantas ? ` (${f.fantas})` : ''} — {f.cgc}
+                {f.fantas ? ` (${f.fantas})` : ''} — {formatarDocumento(f.cgc)}
                 {f.uf ? ` — ${f.uf}` : ''}
               </button>
             ))}
@@ -279,6 +446,12 @@ const AbrirSolicitacao = () => {
   // texto livre, opcionais para todos os tipos, inclusive Obras.
   const [fornecedor, setFornecedor] = useState('');
   const [descricao, setDescricao] = useState('');
+  const [fornecedorCnpj, setFornecedorCnpj] = useState('');
+  const [fornecedorNaoCadastrado, setFornecedorNaoCadastrado] = useState(false);
+  // Transferência (11/11, item 2): CC do destino ('' = mesmo CC da origem).
+  const [ccDestinoId, setCcDestinoId] = useState('');
+  // Imobilizado (11/11, item 8).
+  const [quantidadeMaterial, setQuantidadeMaterial] = useState('');
   const [classificacao, setClassificacao] = useState('inclusao');
   const [obrasLinhas, setObrasLinhas] = useState<LinhaObra[]>([novaLinhaObra()]);
   const [obraLocalId, setObraLocalId] = useState('');
@@ -300,6 +473,10 @@ const AbrirSolicitacao = () => {
     setAnexo(null);
     setFornecedor('');
     setDescricao('');
+    setFornecedorCnpj('');
+    setFornecedorNaoCadastrado(false);
+    setCcDestinoId('');
+    setQuantidadeMaterial('');
     if (novoTipo === 'transferencia') {
       setLinhas([novaLinhaLancamento('origem'), novaLinhaLancamento('destino')]);
     } else if (novoTipo === 'obras') {
@@ -311,6 +488,12 @@ const AbrirSolicitacao = () => {
   }
 
   const centroCustoSelecionado = opcoes?.centros_custo.find((cc) => cc.id === centroCustoId);
+
+  const linhasOrigem = linhas.filter((l) => l.lado === 'origem');
+  const somaOrigens = Math.round(linhasOrigem.reduce((acc, l) => acc + (parseFloat(l.valor) || 0), 0) * 100) / 100;
+  const ccDestino = ccDestinoId
+    ? opcoes?.centros_custo_destino?.find((cc) => cc.id === ccDestinoId)
+    : centroCustoSelecionado;
 
   const valorParaAutorizador = useMemo(() => {
     if (tipo === 'obras') {
@@ -367,6 +550,10 @@ const AbrirSolicitacao = () => {
     setAnexo(null);
     setFornecedor('');
     setDescricao('');
+    setFornecedorCnpj('');
+    setFornecedorNaoCadastrado(false);
+    setCcDestinoId('');
+    setQuantidadeMaterial('');
     if (tipo === 'transferencia') {
       setLinhas([novaLinhaLancamento('origem'), novaLinhaLancamento('destino')]);
     } else if (tipo === 'obras') {
@@ -388,6 +575,8 @@ const AbrirSolicitacao = () => {
       const camposComuns = {
         ...(fornecedor.trim() ? { fornecedor: fornecedor.trim() } : {}),
         ...(descricao.trim() ? { descricao: descricao.trim() } : {}),
+        ...(fornecedorCnpj ? { fornecedor_cnpj: fornecedorCnpj } : {}),
+        ...(fornecedorNaoCadastrado ? { fornecedor_nao_cadastrado: true } : {}),
         ...(anexo
           ? { anexos: [{ nome_arquivo: anexo.nome, content_type: anexo.contentType, conteudo_base64: anexo.base64 }] }
           : {}),
@@ -412,12 +601,15 @@ const AbrirSolicitacao = () => {
         payload = {
           tipo_solicitacao: tipo,
           ...(tipo === 'inclusao' || tipo === 'imobilizado' ? { autorizador_id: autorizadorId } : {}),
+          ...(tipo === 'imobilizado' ? { quantidade_material: parseInt(quantidadeMaterial, 10) || 0 } : {}),
           ...camposComuns,
           lancamentos: linhas.map((l) => ({
             lado: l.lado,
-            divisao_id: divisaoId,
-            centro_custo_id: centroCustoId,
-            valor: parseFloat(l.valor) || 0,
+            // Destino de Transferência pode ser de outro CC (divisão do próprio CC).
+            divisao_id: tipo === 'transferencia' && l.lado === 'destino' ? ccDestino?.divisao_id ?? divisaoId : divisaoId,
+            centro_custo_id: tipo === 'transferencia' && l.lado === 'destino' ? ccDestino?.id ?? centroCustoId : centroCustoId,
+            // O destino é sempre a soma das origens (arredondada a centavos).
+            valor: tipo === 'transferencia' && l.lado === 'destino' ? somaOrigens : parseFloat(l.valor) || 0,
             ...(tipo === 'imobilizado'
               ? { classe_imobilizado_id: l.classeImobilizadoId }
               : { conta_id: l.contaId, mes: l.mes ? `${l.mes}-01` : '' }),
@@ -446,13 +638,19 @@ const AbrirSolicitacao = () => {
   }
 
   const contasDisponiveis = tipo === 'inclusao_sfc' ? opcoes?.contas_sfc ?? [] : opcoes?.contas_bifc ?? [];
+  // Anexo obrigatório em todos os tipos desde 11/11 (item 5).
   const podeEnviar =
-    tipo === 'obras'
+    Boolean(anexo) &&
+    (tipo === 'obras'
       ? Boolean(autorizadorId) && Boolean(obraLocalId) && obrasLinhas.every((l) => l.subgrupoDespesaId && l.ordemInvestimento && l.valor)
-      : Boolean(centroCustoId) &&
-        linhas.every((l) => l.valor && (tipo === 'imobilizado' ? l.classeImobilizadoId : l.contaId && l.mes)) &&
-        (tipo !== 'inclusao' && tipo !== 'imobilizado' ? true : Boolean(autorizadorId)) &&
-        (tipo !== 'imobilizado' || Boolean(anexo));
+      : tipo === 'transferencia'
+        ? Boolean(centroCustoId) &&
+          linhas.every((l) => l.contaId && l.mes && (l.lado === 'destino' || parseFloat(l.valor) > 0)) &&
+          somaOrigens > 0
+        : Boolean(centroCustoId) &&
+          linhas.every((l) => l.valor && (tipo === 'imobilizado' ? l.classeImobilizadoId : l.contaId && l.mes)) &&
+          (tipo !== 'inclusao' && tipo !== 'imobilizado' ? true : Boolean(autorizadorId)) &&
+          (tipo !== 'imobilizado' || parseInt(quantidadeMaterial, 10) > 0));
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
@@ -480,7 +678,7 @@ const AbrirSolicitacao = () => {
 
       {tipo !== 'obras' && (
         <div className="grid gap-1.5">
-          <Label>Centro de custo</Label>
+          <Label>{tipo === 'transferencia' ? 'Centro de custo de origem' : 'Centro de custo'}</Label>
           <Select value={centroCustoId} onValueChange={setCentroCustoId}>
             <SelectTrigger>
               <SelectValue placeholder="Escolha o centro de custo" />
@@ -501,44 +699,125 @@ const AbrirSolicitacao = () => {
         </div>
       )}
 
+      {tipo === 'transferencia' && (
+        <>
+          <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
+            <h2 className="text-sm font-semibold text-foreground">Origem</h2>
+            <p className="-mt-2 text-xs text-fg-helper">
+              Uma linha por mês de onde o valor sai, todas no centro de custo de origem.
+            </p>
+            {linhas.map((linha, i) =>
+              linha.lado !== 'origem' ? null : (
+                <div key={i} className="grid grid-cols-1 gap-3 border-t border-border pt-3 first-of-type:border-0 sm:grid-cols-[1fr_150px_150px_auto] sm:items-end">
+                  <div className="grid gap-1.5">
+                    <Label>Conta (BIFC)</Label>
+                    <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>Mês</Label>
+                    <Input type="month" value={linha.mes} onChange={(e) => atualizarLinha(i, 'mes', e.target.value)} />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>Valor (R$)</Label>
+                    <Input type="number" step="0.01" min="0" value={linha.valor} onChange={(e) => atualizarLinha(i, 'valor', e.target.value)} />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={linhasOrigem.length <= 1}
+                    onClick={() => setLinhas((atual) => atual.filter((_, j) => j !== i))}
+                  >
+                    Remover
+                  </Button>
+                </div>
+              ),
+            )}
+            <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setLinhas((a) => [...a, novaLinhaLancamento('origem')])}>
+              + linha de origem
+            </Button>
+          </section>
+
+          <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
+            <h2 className="text-sm font-semibold text-foreground">Destino</h2>
+            <div className="grid gap-1.5">
+              <Label>Centro de custo de destino</Label>
+              <Select value={ccDestinoId || 'mesmo'} onValueChange={(v) => setCcDestinoId(v === 'mesmo' ? '' : v)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mesmo">Mesmo centro de custo da origem</SelectItem>
+                  {(opcoes?.centros_custo_destino ?? []).map((cc) => (
+                    <SelectItem key={cc.id} value={cc.id}>
+                      {cc.codigo} — {cc.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {linhas.map((linha, i) =>
+              linha.lado !== 'destino' ? null : (
+                <div key={i} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_150px_150px] sm:items-end">
+                  <div className="grid gap-1.5">
+                    <Label>Conta (BIFC)</Label>
+                    <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>Mês</Label>
+                    <Input type="month" value={linha.mes} onChange={(e) => atualizarLinha(i, 'mes', e.target.value)} />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>Valor (soma)</Label>
+                    <div className="flex h-10 items-center rounded-md border border-input bg-[var(--bg-input-disabled)] px-3 text-sm tabular-nums text-foreground" aria-live="polite">
+                      {reais.format(somaOrigens)}
+                    </div>
+                  </div>
+                </div>
+              ),
+            )}
+          </section>
+        </>
+      )}
+
       {tipo !== 'obras' &&
+        tipo !== 'transferencia' &&
         linhas.map((linha, i) => (
           <div key={i} className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card p-4">
-            {tipo === 'transferencia' && (
-              <div className="col-span-2 text-sm font-medium capitalize">{linha.lado}</div>
-            )}
             {tipo === 'imobilizado' ? (
-              <div className="col-span-2 grid gap-1.5">
-                <Label>Classe de imobilizado</Label>
-                <Select value={linha.classeImobilizadoId} onValueChange={(v) => atualizarLinha(i, 'classeImobilizadoId', v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Escolha a classe" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(opcoes?.classes_imobilizado ?? []).map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.codigo} — {c.nome}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
               <>
-                <div className="grid gap-1.5">
-                  <Label>Conta ({tipo === 'inclusao_sfc' ? 'SFC' : 'BIFC'})</Label>
-                  <Select value={linha.contaId} onValueChange={(v) => atualizarLinha(i, 'contaId', v)}>
+                <div className="col-span-2 grid gap-1.5">
+                  <Label>Classe de imobilizado</Label>
+                  <Select value={linha.classeImobilizadoId} onValueChange={(v) => atualizarLinha(i, 'classeImobilizadoId', v)}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Escolha a conta" />
+                      <SelectValue placeholder="Escolha a classe" />
                     </SelectTrigger>
                     <SelectContent>
-                      {contasDisponiveis.map((c) => (
+                      {(opcoes?.classes_imobilizado ?? []).map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.codigo} — {c.nome}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Quantidade do material</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    value={quantidadeMaterial}
+                    onChange={(e) => setQuantidadeMaterial(e.target.value.replace(/\D/g, ''))}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="grid gap-1.5">
+                  <Label>Conta ({tipo === 'inclusao_sfc' ? 'SFC' : 'BIFC'})</Label>
+                  <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
                 </div>
                 <div className="grid gap-1.5">
                   <Label>Mês de competência</Label>
@@ -558,17 +837,6 @@ const AbrirSolicitacao = () => {
             </div>
           </div>
         ))}
-
-      {tipo === 'transferencia' && (
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => setLinhas((a) => [...a, novaLinhaLancamento('origem')])}>
-            + linha de origem
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => setLinhas((a) => [...a, novaLinhaLancamento('destino')])}>
-            + linha de destino
-          </Button>
-        </div>
-      )}
 
       {tipo === 'obras' && (
         <>
@@ -685,7 +953,14 @@ const AbrirSolicitacao = () => {
         </>
       )}
 
-      <CampoFornecedor valor={fornecedor} onChange={setFornecedor} />
+      <CampoFornecedor
+        valor={fornecedor}
+        onChange={setFornecedor}
+        cnpj={fornecedorCnpj}
+        onCnpjChange={setFornecedorCnpj}
+        naoCadastrado={fornecedorNaoCadastrado}
+        onNaoCadastradoChange={setFornecedorNaoCadastrado}
+      />
 
       <div className="grid gap-1.5">
         <Label>Descrição detalhada</Label>
@@ -693,7 +968,9 @@ const AbrirSolicitacao = () => {
       </div>
 
       <div className="grid gap-1.5">
-        <Label>Anexo{tipo === 'imobilizado' ? ' de cotação (obrigatório)' : ' (opcional)'}</Label>
+        <Label>
+          Anexo <span className="text-destructive" aria-hidden>*</span>
+        </Label>
         <Input type="file" onChange={handleAnexoChange} />
         {anexo && <p className="text-xs text-muted-foreground">Selecionado: {anexo.nome}</p>}
       </div>
