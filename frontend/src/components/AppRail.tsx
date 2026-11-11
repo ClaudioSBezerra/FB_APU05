@@ -177,7 +177,7 @@ export function AppRail() {
           transição de largura .25s. Chip do workspace no topo-esquerdo. */}
       <div
         className={cn(
-          'z-20 flex h-screen shrink-0 flex-col overflow-hidden border-r bg-card transition-[width] duration-[250ms] ease-in-out',
+          'z-20 flex h-screen shrink-0 flex-col overflow-hidden border-r bg-card transition-[width] [transition-duration:250ms] ease-in-out',
           expanded ? 'w-[240px]' : 'w-[54px]',
         )}
       >

@@ -52,6 +52,7 @@ func mockLinhasObra(mock sqlmock.Sqlmock, solicitacaoID string, linhas ...[5]int
 // gen_random_uuid()) antes de qualquer INSERT.
 func mockGravarLoteObraSucesso(mock sqlmock.Sqlmock, ids []string, administradorID, chave, loteID string) {
 	mock.ExpectBegin()
+	mockRevalidacaoSobLock(mock, ids, administradorID)
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT lote_id FROM exportacoes_sap WHERE administrador_id = $1 AND chave_idempotencia = $2 LIMIT 1")).
 		WithArgs(administradorID, chave).
 		WillReturnError(sql.ErrNoRows)
@@ -76,6 +77,7 @@ func mockGravarLoteObraSucesso(mock sqlmock.Sqlmock, ids []string, administrador
 // novo via gen_random_uuid().
 func mockGravarLoteObraReusaLoteExistente(mock sqlmock.Sqlmock, ids []string, administradorID, chave, loteIDExistente string) {
 	mock.ExpectBegin()
+	mockRevalidacaoSobLock(mock, ids, administradorID)
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT lote_id FROM exportacoes_sap WHERE administrador_id = $1 AND chave_idempotencia = $2 LIMIT 1")).
 		WithArgs(administradorID, chave).
 		WillReturnRows(sqlmock.NewRows([]string{"lote_id"}).AddRow(loteIDExistente))

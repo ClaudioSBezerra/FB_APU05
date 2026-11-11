@@ -1,0 +1,22 @@
+# Pipeline de segurança da AppSec (catálogo platform/pipelinecomponents/securitycomponents).
+#
+# - sast: Semgrep (p/owasp-top-ten); reprova em HIGH/CRITICAL.
+# - sca:  Trivy em dependências, misconfig, secrets e licenças; reprova em CRITICAL,
+#         amarelo (passed with warnings) em MEDIUM/HIGH.
+# - aspm-integration: envia os dois relatórios ao DefectDojo (produto FB_APU05).
+#
+# Os componentes só rodam em pipelines de merge request para main/develop/etc.
+# Fluxo: trabalhar num branch e abrir MR — por exemplo
+#   git push -o merge_request.create -o merge_request.target=main
+# O deploy ainda não é feito pelo CI: o runner não alcança o servidor AWS e a
+# Hostinger é ambiente de teste (ver docs/deploy/HOSTINGER-SEM-COOLIFY.md).
+
+include:
+  - component: $CI_SERVER_FQDN/platform/pipelinecomponents/securitycomponents/sast@main
+  - component: $CI_SERVER_FQDN/platform/pipelinecomponents/securitycomponents/sca@main
+  - component: $CI_SERVER_FQDN/platform/pipelinecomponents/securitycomponents/aspm-integration@main
+    inputs:
+      product_name: "FB_APU05"
+
+stages:
+  - Security

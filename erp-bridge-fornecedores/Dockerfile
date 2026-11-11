@@ -14,6 +14,11 @@ RUN pip install --no-cache-dir \
 
 COPY bridge_fornecedores.py .
 
+# Sem root (Trivy DS-0002): o conector só lê o config.yaml montado e fala
+# com Oracle/API pela rede — não escreve em disco.
+RUN useradd --system --uid 1000 --no-create-home bridge
+USER bridge
+
 # config.yaml é montado em /app/config.yaml na hora de rodar (bind mount) —
 # nunca baked na imagem, contém a API key. Sem tracker/estado local: cada
 # execução é um resync completo e idempotente, não precisa de volume.

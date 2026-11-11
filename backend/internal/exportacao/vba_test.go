@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"testing"
 	"time"
 
@@ -87,10 +88,24 @@ func mockSemRiscoVerbaDuplicada(mock sqlmock.Sqlmock, id, chave string) {
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 }
 
+// mockRevalidacaoSobLock simula revalidarSobLock (DW-13): 1 SELECT ... FOR
+// UPDATE por solicitação, em ordem crescente de id, todas ainda
+// em_atendimento com o mesmo administrador.
+func mockRevalidacaoSobLock(mock sqlmock.Sqlmock, ids []string, administradorID string) {
+	ordenados := append([]string(nil), ids...)
+	sort.Strings(ordenados)
+	for _, id := range ordenados {
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT status, administrador_id FROM solicitacoes WHERE id = $1 FOR UPDATE")).
+			WithArgs(id).
+			WillReturnRows(sqlmock.NewRows([]string{"status", "administrador_id"}).AddRow("em_atendimento", administradorID))
+	}
+}
+
 // mockGravarLoteSucesso simula a transação completa de gravarLote para
 // `ids`, sem comentário de aviso.
 func mockGravarLoteSucesso(mock sqlmock.Sqlmock, ids []string, administradorID, chave, loteID string) {
 	mock.ExpectBegin()
+	mockRevalidacaoSobLock(mock, ids, administradorID)
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT gen_random_uuid()")).
 		WillReturnRows(sqlmock.NewRows([]string{"gen_random_uuid"}).AddRow(loteID))
 	for _, id := range ids {
@@ -321,6 +336,7 @@ func TestGerarLoteDespesa_VerbaDuplicadaIgnorada(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
 	mock.ExpectBegin()
+	mockRevalidacaoSobLock(mock, []string{testSolicitacaoA}, testAdministradorID)
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT gen_random_uuid()")).
 		WillReturnRows(sqlmock.NewRows([]string{"gen_random_uuid"}).AddRow(testLoteGerado))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO exportacoes_sap (lote_id, solicitacao_id, administrador_id, chave_idempotencia)")).

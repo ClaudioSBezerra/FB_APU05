@@ -113,7 +113,8 @@ location: backend/internal/exportacao/obra.go (GerarLoteObra)
 source_spec: `spec-4-4-gerar-lote-obra.md`
 severity: medium
 reason: Mesmo formato de loop sem deduplicação já existe, idêntico, em GerarLoteDespesa (internal/exportacao/vba.go, Story 4.3, já revisada e aceita) — não é um risco novo introduzido por esta story, mesma categoria pré-existente.
-status: open
+status: resolved
+resolution: 2026-11-11 — deduplicarIDs (internal/exportacao/lote_comum.go) aplicado em GerarLoteDespesa e GerarLoteObra; testes TestGerarLote*_IDRepetidoEntraUmaVez.
 
 ### DW-13: Nenhuma re-checagem de status/dono sob lock entre a validação por solicitação (fora de transação) e a transação de escrita de gravarLoteObra (janela TOCTOU).
 origin: spec-deferred da88e5062ea9
@@ -121,7 +122,8 @@ location: backend/internal/exportacao/obra.go (GerarLoteObra)
 source_spec: `spec-4-4-gerar-lote-obra.md`
 severity: medium
 reason: GerarLoteDespesa (internal/exportacao/vba.go, Story 4.3) tem exatamente a mesma forma — valida fora da transação, grava em transação separada — não é um risco novo desta story.
-status: open
+status: resolved
+resolution: 2026-11-11 — revalidarSobLock (SELECT ... FOR UPDATE, ids em ordem) dentro da transação de gravarLote/gravarLoteObra; testes *_AntesDaGravacao_Aborta; privilégio FOR UPDATE do papel fb_apu05_privilegiado validado em Postgres 15 real.
 
 ### DW-14: GerarLoteObra faz 2 round-trips sequenciais ao banco por solicitacao_id, sem lote/paginação nem teto explícito (só o limite indireto de 1 MB do corpo da requisição).
 origin: spec-deferred ec3c5b5907dc

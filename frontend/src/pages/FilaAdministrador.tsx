@@ -39,6 +39,8 @@ interface ItemFila {
   id: string;
   tipo_solicitacao: string;
   centro_custo_id: string | null;
+  centro_custo_codigo?: string | null;
+  centro_custo_nome?: string | null;
   status: string;
   versao: number;
   created_at: string;
@@ -139,12 +141,75 @@ async function baixarAnexo(anexo: { id: string; nome_arquivo: string }) {
   }
 }
 
-function PrazoBadge({ atrasada, prazo }: { atrasada: boolean; prazo: string }) {
+// Rótulos de negócio para o enum tipo_solicitacao (CHECK da migration 006).
+const TIPO_ROTULO: Record<string, string> = {
+  transferencia: 'Transferência',
+  inclusao: 'Inclusão',
+  inclusao_sfc: 'Inclusão SFC',
+  imobilizado: 'Imobilizado',
+  obras: 'Obras',
+};
+const rotuloTipo = (tipo: string) => TIPO_ROTULO[tipo] ?? tipo;
+
+const dataHora = (iso: string) =>
+  new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+
+function CentroCustoCell({ item }: { item: ItemFila }) {
+  if (item.centro_custo_codigo) {
+    return (
+      <span className="flex min-w-0 flex-col">
+        <span className="font-medium text-foreground">{item.centro_custo_codigo}</span>
+        {item.centro_custo_nome && <span className="truncate text-xs text-fg-helper">{item.centro_custo_nome}</span>}
+      </span>
+    );
+  }
+  // Obras não tem CC (migration 009) — o travessão é dado, não ausência de dado.
+  return <span className="text-fg-muted">—</span>;
+}
+
+function PrazoCell({ atrasada, prazo }: { atrasada: boolean; prazo: string }) {
   return (
-    <Badge variant={atrasada ? 'destructive' : 'secondary'}>
-      {atrasada ? 'Atrasada' : 'No prazo'} · {new Date(prazo).toLocaleString('pt-BR')}
-    </Badge>
+    <span className="flex flex-col items-start gap-1">
+      <Badge variant={atrasada ? 'destructive' : 'default'}>{atrasada ? 'Atrasada' : 'No prazo'}</Badge>
+      <span className="text-xs tabular-nums text-fg-helper">até {dataHora(prazo)}</span>
+    </span>
   );
+}
+
+function SecaoFila({
+  titulo,
+  quantidade,
+  acoes,
+  children,
+}: {
+  titulo: string;
+  quantidade?: number;
+  acoes?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+          {titulo}
+          {quantidade !== undefined && <Badge variant="secondary">{quantidade.toLocaleString('pt-BR')}</Badge>}
+        </h2>
+        {acoes}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function EstadoLista({ carregando, erro }: { carregando: boolean; erro: unknown }) {
+  if (carregando) return <p className="text-sm text-fg-helper">Carregando...</p>;
+  if (erro)
+    return (
+      <p role="alert" className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger-text">
+        Não foi possível carregar a lista. {(erro as Error).message}
+      </p>
+    );
+  return null;
 }
 
 const FilaAdministrador = () => {
@@ -328,33 +393,35 @@ const FilaAdministrador = () => {
     });
   }
 
+  const minhas = minhasQuery.data ?? [];
+  const todasSelecionadas = minhas.length > 0 && minhas.every((i) => selecionados.has(i.id));
+  function alternarTodas() {
+    setSelecionados(todasSelecionadas ? new Set() : new Set(minhas.map((i) => i.id)));
+  }
+
   return (
-    <div className="flex flex-col gap-8 p-6">
-      <div>
-        <h1 className="mb-3 text-lg font-semibold text-foreground">
-          Fila (aguardando atendimento){filaQuery.data ? ` — ${filaQuery.data.length}` : ''}
-        </h1>
-        {filaQuery.isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
-        {filaQuery.error && <p className="text-sm text-destructive">{(filaQuery.error as Error).message}</p>}
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
+      <h1 className="text-lg font-semibold text-foreground">Fila do administrador</h1>
+
+      <SecaoFila titulo="Aguardando atendimento" quantidade={filaQuery.data?.length}>
+        <EstadoLista carregando={filaQuery.isLoading} erro={filaQuery.error} />
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Tipo</TableHead>
               <TableHead>Centro de custo</TableHead>
+              <TableHead>Aberta em</TableHead>
               <TableHead>Prazo</TableHead>
-              <TableHead>Versão</TableHead>
-              <TableHead />
+              <TableHead className="w-px" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {(filaQuery.data ?? []).map((item) => (
               <TableRow key={item.id}>
-                <TableCell className="font-medium capitalize">{item.tipo_solicitacao}</TableCell>
-                <TableCell className="text-muted-foreground">{item.centro_custo_id ?? '—'}</TableCell>
-                <TableCell>
-                  <PrazoBadge atrasada={item.atrasada} prazo={item.prazo_limite} />
-                </TableCell>
-                <TableCell>{item.versao}</TableCell>
+                <TableCell className="font-medium">{rotuloTipo(item.tipo_solicitacao)}</TableCell>
+                <TableCell><CentroCustoCell item={item} /></TableCell>
+                <TableCell className="tabular-nums text-fg-secondary">{dataHora(item.created_at)}</TableCell>
+                <TableCell><PrazoCell atrasada={item.atrasada} prazo={item.prazo_limite} /></TableCell>
                 <TableCell>
                   <Button
                     size="sm"
@@ -367,86 +434,103 @@ const FilaAdministrador = () => {
               </TableRow>
             ))}
             {filaQuery.data?.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
-                  Nenhuma solicitação aberta
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={5} className="py-6 text-center text-sm text-fg-helper">
+                  Nenhuma solicitação aguardando atendimento.
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
-      </div>
+      </SecaoFila>
 
-      <div>
-        <div className="mb-3 flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-foreground">
-            Minhas solicitações (em atendimento){minhasQuery.data ? ` — ${minhasQuery.data.length}` : ''}
-          </h1>
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => gerarLote('despesa')}>
-              Gerar lote Despesa
+      <SecaoFila
+        titulo="Minhas solicitações em atendimento"
+        quantidade={minhasQuery.data?.length}
+        acoes={
+          <div className="flex flex-wrap items-center gap-2">
+            {selecionados.size > 0 && (
+              <span className="text-xs text-fg-helper">
+                {selecionados.size === 1 ? '1 selecionada' : `${selecionados.size} selecionadas`}
+              </span>
+            )}
+            <Button size="sm" onClick={() => gerarLote('despesa')}>
+              Gerar lote de despesa
             </Button>
             <Button size="sm" variant="outline" onClick={() => gerarLote('obra')}>
-              Gerar lote Obra
+              Gerar lote de obra
             </Button>
-            <Button size="sm" variant="outline" onClick={() => baixarCSV('despesa')}>
-              Exportar CSV Despesa (demonstração)
+            <Button size="sm" variant="ghost" onClick={() => baixarCSV('despesa')} title="Prévia em CSV, sem o .xlsm do robô SAP">
+              CSV despesa (prévia)
             </Button>
-            <Button size="sm" variant="outline" onClick={() => baixarCSV('obra')}>
-              Exportar CSV Obra (demonstração)
+            <Button size="sm" variant="ghost" onClick={() => baixarCSV('obra')} title="Prévia em CSV, sem o .xlsm do robô SAP">
+              CSV obra (prévia)
             </Button>
           </div>
-        </div>
-        {minhasQuery.isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
-        {minhasQuery.error && <p className="text-sm text-destructive">{(minhasQuery.error as Error).message}</p>}
+        }
+      >
+        <EstadoLista carregando={minhasQuery.isLoading} erro={minhasQuery.error} />
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead />
+              <TableHead className="w-px">
+                <input
+                  type="checkbox"
+                  aria-label="Selecionar todas"
+                  className="size-4 cursor-pointer accent-[var(--blue-d50)]"
+                  checked={todasSelecionadas}
+                  disabled={minhas.length === 0}
+                  onChange={alternarTodas}
+                />
+              </TableHead>
               <TableHead>Tipo</TableHead>
               <TableHead>Centro de custo</TableHead>
+              <TableHead>Aberta em</TableHead>
               <TableHead>Prazo</TableHead>
               <TableHead>Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(minhasQuery.data ?? []).map((item) => (
-              <TableRow key={item.id}>
+            {minhas.map((item) => (
+              <TableRow key={item.id} data-state={selecionados.has(item.id) ? 'selected' : undefined}>
                 <TableCell>
                   <input
                     type="checkbox"
+                    aria-label={`Selecionar ${rotuloTipo(item.tipo_solicitacao)} de ${dataHora(item.created_at)}`}
+                    className="size-4 cursor-pointer accent-[var(--blue-d50)]"
                     checked={selecionados.has(item.id)}
                     onChange={() => toggleSelecionado(item.id)}
                   />
                 </TableCell>
-                <TableCell className="font-medium capitalize">{item.tipo_solicitacao}</TableCell>
-                <TableCell className="text-muted-foreground">{item.centro_custo_id ?? '—'}</TableCell>
+                <TableCell className="font-medium">{rotuloTipo(item.tipo_solicitacao)}</TableCell>
+                <TableCell><CentroCustoCell item={item} /></TableCell>
+                <TableCell className="tabular-nums text-fg-secondary">{dataHora(item.created_at)}</TableCell>
+                <TableCell><PrazoCell atrasada={item.atrasada} prazo={item.prazo_limite} /></TableCell>
                 <TableCell>
-                  <PrazoBadge atrasada={item.atrasada} prazo={item.prazo_limite} />
-                </TableCell>
-                <TableCell className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setDetalheId(item.id)}>
-                    Ver / comentar
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => setPendenciaItem(item)}>
-                    Pendência
-                  </Button>
-                  <Button size="sm" onClick={() => setFinalizarItem(item)}>
-                    Finalizar
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setDetalheId(item.id)}>
+                      Ver e comentar
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setPendenciaItem(item)}>
+                      Pendência
+                    </Button>
+                    <Button size="sm" onClick={() => setFinalizarItem(item)}>
+                      Finalizar
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
             {minhasQuery.data?.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
-                  Nenhuma solicitação em atendimento
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="py-6 text-center text-sm text-fg-helper">
+                  Nenhuma solicitação em atendimento. Assuma uma da fila acima.
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
-      </div>
+      </SecaoFila>
 
       <Dialog open={Boolean(detalheId)} onOpenChange={(o) => !o && setDetalheId(null)}>
         <DialogContent className="max-w-lg">

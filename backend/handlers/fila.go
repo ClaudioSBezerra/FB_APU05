@@ -60,10 +60,11 @@ func ListarFilaHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(`
-			SELECT id, tipo_solicitacao, centro_custo_id, status, versao, created_at
-			FROM solicitacoes
-			WHERE status = 'aberta'
-			ORDER BY created_at ASC, id ASC
+			SELECT s.id, s.tipo_solicitacao, s.centro_custo_id, cc.codigo, cc.nome, s.status, s.versao, s.created_at
+			FROM solicitacoes s
+			LEFT JOIN centros_custo cc ON cc.id = s.centro_custo_id
+			WHERE s.status = 'aberta'
+			ORDER BY s.created_at ASC, s.id ASC
 			LIMIT $1 OFFSET $2
 		`, tamanho, (pagina-1)*tamanho)
 		if err != nil {
@@ -76,24 +77,28 @@ func ListarFilaHandler(db *sql.DB) http.HandlerFunc {
 		items := make([]map[string]interface{}, 0)
 		for rows.Next() {
 			var id, tipoSolicitacao, status string
-			var centroCustoID sql.NullString
+			// codigo/nome do CC vêm do LEFT JOIN — NULL em Obras (sem CC,
+			// migration 009) ou se o cadastro do CC sumir.
+			var centroCustoID, centroCustoCodigo, centroCustoNome sql.NullString
 			var versao int
 			var criadoEm time.Time
-			if err := rows.Scan(&id, &tipoSolicitacao, &centroCustoID, &status, &versao, &criadoEm); err != nil {
+			if err := rows.Scan(&id, &tipoSolicitacao, &centroCustoID, &centroCustoCodigo, &centroCustoNome, &status, &versao, &criadoEm); err != nil {
 				log.Printf("[Fila] Erro ao ler linha da fila: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
 			}
 
 			items = append(items, map[string]interface{}{
-				"id":               id,
-				"tipo_solicitacao": tipoSolicitacao,
-				"centro_custo_id":  nullStringOuNil(centroCustoID),
-				"status":           status,
-				"versao":           versao,
-				"created_at":       criadoEm,
-				"prazo_limite":     calendario.PrazoLimite(criadoEm),
-				"atrasada":         calendario.EstaAtrasado(criadoEm),
+				"id":                  id,
+				"tipo_solicitacao":    tipoSolicitacao,
+				"centro_custo_id":     nullStringOuNil(centroCustoID),
+				"centro_custo_codigo": nullStringOuNil(centroCustoCodigo),
+				"centro_custo_nome":   nullStringOuNil(centroCustoNome),
+				"status":              status,
+				"versao":              versao,
+				"created_at":          criadoEm,
+				"prazo_limite":        calendario.PrazoLimite(criadoEm),
+				"atrasada":            calendario.EstaAtrasado(criadoEm),
 			})
 		}
 		if err := rows.Err(); err != nil {
@@ -232,10 +237,11 @@ func MinhasSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(`
-			SELECT id, tipo_solicitacao, centro_custo_id, status, versao, created_at
-			FROM solicitacoes
-			WHERE status = 'em_atendimento' AND administrador_id = $1
-			ORDER BY created_at ASC, id ASC
+			SELECT s.id, s.tipo_solicitacao, s.centro_custo_id, cc.codigo, cc.nome, s.status, s.versao, s.created_at
+			FROM solicitacoes s
+			LEFT JOIN centros_custo cc ON cc.id = s.centro_custo_id
+			WHERE s.status = 'em_atendimento' AND s.administrador_id = $1
+			ORDER BY s.created_at ASC, s.id ASC
 			LIMIT $2 OFFSET $3
 		`, administradorID, tamanho, (pagina-1)*tamanho)
 		if err != nil {
@@ -248,24 +254,28 @@ func MinhasSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 		items := make([]map[string]interface{}, 0)
 		for rows.Next() {
 			var id, tipoSolicitacao, status string
-			var centroCustoID sql.NullString
+			// codigo/nome do CC vêm do LEFT JOIN — NULL em Obras (sem CC,
+			// migration 009) ou se o cadastro do CC sumir.
+			var centroCustoID, centroCustoCodigo, centroCustoNome sql.NullString
 			var versao int
 			var criadoEm time.Time
-			if err := rows.Scan(&id, &tipoSolicitacao, &centroCustoID, &status, &versao, &criadoEm); err != nil {
+			if err := rows.Scan(&id, &tipoSolicitacao, &centroCustoID, &centroCustoCodigo, &centroCustoNome, &status, &versao, &criadoEm); err != nil {
 				log.Printf("[Fila] Erro ao ler linha de minhas solicitações: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
 			}
 
 			items = append(items, map[string]interface{}{
-				"id":               id,
-				"tipo_solicitacao": tipoSolicitacao,
-				"centro_custo_id":  nullStringOuNil(centroCustoID),
-				"status":           status,
-				"versao":           versao,
-				"created_at":       criadoEm,
-				"prazo_limite":     calendario.PrazoLimite(criadoEm),
-				"atrasada":         calendario.EstaAtrasado(criadoEm),
+				"id":                  id,
+				"tipo_solicitacao":    tipoSolicitacao,
+				"centro_custo_id":     nullStringOuNil(centroCustoID),
+				"centro_custo_codigo": nullStringOuNil(centroCustoCodigo),
+				"centro_custo_nome":   nullStringOuNil(centroCustoNome),
+				"status":              status,
+				"versao":              versao,
+				"created_at":          criadoEm,
+				"prazo_limite":        calendario.PrazoLimite(criadoEm),
+				"atrasada":            calendario.EstaAtrasado(criadoEm),
 			})
 		}
 		if err := rows.Err(); err != nil {
