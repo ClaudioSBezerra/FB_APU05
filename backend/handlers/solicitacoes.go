@@ -92,6 +92,15 @@ type abrirSolicitacaoRequest struct {
 	// tamanho. Aceitos para todos os tipos, inclusive obras.
 	Fornecedor string `json:"fornecedor"`
 	Descricao  string `json:"descricao"`
+	// FornecedorCNPJ/FornecedorNaoCadastrado (11/11, item 4 da lista do
+	// negócio): CNPJ/CPF vindo da consulta ao cadastro (ou digitado quando o
+	// fornecedor não está cadastrado) e a marcação explícita de "fornecedor
+	// não cadastrado". Opcionais; aceitos para todos os tipos.
+	FornecedorCNPJ          string `json:"fornecedor_cnpj"`
+	FornecedorNaoCadastrado bool   `json:"fornecedor_nao_cadastrado"`
+	// QuantidadeMaterial (11/11, item 8) — obrigatória (>0) só para
+	// imobilizado; ignorada nos demais tipos.
+	QuantidadeMaterial int `json:"quantidade_material"`
 	// Classificacao (Story 3.5) é um dos 4 valores {inclusao, fl,
 	// retirada_saldo, transferencia_saldo} — campo no nível da solicitação,
 	// obrigatório exclusivamente para tipo_solicitacao="obras". Ignorado
@@ -238,17 +247,31 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
-		// Story 3.4: Imobilizado exige ao menos 1 anexo de cotação; os demais
-		// tipos aceitam anexo também, mas opcional (20/10) — validação
-		// puramente estrutural (sem acesso a banco), mesma faixa das demais
-		// checagens de formato acima do tx.Begin().
-		anexosParaSalvar, msgErroAnexo := validarAnexos(req.Anexos, req.TipoSolicitacao == "imobilizado")
+		// Anexo obrigatório em todos os tipos desde 11/11 (item 5 da lista do
+		// negócio; antes só Imobilizado exigia) — validação puramente
+		// estrutural, acima do tx.Begin().
+		anexosParaSalvar, msgErroAnexo := validarAnexos(req.Anexos, true)
 		if msgErroAnexo != "" {
 			jsonErr(w, http.StatusBadRequest, msgErroAnexo)
 			return
 		}
 
-		centroCustoID, msgErro := validarMesmoCentroCusto(lancamentos)
+		fornecedorCNPJ, msgErro := validarCNPJFornecedor(req.FornecedorCNPJ)
+		if msgErro != "" {
+			jsonErr(w, http.StatusBadRequest, msgErro)
+			return
+		}
+
+		var quantidadeMaterial sql.NullInt64
+		if req.TipoSolicitacao == "imobilizado" {
+			if req.QuantidadeMaterial <= 0 {
+				jsonErr(w, http.StatusBadRequest, "campo 'quantidade_material' deve ser maior que zero")
+				return
+			}
+			quantidadeMaterial = sql.NullInt64{Int64: int64(req.QuantidadeMaterial), Valid: true}
+		}
+
+		centroCustoID, msgErro := validarCentroCustoDaSolicitacao(req.TipoSolicitacao, lancamentos)
 		if msgErro != "" {
 			jsonErr(w, http.StatusBadRequest, msgErro)
 			return
@@ -309,7 +332,19 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		// nunca um valor independente do cliente — rejeita aqui (400) em vez
 		// de deixar a FK de solicitacao_lancamentos.divisao_id estourar como
 		// 500 numa divisão bem-formada porém incorreta/inexistente.
-		if msgErro := validarDivisaoDerivadaDoCC(lancamentos, ccDivisaoID); msgErro != "" {
+		if msgErro := validarDivisaoDerivadaDoCC(linhasDoCC(lancamentos, centroCustoID), ccDivisaoID); msgErro != "" {
+			jsonErr(w, http.StatusBadRequest, msgErro)
+			return
+		}
+
+		// Transferência (11/11, item 2): o destino pode ser de outro CC — ele
+		// precisa existir e a divisão da linha vem do PRÓPRIO CC de destino.
+		// Permissão do solicitante e alçada continuam pelo CC de origem.
+		if msgErro, errServidor := validarCCsDeDestino(tx, lancamentos, centroCustoID); errServidor != nil {
+			log.Printf("[Solicitacoes] Erro ao validar CC de destino: %v", errServidor)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		} else if msgErro != "" {
 			jsonErr(w, http.StatusBadRequest, msgErro)
 			return
 		}
@@ -426,10 +461,10 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		var solicitacaoID string
 		err = tx.QueryRow(`
-			INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, fornecedor, descricao)
-			VALUES ($1, $2, $3, 'aberta', $4, 1, $5, $6)
+			INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material)
+			VALUES ($1, $2, $3, 'aberta', $4, 1, $5, $6, $7, $8, $9)
 			RETURNING id
-		`, req.TipoSolicitacao, solicitanteID, centroCustoID, string(snapshotJSON), fornecedor, descricao).Scan(&solicitacaoID)
+		`, req.TipoSolicitacao, solicitanteID, centroCustoID, string(snapshotJSON), fornecedor, descricao, fornecedorCNPJ, req.FornecedorNaoCadastrado, quantidadeMaterial).Scan(&solicitacaoID)
 		if err != nil {
 			log.Printf("[Solicitacoes] Erro ao inserir solicitacao: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -492,6 +527,7 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			"versao":             1,
 			"aprovador_snapshot": snapshot,
 			"fornecedor":         nullStringOuNil(fornecedor),
+			"fornecedor_cnpj":    nullStringOuNil(fornecedorCNPJ),
 			"descricao":          nullStringOuNil(descricao),
 		})
 	}
@@ -572,6 +608,20 @@ func validarContagemELadoPorTipo(tipo string, linhas []lancamentoValidado) strin
 	case "transferencia":
 		if len(linhas) < 2 {
 			return "a solicitação de transferência precisa de ao menos uma linha de origem e uma de destino"
+		}
+		// 11/11 (item 2): várias origens (meses diferentes do mesmo CC)
+		// somam para UM destino.
+		destinos := 0
+		for _, l := range linhas {
+			if l.Lado == "destino" {
+				destinos++
+			}
+		}
+		if destinos != 1 {
+			return "a transferência deve ter exatamente uma linha de destino"
+		}
+		if destinos == len(linhas) {
+			return "a solicitação de transferência precisa de ao menos uma linha de origem"
 		}
 	case "inclusao_sfc":
 		if len(linhas) != 1 {
@@ -704,6 +754,83 @@ func validarMesmoCentroCusto(linhas []lancamentoValidado) (string, string) {
 		}
 	}
 	return centroCustoID, ""
+}
+
+// validarCentroCustoDaSolicitacao devolve o CC "da solicitação" — o que
+// alimenta a checagem de permissão do solicitante e o resolver de alçada.
+// Transferência (11/11, item 2): é o CC das linhas de ORIGEM, que precisam
+// ser todas do mesmo CC; o destino pode ser de outro CC (ou do mesmo).
+// Demais tipos: todas as linhas no mesmo CC, como antes.
+func validarCentroCustoDaSolicitacao(tipo string, linhas []lancamentoValidado) (string, string) {
+	if tipo != "transferencia" {
+		return validarMesmoCentroCusto(linhas)
+	}
+	centroCustoID := ""
+	for i, l := range linhas {
+		if l.Lado != "origem" {
+			continue
+		}
+		if centroCustoID == "" {
+			centroCustoID = l.CentroCustoID
+		} else if l.CentroCustoID != centroCustoID {
+			return "", fmt.Sprintf("linha %d: todas as linhas de origem devem ser do mesmo centro de custo", i+1)
+		}
+	}
+	return centroCustoID, ""
+}
+
+// linhasDoCC filtra as linhas de um CC — as de destino de outro CC numa
+// transferência são validadas à parte (validarCCsDeDestino).
+func linhasDoCC(linhas []lancamentoValidado, centroCustoID string) []lancamentoValidado {
+	filtradas := make([]lancamentoValidado, 0, len(linhas))
+	for _, l := range linhas {
+		if l.CentroCustoID == centroCustoID {
+			filtradas = append(filtradas, l)
+		}
+	}
+	return filtradas
+}
+
+// validarCCsDeDestino confere, para cada linha num CC diferente do CC da
+// solicitação, que o CC existe e que a divisão da linha é a desse CC.
+// (msg, nil) = regra de negócio (400); (_, err) = infraestrutura (500).
+func validarCCsDeDestino(tx *sql.Tx, linhas []lancamentoValidado, centroCustoID string) (string, error) {
+	for i, l := range linhas {
+		if l.CentroCustoID == centroCustoID {
+			continue
+		}
+		var divisaoID string
+		err := tx.QueryRow(`SELECT divisao_id FROM centros_custo WHERE id = $1`, l.CentroCustoID).Scan(&divisaoID)
+		if err == sql.ErrNoRows {
+			return fmt.Sprintf("linha %d: centro de custo de destino inválido", i+1), nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("buscar centro de custo de destino %s: %w", l.CentroCustoID, err)
+		}
+		if l.DivisaoID != divisaoID {
+			return fmt.Sprintf("linha %d: campo 'divisao_id' diverge da divisão do centro de custo de destino", i+1), nil
+		}
+	}
+	return "", nil
+}
+
+// validarCNPJFornecedor normaliza o CNPJ/CPF do fornecedor (só dígitos) —
+// opcional; quando informado, precisa ter 14 (CNPJ) ou 11 (CPF) dígitos.
+func validarCNPJFornecedor(valor string) (sql.NullString, string) {
+	var digitos strings.Builder
+	for _, r := range valor {
+		if r >= '0' && r <= '9' {
+			digitos.WriteRune(r)
+		}
+	}
+	d := digitos.String()
+	if d == "" {
+		return sql.NullString{}, ""
+	}
+	if len(d) != 14 && len(d) != 11 {
+		return sql.NullString{}, "campo 'fornecedor_cnpj' deve ter 14 dígitos (CNPJ) ou 11 (CPF)"
+	}
+	return sql.NullString{String: d, Valid: true}, ""
 }
 
 // validarDivisaoDerivadaDoCC garante que toda linha referencia a MESMA
@@ -872,11 +999,16 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 		}
 	}
 
-	// Anexo opcional também para Obras (20/10, mesmo precedente dos demais
-	// tipos não-imobilizado) — nunca obrigatório aqui.
-	anexosParaSalvar, msgErroAnexo := validarAnexos(req.Anexos, false)
+	// Anexo obrigatório também para Obras desde 11/11 (item 5).
+	anexosParaSalvar, msgErroAnexo := validarAnexos(req.Anexos, true)
 	if msgErroAnexo != "" {
 		jsonErr(w, http.StatusBadRequest, msgErroAnexo)
+		return
+	}
+
+	fornecedorCNPJ, msgErroCNPJ := validarCNPJFornecedor(req.FornecedorCNPJ)
+	if msgErroCNPJ != "" {
+		jsonErr(w, http.StatusBadRequest, msgErroCNPJ)
 		return
 	}
 
@@ -955,10 +1087,10 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 	// classificacao torna essa relação um invariante de schema).
 	var solicitacaoID string
 	err = tx.QueryRow(`
-		INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, classificacao, fornecedor, descricao)
-		VALUES ('obras', $1, NULL, 'aberta', $2, 1, $3, $4, $5)
+		INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, classificacao, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado)
+		VALUES ('obras', $1, NULL, 'aberta', $2, 1, $3, $4, $5, $6, $7)
 		RETURNING id
-	`, solicitanteID, string(snapshotJSON), req.Classificacao, fornecedor, descricao).Scan(&solicitacaoID)
+	`, solicitanteID, string(snapshotJSON), req.Classificacao, fornecedor, descricao, fornecedorCNPJ, req.FornecedorNaoCadastrado).Scan(&solicitacaoID)
 	if err != nil {
 		log.Printf("[Solicitacoes] Erro ao inserir solicitacao (obras): %v", err)
 		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -1004,6 +1136,7 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 		"versao":             1,
 		"aprovador_snapshot": snapshot,
 		"fornecedor":         nullStringOuNil(fornecedor),
+		"fornecedor_cnpj":    nullStringOuNil(fornecedorCNPJ),
 		"descricao":          nullStringOuNil(descricao),
 	})
 }

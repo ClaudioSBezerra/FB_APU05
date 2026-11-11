@@ -253,12 +253,14 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		var tipoSolicitacao, status, solicitanteID string
 		var administradorID sql.NullString
-		var fornecedor, descricao sql.NullString
+		var fornecedor, descricao, fornecedorCNPJ sql.NullString
+		var fornecedorNaoCadastrado bool
+		var quantidadeMaterial sql.NullInt64
 		var versao int
 		err := db.QueryRow(`
-			SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao
+			SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material
 			FROM solicitacoes WHERE id = $1
-		`, id).Scan(&tipoSolicitacao, &status, &versao, &solicitanteID, &administradorID, &fornecedor, &descricao)
+		`, id).Scan(&tipoSolicitacao, &status, &versao, &solicitanteID, &administradorID, &fornecedor, &descricao, &fornecedorCNPJ, &fornecedorNaoCadastrado, &quantidadeMaterial)
 		if err == sql.ErrNoRows {
 			jsonErr(w, http.StatusNotFound, "solicitação não encontrada")
 			return
@@ -330,16 +332,19 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":               id,
-			"tipo_solicitacao": tipoSolicitacao,
-			"status":           status,
-			"versao":           versao,
-			"solicitante_id":   solicitanteID,
-			"administrador_id": nullStringOuNil(administradorID),
-			"fornecedor":       nullStringOuNil(fornecedor),
-			"descricao":        nullStringOuNil(descricao),
-			"anexos":           anexosResposta,
-			"comentarios":      comentarios,
+			"id":                        id,
+			"tipo_solicitacao":          tipoSolicitacao,
+			"status":                    status,
+			"versao":                    versao,
+			"solicitante_id":            solicitanteID,
+			"administrador_id":          nullStringOuNil(administradorID),
+			"fornecedor":                nullStringOuNil(fornecedor),
+			"fornecedor_cnpj":           nullStringOuNil(fornecedorCNPJ),
+			"fornecedor_nao_cadastrado": fornecedorNaoCadastrado,
+			"quantidade_material":       nullInt64OuNil(quantidadeMaterial),
+			"descricao":                 nullStringOuNil(descricao),
+			"anexos":                    anexosResposta,
+			"comentarios":               comentarios,
 		})
 	}
 }

@@ -53,6 +53,9 @@ func TestOpcoesFormularioHandler_Sucesso(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM subgrupos_despesa")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, codigo, nome, divisao_id FROM centros_custo ORDER BY codigo")).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome", "divisao_id"}).
+			AddRow("cc-destino", "CC900", "Destino qualquer", "dv-1"))
 
 	handler := OpcoesFormularioHandler(db)
 	rec := httptest.NewRecorder()
