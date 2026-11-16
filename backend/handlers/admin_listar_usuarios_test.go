@@ -11,8 +11,8 @@ import (
 )
 
 func sqlmockRowsListaUsuarios() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "email", "nome", "perfil", "ativo", "created_at", "cod_empresa", "numcad", "centro_custo_id", "centro_custo_nome", "aprovador"}).
-		AddRow(testAlvoID, "claudio.bezerra@ferreiracosta.com.br", "Claudio Bezerra", "administrador", true, "2026-01-01T00:00:00Z", nil, nil, nil, nil, false)
+	return sqlmock.NewRows([]string{"id", "email", "nome", "perfil", "ativo", "created_at", "cod_empresa", "numcad", "centro_custo_id", "centro_custo_nome", "aprovador", "controle_ti"}).
+		AddRow(testAlvoID, "claudio.bezerra@ferreiracosta.com.br", "Claudio Bezerra", "administrador", true, "2026-01-01T00:00:00Z", nil, nil, nil, nil, false, true)
 }
 
 func TestListarUsuariosHandler_RejectsWrongMethod(t *testing.T) {

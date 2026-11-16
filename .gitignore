@@ -48,3 +48,7 @@ skills/
 .bmad-loop/cache/
 .bmad-loop/policy.toml
 _bmad/render/
+
+# Dados reais de trabalho (planilhas, KSB1/KSB2, CSVs) — valores financeiros, CNPJs e
+# nomes de pessoas: nunca no Git (o push vai para GitLab e GitHub).
+/temp/

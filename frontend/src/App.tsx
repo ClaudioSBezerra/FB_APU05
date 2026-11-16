@@ -15,6 +15,8 @@ import AbrirSolicitacao from '@/pages/AbrirSolicitacao'
 import FilaAdministrador from '@/pages/FilaAdministrador'
 import ERPBridgeCredenciais from '@/pages/ERPBridgeCredenciais'
 import CadastrosMestres from '@/pages/CadastrosMestres'
+import ControleTI from '@/pages/ControleTI'
+import { usePermissoes } from '@/hooks/usePermissoes'
 
 const queryClient = new QueryClient()
 
@@ -37,6 +39,18 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />
   }
   if (user?.perfil !== 'administrador') {
+    return <Navigate to="/painel" replace />
+  }
+  return <>{children}</>
+}
+
+// ControleTIRoute — só entra quem tem o interruptor "Controle TI" ligado
+// (permissão lida do servidor). Enquanto a permissão carrega, não renderiza
+// nada (evita piscar o redirecionamento).
+function ControleTIRoute({ children }: { children: React.ReactNode }) {
+  const { data, isLoading } = usePermissoes()
+  if (isLoading) return null
+  if (!data?.controle_ti) {
     return <Navigate to="/painel" replace />
   }
   return <>{children}</>
@@ -91,6 +105,14 @@ function App() {
                       <AdminRoute>
                         <CadastrosMestres />
                       </AdminRoute>
+                    }
+                  />
+                  <Route
+                    path="/controle-ti"
+                    element={
+                      <ControleTIRoute>
+                        <ControleTI />
+                      </ControleTIRoute>
                     }
                   />
                   <Route path="*" element={<Navigate to="/painel" replace />} />

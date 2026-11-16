@@ -58,6 +58,8 @@ interface Usuario {
   // autorizadores_formulario/aprovadores_obra (Cadastros Mestres) — ver
   // internal/aprovacao, resolveAprovadorGlobal.
   aprovador: boolean;
+  // controle_ti (migration 025): libera o menu e as rotas do módulo Controle TI.
+  controle_ti: boolean;
 }
 
 interface CentroCusto {
@@ -224,7 +226,7 @@ const GestaoUsuarios = () => {
       body,
     }: {
       id: string;
-      body: Partial<Pick<Usuario, 'perfil' | 'ativo' | 'cod_empresa' | 'numcad' | 'aprovador'>> & {
+      body: Partial<Pick<Usuario, 'perfil' | 'ativo' | 'cod_empresa' | 'numcad' | 'aprovador' | 'controle_ti'>> & {
         nome?: string;
         email?: string;
         centro_custo_id?: string;
@@ -465,6 +467,7 @@ const GestaoUsuarios = () => {
               <TableHead>Perfil</TableHead>
               <TableHead>Ativo</TableHead>
               <TableHead>Aprovador</TableHead>
+              <TableHead>Controle TI</TableHead>
               <TableHead>Empresa / Matrícula (Oracle)</TableHead>
               <TableHead>Centro de custo</TableHead>
               <TableHead>Criado em</TableHead>
@@ -506,6 +509,16 @@ const GestaoUsuarios = () => {
                       onCheckedChange={(checked) => updateMutation.mutate({ id: u.id, body: { aprovador: checked } })}
                     />
                     {u.aprovador && <Badge variant="default">Aprovador</Badge>}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2" title="Libera o menu Controle TI (orçado, realizado e lançamentos das despesas de TI) para este usuário">
+                    <Switch
+                      aria-label={`Controle TI para ${u.nome}`}
+                      checked={u.controle_ti}
+                      onCheckedChange={(checked) => updateMutation.mutate({ id: u.id, body: { controle_ti: checked } })}
+                    />
+                    {u.controle_ti && <Badge variant="info">Controle TI</Badge>}
                   </div>
                 </TableCell>
                 <TableCell>
