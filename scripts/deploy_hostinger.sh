@@ -21,6 +21,7 @@ HOST="${DEPLOY_HOST:-hostinger-fc}"
 BASE=/opt/apps/fb_apu05
 PROJECT=fb_apu05                      # fixa nomes de volume/rede entre releases
 COMPOSE_FILE=docker-compose.prod.yml
+COMPOSE_VOLUME=docker-compose.script.yml  # aponta para o volume do banco do Coolify
 COOLIFY_APP=d0g84w44sso0k8okwgsco4g4  # recurso antigo do Coolify — não pode rodar junto
 KEEP_RELEASES=5
 
@@ -67,7 +68,7 @@ git archive --format=tar HEAD \
 info "build e subida (docker compose -p $PROJECT)"
 ssh "$HOST" "set -e
   cd $BASE/releases/$SHA
-  docker compose -p $PROJECT -f $COMPOSE_FILE --env-file $BASE/.env up -d --build --remove-orphans
+  docker compose -p $PROJECT -f $COMPOSE_FILE -f $COMPOSE_VOLUME --env-file $BASE/.env up -d --build --remove-orphans
   ln -sfn releases/$SHA $BASE/current
   echo $SHA > $BASE/DEPLOYED"
 

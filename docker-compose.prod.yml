@@ -123,12 +123,9 @@ networks:
     driver: bridge
 
 volumes:
-  # Volume com NOME FIXO e externo (12/11): o mesmo banco é montado tanto
-  # pelo deploy do Coolify (a partir do GitHub) quanto pelo
-  # scripts/deploy_hostinger.sh (a partir do GitLab, plano B quando o GitHub
-  # é bloqueado). Só UM dos dois pode estar rodando por vez — ver
-  # docs/deploy/HOSTINGER-SEM-COOLIFY.md, "Coolify e script". Criado na
-  # migração de 11/11; o compose nunca o cria nem o apaga.
-  postgres_data_prod:
-    external: true
-    name: fb_apu05_postgres_data_prod
+  # NÃO renomear a chave `postgres_data_prod`: o Coolify deriva o nome do volume
+  # real dela (<uuid-do-app>_postgres-data-prod) e IGNORA `external`/`name` —
+  # trocar a chave criaria um banco vazio. O plano B (scripts/deploy_hostinger.sh)
+  # aponta para esse mesmo volume pelo docker-compose.script.yml. Só UM dos dois
+  # (Coolify ou script) roda por vez — ver docs/deploy/HOSTINGER-SEM-COOLIFY.md.
+  postgres_data_prod: {}

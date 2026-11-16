@@ -1,0 +1,11 @@
+# Usado SÓ pelo scripts/deploy_hostinger.sh (plano B quando o GitHub é
+# bloqueado): faz a stack do script montar o MESMO volume de banco do Coolify,
+# para a troca entre os dois não perder dados. O Coolify não lê este arquivo.
+#
+# O nome é o volume que o Coolify criou para o app FB_APU05 (uuid do app +
+# a chave `postgres_data_prod` do docker-compose.prod.yml). Se o app for
+# recriado no Coolify, o uuid muda — atualize aqui e em COOLIFY_APP no script.
+volumes:
+  postgres_data_prod:
+    external: true
+    name: d0g84w44sso0k8okwgsco4g4_postgres-data-prod
