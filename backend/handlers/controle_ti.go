@@ -13,10 +13,13 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -99,9 +102,29 @@ func TIModeloHandler(db *sql.DB) http.HandlerFunc {
 	})
 }
 
-// TIImportarHandler — POST /api/ti/importar (multipart, campo "arquivo").
-// Substitui parâmetros, orçamento e lançamentos de fonte "planilha" por
-// inteiro, numa transação; lançamentos manuais ou do SAP não são tocados.
+// resultadoArquivo é o desfecho de cada arquivo da importação.
+type resultadoArquivo struct {
+	Arquivo  string                       `json:"arquivo"`
+	Tipo     string                       `json:"tipo,omitempty"` // forecast | ksb1 | ksb2
+	Ok       bool                         `json:"ok"`
+	Erro     string                       `json:"erro,omitempty"`
+	Forecast *controleti.Resumo           `json:"forecast,omitempty"`
+	SAP      *controleti.ResumoLeituraSAP `json:"sap,omitempty"`
+}
+
+const (
+	limiteArquivosImportacao = 6
+	limiteTotalImportacao    = 60 << 20 // 3 planilhas de até 25 MB não cabem juntas; 60 MB cobre o uso real
+)
+
+// TIImportarHandler — POST /api/ti/importar (multipart, campo "arquivo", um ou mais).
+// Aceita a planilha Forecast, a KSB1 e a KSB2 JUNTAS; o tipo de cada uma é detectado pelo
+// conteúdo. Ordem: Forecast, KSB1, KSB2 (a conferência depende dos três). Cada arquivo é
+// uma transação: um que falha não desfaz os outros, e o desfecho vem arquivo por arquivo.
+//   - Forecast: substitui parâmetros, orçamento e lançamentos de fonte "planilha";
+//     lançamentos manuais ou do SAP não são tocados.
+//   - KSB1: substitui as linhas dos meses de lançamento que o arquivo cobre.
+//   - KSB2: foto do saldo em aberto; substitui tudo.
 func TIImportarHandler(db *sql.DB) http.HandlerFunc {
 	return comControleTI(db, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -110,47 +133,148 @@ func TIImportarHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		r.Body = http.MaxBytesReader(w, r.Body, limiteUploadPlanilha+1<<20)
-		// maxMemory = limite: o arquivo fica em memória, nunca em disco.
-		if err := r.ParseMultipartForm(limiteUploadPlanilha); err != nil {
-			jsonErr(w, http.StatusBadRequest, "envie a planilha no campo \"arquivo\" (até 25 MB)")
+		r.Body = http.MaxBytesReader(w, r.Body, limiteTotalImportacao+1<<20)
+		// maxMemory = limite: os arquivos ficam em memória, nunca em disco.
+		if err := r.ParseMultipartForm(limiteTotalImportacao); err != nil {
+			jsonErr(w, http.StatusBadRequest, "envie as planilhas no campo \"arquivo\" (até 25 MB cada, 60 MB no total)")
 			return
 		}
-		arquivo, cabecalho, err := r.FormFile("arquivo")
-		if err != nil {
-			jsonErr(w, http.StatusBadRequest, "envie a planilha no campo \"arquivo\"")
+		cabecalhos := r.MultipartForm.File["arquivo"]
+		if len(cabecalhos) == 0 {
+			jsonErr(w, http.StatusBadRequest, "envie as planilhas no campo \"arquivo\"")
 			return
 		}
-		defer arquivo.Close()
-
-		dados, err := io.ReadAll(io.LimitReader(arquivo, limiteUploadPlanilha+1))
-		if err != nil || len(dados) > limiteUploadPlanilha {
-			jsonErr(w, http.StatusBadRequest, "não foi possível ler o arquivo (limite de 25 MB)")
+		if len(cabecalhos) > limiteArquivosImportacao {
+			jsonErr(w, http.StatusBadRequest, fmt.Sprintf("envie no máximo %d arquivos por vez", limiteArquivosImportacao))
 			return
 		}
 
-		planilha, err := controleti.LerPlanilha(dados)
-		if err != nil {
-			jsonErr(w, http.StatusBadRequest, err.Error())
-			return
+		type arquivo struct {
+			nome  string
+			dados []byte
+			tipo  string
+			res   *resultadoArquivo
+		}
+		var arquivos []*arquivo
+		var resultados []*resultadoArquivo
+		for _, cab := range cabecalhos {
+			nome := filepath.Base(cab.Filename)
+			for utf8.RuneCountInString(nome) > 255 {
+				_, tam := utf8.DecodeLastRuneInString(nome)
+				nome = nome[:len(nome)-tam]
+			}
+			res := &resultadoArquivo{Arquivo: nome}
+			resultados = append(resultados, res)
+
+			f, err := cab.Open()
+			if err != nil {
+				res.Erro = "não foi possível ler o arquivo"
+				continue
+			}
+			dados, err := io.ReadAll(io.LimitReader(f, limiteUploadPlanilha+1))
+			_ = f.Close()
+			if err != nil || len(dados) > limiteUploadPlanilha {
+				res.Erro = "não foi possível ler o arquivo (limite de 25 MB)"
+				continue
+			}
+			tipo, err := controleti.DetectarTipo(dados)
+			if err != nil {
+				res.Erro = err.Error()
+				continue
+			}
+			res.Tipo = tipo
+			arquivos = append(arquivos, &arquivo{nome: nome, dados: dados, tipo: tipo, res: res})
 		}
 
-		nome := filepath.Base(cabecalho.Filename)
-		for utf8.RuneCountInString(nome) > 255 {
-			_, tam := utf8.DecodeLastRuneInString(nome)
-			nome = nome[:len(nome)-tam]
+		// Forecast primeiro, depois KSB1, depois KSB2
+		ordem := map[string]int{controleti.TipoForecast: 0, controleti.TipoKSB1: 1, controleti.TipoKSB2: 2}
+		sort.SliceStable(arquivos, func(i, j int) bool { return ordem[arquivos[i].tipo] < ordem[arquivos[j].tipo] })
+
+		userID := GetUserIDFromContext(r)
+		for _, a := range arquivos {
+			var err error
+			switch a.tipo {
+			case controleti.TipoForecast:
+				var planilha *controleti.Planilha
+				if planilha, err = controleti.LerPlanilha(a.dados); err == nil {
+					var resumo controleti.Resumo
+					if resumo, err = controleti.Importar(db, planilha, userID, a.nome); err == nil {
+						a.res.Forecast = &resumo
+					}
+				}
+			case controleti.TipoKSB1:
+				var linhas []controleti.KSB1Linha
+				var leitura controleti.ResumoLeituraSAP
+				if linhas, leitura, err = controleti.LerKSB1(a.dados); err == nil {
+					if _, err = controleti.ImportarKSB1(db, linhas, leitura, userID, a.nome); err == nil {
+						a.res.SAP = &leitura
+					}
+				}
+			case controleti.TipoKSB2:
+				var linhas []controleti.KSB2Linha
+				var leitura controleti.ResumoLeituraSAP
+				if linhas, leitura, err = controleti.LerKSB2(a.dados); err == nil {
+					if _, err = controleti.ImportarKSB2(db, linhas, leitura, userID, a.nome); err == nil {
+						a.res.SAP = &leitura
+					}
+				}
+			}
+			if err != nil {
+				// erro de leitura (arquivo ruim) vem com a causa; erro de gravação não expõe detalhe de banco
+				a.res.Erro = mensagemDeImportacao(err)
+				log.Printf("[ControleTI] Erro ao importar %q (%s): %v", a.nome, a.tipo, err)
+				continue
+			}
+			a.res.Ok = true
+			log.Printf("[ControleTI] %s importou %q (%s)", userID, a.nome, a.tipo)
 		}
 
-		resumo, err := controleti.Importar(db, planilha, GetUserIDFromContext(r), nome)
-		if err != nil {
-			log.Printf("[ControleTI] Erro ao importar %q: %v", nome, err)
-			jsonErr(w, http.StatusInternalServerError, "Erro ao gravar a planilha — nada foi alterado")
-			return
+		ok := 0
+		for _, res := range resultados {
+			if res.Ok {
+				ok++
+			}
 		}
-		log.Printf("[ControleTI] %s importou %q: %d linhas de orçamento, %d lançamentos",
-			GetUserIDFromContext(r), nome, resumo.OrcamentoLinhas, resumo.Lancamentos)
-
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resumo)
+		if ok == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "nenhum arquivo foi importado", "resultados": resultados})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"resultados": resultados})
+	})
+}
+
+// mensagemDeImportacao: erros de leitura da planilha (em português, escritos por nós) vão para a
+// tela; erros de banco não — viram uma mensagem genérica.
+func mensagemDeImportacao(err error) string {
+	msg := err.Error()
+	for _, prefixo := range []string{"inserir ", "iniciar ", "registrar ", "limpar ", "confirmar ", "ler "} {
+		if strings.HasPrefix(msg, prefixo) {
+			return "erro ao gravar — nada foi alterado neste arquivo"
+		}
+	}
+	return msg
+}
+
+// TIConferenciaHandler — GET /api/ti/conferencia: compara a planilha com a KSB1 por pedido + CC + mês.
+func TIConferenciaHandler(db *sql.DB) http.HandlerFunc {
+	return comControleTI(db, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		res, err := controleti.Conferencia(db, time.Now())
+		if err != nil {
+			log.Printf("[ControleTI] Erro na conferência: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"resumo": res.Resumo, "linhas": res.Linhas, "situacoes": controleti.Situacoes,
+		})
 	})
 }

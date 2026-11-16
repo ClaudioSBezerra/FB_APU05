@@ -215,7 +215,8 @@ func chavesOrdenadas[V any](m map[string]V) []string {
 
 // Carregar lê o banco e monta o modelo. agora define o mês fechado
 // automático (injetado para os testes).
-func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
+// carregarEntrada lê os parâmetros, o orçamento e os lançamentos da planilha.
+func carregarEntrada(db *sql.DB, agora time.Time) (Entrada, error) {
 	in := Entrada{Agora: agora}
 	in.Params = Params{
 		CC: map[string]ParamCC{}, Conta: map[string]ParamConta{}, Status: map[string]string{},
@@ -224,14 +225,14 @@ func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
 
 	rows, err := db.Query(`SELECT cc, descricao, responsavel, pasta FROM ti_param_cc`)
 	if err != nil {
-		return nil, fmt.Errorf("ler ti_param_cc: %w", err)
+		return Entrada{}, fmt.Errorf("ler ti_param_cc: %w", err)
 	}
 	for rows.Next() {
 		var k string
 		var v ParamCC
 		if err := rows.Scan(&k, &v.Descricao, &v.Responsavel, &v.Pasta); err != nil {
 			rows.Close()
-			return nil, err
+			return Entrada{}, err
 		}
 		in.Params.CC[k] = v
 	}
@@ -239,14 +240,14 @@ func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
 
 	rows, err = db.Query(`SELECT conta, descricao, tipo FROM ti_param_conta`)
 	if err != nil {
-		return nil, fmt.Errorf("ler ti_param_conta: %w", err)
+		return Entrada{}, fmt.Errorf("ler ti_param_conta: %w", err)
 	}
 	for rows.Next() {
 		var k string
 		var v ParamConta
 		if err := rows.Scan(&k, &v.Descricao, &v.Tipo); err != nil {
 			rows.Close()
-			return nil, err
+			return Entrada{}, err
 		}
 		in.Params.Conta[k] = v
 	}
@@ -254,13 +255,13 @@ func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
 
 	rows, err = db.Query(`SELECT status, classificacao FROM ti_param_status`)
 	if err != nil {
-		return nil, fmt.Errorf("ler ti_param_status: %w", err)
+		return Entrada{}, fmt.Errorf("ler ti_param_status: %w", err)
 	}
 	for rows.Next() {
 		var k, v string
 		if err := rows.Scan(&k, &v); err != nil {
 			rows.Close()
-			return nil, err
+			return Entrada{}, err
 		}
 		in.Params.Status[k] = v
 	}
@@ -268,14 +269,14 @@ func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
 
 	rows, err = db.Query(`SELECT divisao, descricao, empresa, pasta FROM ti_param_divisao`)
 	if err != nil {
-		return nil, fmt.Errorf("ler ti_param_divisao: %w", err)
+		return Entrada{}, fmt.Errorf("ler ti_param_divisao: %w", err)
 	}
 	for rows.Next() {
 		var k string
 		var v ParamDivisao
 		if err := rows.Scan(&k, &v.Descricao, &v.Empresa, &v.Pasta); err != nil {
 			rows.Close()
-			return nil, err
+			return Entrada{}, err
 		}
 		in.Params.Divisao[k] = v
 	}
@@ -289,7 +290,7 @@ func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
 		ORDER BY l.id, v.mes
 	`)
 	if err != nil {
-		return nil, fmt.Errorf("ler orçamento: %w", err)
+		return Entrada{}, fmt.Errorf("ler orçamento: %w", err)
 	}
 	var atual int64 = -1
 	for rows.Next() {
@@ -299,7 +300,7 @@ func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
 		var val sql.NullFloat64
 		if err := rows.Scan(&id, &o.Ref, &o.Origem, &o.Divisao, &o.CC, &o.Conta, &o.Fornecedor, &o.Descricao, &ym, &val); err != nil {
 			rows.Close()
-			return nil, err
+			return Entrada{}, err
 		}
 		if id != atual {
 			o.Valores = map[string]float64{}
@@ -312,7 +313,7 @@ func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return nil, err
+		return Entrada{}, err
 	}
 	rows.Close()
 
@@ -323,20 +324,20 @@ func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
 		FROM ti_lancamentos ORDER BY id
 	`)
 	if err != nil {
-		return nil, fmt.Errorf("ler lançamentos: %w", err)
+		return Entrada{}, fmt.Errorf("ler lançamentos: %w", err)
 	}
 	for rows.Next() {
 		var l Lanc
 		if err := rows.Scan(&l.Ref, &l.Origem, &l.Status, &l.Pedido, &l.Folha, &l.Miro, &l.NF,
 			&l.Competencia, &l.Vencimento, &l.Valor, &l.Fornecedor, &l.Descricao, &l.CCSap, &l.Conta); err != nil {
 			rows.Close()
-			return nil, err
+			return Entrada{}, err
 		}
 		in.Lancamentos = append(in.Lancamentos, l)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return nil, err
+		return Entrada{}, err
 	}
 	rows.Close()
 
@@ -350,5 +351,33 @@ func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
 		in.ImportadoEm = quando.Time.Format(time.RFC3339)
 	}
 
+	return in, nil
+}
+
+// Carregar monta o modelo do painel: planilha + (se houver) KSB1/KSB2.
+func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
+	in, err := carregarEntrada(db, agora)
+	if err != nil {
+		return nil, err
+	}
+	if err := carregarSAP(db, &in); err != nil {
+		return nil, err
+	}
 	return Montar(in), nil
+}
+
+// Conferencia compara a planilha PURA com a KSB1. Não usa o modelo do painel: a partir
+// de 2027 ele troca o realizado pelo do SAP, e conferir o SAP contra ele mesmo não prova nada.
+func Conferencia(db *sql.DB, agora time.Time) (*ConfResultado, error) {
+	in, err := carregarEntrada(db, agora)
+	if err != nil {
+		return nil, err
+	}
+	ksb1, err := CarregarKSB1(db)
+	if err != nil {
+		return nil, err
+	}
+	m := Montar(in)
+	r := Conferir(m.Lanc, ksb1)
+	return &r, nil
 }

@@ -56,7 +56,7 @@ func bancoDeTeste(t *testing.T) *sql.DB {
 			}
 		}
 	}
-	for _, tb := range []string{"ti_importacoes", "ti_orcamento_valores", "ti_orcamento_linhas", "ti_lancamentos",
+	for _, tb := range []string{"ti_ksb1", "ti_ksb2", "ti_cargas_sap", "ti_importacoes", "ti_orcamento_valores", "ti_orcamento_linhas", "ti_lancamentos",
 		"ti_param_cc", "ti_param_conta", "ti_param_status", "ti_param_divisao", "ti_param_fornecedor", "ti_config"} {
 		if _, err := db.Exec("DELETE FROM " + tb); err != nil {
 			t.Fatal(err)
@@ -250,4 +250,188 @@ func TestIntegracao_CicloCompletoContraOPainel2026(t *testing.T) {
 		t.Error(d)
 	}
 	t.Logf("banco -> modelo: budget=%d lanc=%d cf=%d", len(got.Budget), len(got.Lanc), len(got.CF))
+}
+
+func TestIntegracao_KSB1SubstituiSoOsMesesQueCobre(t *testing.T) {
+	db := bancoDeTeste(t)
+	app := comoApp(t)
+
+	grava := func(linhas []KSB1Linha) {
+		t.Helper()
+		var res ResumoLeituraSAP
+		res.Linhas, res.Aproveitadas = len(linhas), len(linhas)
+		for _, l := range linhas {
+			m := l.DataLanc[:7]
+			if res.PrimeiroMes == "" || m < res.PrimeiroMes {
+				res.PrimeiroMes = m
+			}
+			if m > res.UltimoMes {
+				res.UltimoMes = m
+			}
+		}
+		if _, err := ImportarKSB1(app, linhas, res, "", "ksb1.xlsx"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conta := func(q string) int {
+		var n int
+		if err := db.QueryRow(q).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	grava([]KSB1Linha{
+		sap("P1", ccA, "2026-01-10", 10, "F"), sap("P1", ccA, "2026-02-10", 20, "F"), sap("P1", ccA, "2026-03-10", 30, "F"),
+	})
+	if n := conta(`SELECT count(*) FROM ti_ksb1`); n != 3 {
+		t.Fatalf("1ª carga: %d linhas", n)
+	}
+
+	// 2ª carga cobre só fevereiro, com valor corrigido e uma linha nova: jan e mar não mudam
+	grava([]KSB1Linha{sap("P1", ccA, "2026-02-12", 25, "F"), sap("P2", ccB, "2026-02-20", 5, "G")})
+	if n := conta(`SELECT count(*) FROM ti_ksb1 WHERE data_lancamento < '2026-02-01' OR data_lancamento > '2026-02-28'`); n != 2 {
+		t.Errorf("jan e mar deveriam continuar (2 linhas), há %d", n)
+	}
+	var fev float64
+	_ = db.QueryRow(`SELECT COALESCE(SUM(valor),0)::float8 FROM ti_ksb1 WHERE data_lancamento BETWEEN '2026-02-01' AND '2026-02-28'`).Scan(&fev)
+	if fev != 30 {
+		t.Errorf("fevereiro deveria ter sido substituído (25+5=30), soma %.2f", fev)
+	}
+	if n := conta(`SELECT count(*) FROM ti_cargas_sap WHERE tipo='ksb1'`); n != 2 {
+		t.Errorf("histórico de cargas = %d", n)
+	}
+
+	// carga com valor impossível de gravar volta inteira e preserva o que existia
+	ruim := []KSB1Linha{sap("P3", ccA, "2026-02-15", 1, "H")}
+	ruim[0].DataLanc = "isto-nao-e-data"
+	if _, err := ImportarKSB1(app, ruim, ResumoLeituraSAP{Linhas: 1, Aproveitadas: 1, PrimeiroMes: "2026-02", UltimoMes: "2026-02"}, "", "ruim.xlsx"); err == nil {
+		t.Fatal("data inválida deveria falhar")
+	}
+	if n := conta(`SELECT count(*) FROM ti_ksb1 WHERE data_lancamento BETWEEN '2026-02-01' AND '2026-02-28'`); n != 2 {
+		t.Errorf("falha na carga apagou fevereiro: %d linhas (esperado 2)", n)
+	}
+	if n := conta(`SELECT count(*) FROM ti_cargas_sap`); n != 2 {
+		t.Errorf("carga que falhou entrou no histórico: %d", n)
+	}
+}
+
+func TestIntegracao_KSB2SubstituiTudoESaldoEntraNoModelo(t *testing.T) {
+	db := bancoDeTeste(t)
+	app := comoApp(t)
+	pl, err := LerPlanilha(planilhaSintetica(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Importar(app, pl, "", "p.xlsx"); err != nil {
+		t.Fatal(err)
+	}
+	// a planilha sintética tem o lançamento A LANÇAR sem pedido; dá um pedido a ele
+	if _, err := db.Exec(`UPDATE ti_lancamentos SET pedido = 'P77' WHERE status = 'A LANÇAR'`); err != nil {
+		t.Fatal(err)
+	}
+
+	k1 := []KSB2Linha{{Pedido: "P77", CCSap: "IMOB", Conta: "1230110001", Valor: 40, Item: "10"}, {Pedido: "P77", CCSap: "IMOB", Conta: "1230110001", Valor: 2.5, Item: "20"}}
+	if _, err := ImportarKSB2(app, k1, ResumoLeituraSAP{Linhas: 2, Aproveitadas: 2}, "", "ksb2.xlsx"); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Carregar(app, time.Date(2026, 2, 20, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saldo *float64
+	for _, l := range m.Lanc {
+		if l.Pedido == "P77" {
+			saldo = l.SaldoSap
+		}
+	}
+	if saldo == nil || *saldo != 42.5 {
+		t.Fatalf("saldo da KSB2 no item a lançar = %v, esperado 42,50 (soma dos itens do pedido)", saldo)
+	}
+	if m.Meta.Sap.Ksb2Em == "" {
+		t.Error("meta.sap.ksb2Em deveria dizer quando a KSB2 foi carregada")
+	}
+
+	// nova KSB2 sem esse pedido: a foto antiga some
+	if _, err := ImportarKSB2(app, []KSB2Linha{{Pedido: "P99", CCSap: ccA, Conta: "1", Valor: 1}}, ResumoLeituraSAP{Linhas: 1, Aproveitadas: 1}, "", "ksb2b.xlsx"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = Carregar(app, time.Date(2026, 2, 20, 0, 0, 0, 0, time.UTC))
+	for _, l := range m.Lanc {
+		if l.Pedido == "P77" && l.SaldoSap != nil {
+			t.Errorf("a KSB2 nova substitui tudo; P77 não deveria mais ter saldo: %v", *l.SaldoSap)
+		}
+	}
+}
+
+// Ciclo completo com os arquivos REAIS: planilha + KSB1 + KSB2 -> banco -> modelo e conferência.
+func TestIntegracao_CicloSAPComArquivosReais(t *testing.T) {
+	pf, p1, p2 := os.Getenv("TI_PLANILHA"), os.Getenv("TI_KSB1"), os.Getenv("TI_KSB2")
+	if pf == "" || p1 == "" || p2 == "" {
+		t.Skip("defina TI_PLANILHA, TI_KSB1 e TI_KSB2")
+	}
+	bancoDeTeste(t)
+	app := comoApp(t)
+
+	dPl, _ := os.ReadFile(pf)
+	pl, err := LerPlanilha(dPl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Importar(app, pl, "", "forecast.xlsx"); err != nil {
+		t.Fatal(err)
+	}
+	d1, _ := os.ReadFile(p1)
+	l1, r1, err := LerKSB1(d1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportarKSB1(app, l1, r1, "", "ksb1.xlsx"); err != nil {
+		t.Fatal(err)
+	}
+	d2, _ := os.ReadFile(p2)
+	l2, r2, err := LerKSB2(d2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportarKSB2(app, l2, r2, "", "ksb2.xlsx"); err != nil {
+		t.Fatal(err)
+	}
+
+	agora := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	conf, err := Conferencia(app, agora)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// o mesmo resultado que a conferência feita em memória sobre os mesmos arquivos
+	m := modeloDaPlanilha(t, pf, MesFechado(agora, ""))
+	mem := Conferir(m.Lanc, l1)
+	if conf.Resumo.Total != mem.Resumo.Total || conf.Resumo.Conferidos != mem.Resumo.Conferidos {
+		t.Errorf("banco: %d grupos / %d conferidos; memória: %d / %d", conf.Resumo.Total, conf.Resumo.Conferidos, mem.Resumo.Total, mem.Resumo.Conferidos)
+	}
+	for _, s := range Situacoes {
+		if conf.Resumo.Por[s.Codigo] != mem.Resumo.Por[s.Codigo] {
+			t.Errorf("%s: banco %+v, memória %+v", s.Codigo, conf.Resumo.Por[s.Codigo], mem.Resumo.Por[s.Codigo])
+		}
+	}
+	t.Logf("conferência pelo banco: %d grupos, %d conferidos (%.1f%% da base)", conf.Resumo.Total, conf.Resumo.Conferidos, 100*conf.Resumo.PctConferido)
+
+	modelo, err := Carregar(app, agora)
+	if err != nil {
+		t.Fatal(err)
+	}
+	com := 0
+	for _, l := range modelo.Lanc {
+		if l.SaldoSap != nil {
+			com++
+		}
+	}
+	t.Logf("itens a lançar com saldo da KSB2: %d | KSB1 %s a %s | oficiais=%v provisórios=%v", com, modelo.Meta.Sap.Ksb1De, modelo.Meta.Sap.Ksb1Ate, modelo.Meta.Sap.Oficiais, modelo.Meta.Sap.Provisorios)
+	if com == 0 {
+		t.Error("nenhum item a lançar ganhou saldo da KSB2")
+	}
+	// 2026: o SAP só confere; o realizado do painel continua o da planilha
+	if len(modelo.Meta.Sap.Oficiais) != 0 {
+		t.Errorf("em 2026 nenhum mês é oficial do SAP: %v", modelo.Meta.Sap.Oficiais)
+	}
 }

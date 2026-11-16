@@ -21,6 +21,21 @@ type Meta struct {
 	// ImportadoEm: quando a planilha foi importada pela última vez (RFC 3339);
 	// vazio se nunca houve importação.
 	ImportadoEm string `json:"importadoEm"`
+	// Sap descreve o que há de KSB1/KSB2 e quais meses são oficiais do SAP ou provisórios.
+	Sap MetaSAP `json:"sap"`
+}
+
+// MetaSAP: a regra de 2027 do documento do Welton — nos meses fechados cobertos pela KSB1
+// o realizado oficial é o do SAP; mês fechado sem KSB1 continua na planilha e fica
+// marcado como provisório. Antes de `Desde` (2026) o realizado é o da planilha e o SAP
+// só serve de conferência.
+type MetaSAP struct {
+	Ksb1De      string   `json:"ksb1De"` // meses cobertos pela KSB1 (AAAA-MM)
+	Ksb1Ate     string   `json:"ksb1Ate"`
+	Ksb2Em      string   `json:"ksb2Em"` // quando a KSB2 foi carregada (RFC 3339)
+	Desde       string   `json:"desde"`  // primeiro mês em que o SAP é o oficial
+	Oficiais    []string `json:"oficiais"`
+	Provisorios []string `json:"provisorios"`
 }
 
 type BudgetRow struct {
@@ -62,6 +77,8 @@ type LancRow struct {
 	Classif   string  `json:"classif"`
 	CCSap     string  `json:"ccSap"`
 	Grp       string  `json:"grp"`
+	// SaldoSap: saldo em aberto do pedido na KSB2, ao lado dos itens a lançar.
+	SaldoSap *float64 `json:"saldoSap"`
 }
 
 // CFRow é a projeção (Current Forecast) por divisão, CC e conta.
@@ -100,7 +117,16 @@ type Entrada struct {
 	Arquivo     string
 	ImportadoEm string
 	Agora       time.Time
+
+	// SAP (fase 3) — tudo opcional; sem KSB1/KSB2 o modelo é o de antes.
+	KSB1      []KSB1Linha
+	SaldosSAP map[string]float64 // pedido -> saldo em aberto (KSB2)
+	KSB2Em    string
+	SapDesde  string // AAAA-MM; vazio = DesdePadraoSAP
 }
+
+// DesdePadraoSAP: a partir de janeiro/2027 o SAP é o realizado oficial (documento do Welton).
+const DesdePadraoSAP = "2027-01"
 
 // MesFechado devolve o último mês fechado (AAAA-MM). A regra de 2027: do dia
 // 6 em diante o mês anterior está fechado (o SAP aceita lançamento retroativo
@@ -190,11 +216,18 @@ func Montar(in Entrada) *Modelo {
 		})
 	}
 
-	for _, l := range in.Lancamentos {
+	lancamentos, metaSap := aplicarSAPOficial(in, meses)
+	metaSap.Ksb2Em = in.KSB2Em
+	m.Meta.Sap = metaSap
+
+	for _, l := range lancamentos {
 		div, cc := DivCCDoSap(l.CCSap)
 		classif := "Comprometido"
 		if c, ok := p.Status[l.Status]; ok {
 			classif = c
+		}
+		if l.ForcaRealizado {
+			classif = "Realizado"
 		}
 		r := LancRow{
 			ID: l.Ref, Origem: l.Origem, Status: l.Status, Pedido: l.Pedido, Folha: l.Folha, Miro: l.Miro, NF: l.NF,
@@ -210,6 +243,12 @@ func Montar(in Entrada) *Modelo {
 		if l.Vencimento != "" {
 			v := l.Vencimento
 			r.Venc = &v
+		}
+		if classif != "Realizado" && l.Pedido != "" {
+			if s, ok := in.SaldosSAP[l.Pedido]; ok {
+				v := s
+				r.SaldoSap = &v
+			}
 		}
 		m.Lanc = append(m.Lanc, r)
 	}

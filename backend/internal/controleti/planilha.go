@@ -60,6 +60,9 @@ type Lanc struct {
 	Competencia, Vencimento                      string
 	Valor                                        float64
 	Fornecedor, Descricao, CCSap, Conta          string
+	// ForcaRealizado marca as linhas criadas a partir da KSB1 (realizado oficial do
+	// SAP, fase 3): contam como realizado qualquer que seja o status.
+	ForcaRealizado bool
 }
 
 // Planilha é o conteúdo lido do .xlsx, ainda sem campos derivados.

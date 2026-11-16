@@ -9,6 +9,17 @@ export interface TiMeta {
   parsedAt: string;
   months: string[]; // AAAA-MM, mesmo índice dos arrays `m`
   importadoEm: string; // última importação (RFC 3339); vazio se nunca houve
+  sap: MetaSap;
+}
+
+// O que há de KSB1/KSB2 e quais meses são oficiais do SAP (a partir de `desde`) ou provisórios.
+export interface MetaSap {
+  ksb1De: string; // meses cobertos pela KSB1 (AAAA-MM); vazio se não houver
+  ksb1Ate: string;
+  ksb2Em: string; // quando a KSB2 foi carregada (RFC 3339)
+  desde: string;
+  oficiais: string[];
+  provisorios: string[];
 }
 
 export interface TiBudget {
@@ -50,6 +61,7 @@ export interface TiLanc {
   classif: string;
   ccSap: string;
   grp: string;
+  saldoSap: number | null; // saldo em aberto do pedido na KSB2 (itens a lançar)
 }
 
 export interface TiCF {

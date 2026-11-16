@@ -458,6 +458,7 @@ func main() {
 	http.HandleFunc("GET /api/me/permissoes", handlers.RequireAuth(withDB(handlers.PermissoesHandler), ""))
 	http.HandleFunc("GET /api/ti/modelo", handlers.RequireAuth(withDB(handlers.TIModeloHandler), ""))
 	http.HandleFunc("POST /api/ti/importar", handlers.RequireAuth(withDB(handlers.TIImportarHandler), ""))
+	http.HandleFunc("GET /api/ti/conferencia", handlers.RequireAuth(withDB(handlers.TIConferenciaHandler), ""))
 
 	http.HandleFunc("GET /api/solicitacoes/{id}", handlers.RequireAuth(withDB(handlers.ObterSolicitacaoHandler), ""))
 	http.HandleFunc("GET /api/solicitacoes/anexos/{anexoId}", handlers.RequireAuth(withDB(handlers.BaixarAnexoHandler), ""))

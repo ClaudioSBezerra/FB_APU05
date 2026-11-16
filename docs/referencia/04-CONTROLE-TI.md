@@ -96,14 +96,38 @@ cada leitura a partir do CC SAP, da conta, do status e dos parâmetros — como 
 código de filial do SAP (1002, 4016…) e o CC tem 4 dígitos. Ligar os dois fica para depois da carga SAP
 (Duda).
 
+## Fase 3 — KSB1/KSB2 e Conferência SAP (migration 026)
+
+**Importação.** A aba *Importar planilha* aceita até 6 arquivos de uma vez (Forecast + KSB1 + KSB2). O tipo
+é detectado pelo conteúdo (Forecast tem a aba "Parâmetros"; KSB1 tem "Documento de compras" + "Data de
+lançamento"; KSB2 tem "Nº doc.de referência" + "Quantidade total"). Ordem de processamento: Forecast →
+KSB1 → KSB2; cada arquivo tem a sua transação e o seu resultado. A planilha Forecast deve ser a completa
+(jan–out); a KSB1 deve ser a acumulada do ano.
+
+- **KSB1** (realizado): só linhas com pedido entram; substitui apenas os meses de lançamento que cobre.
+- **KSB2** (saldo em aberto): só linhas de detalhe (as de total, sem classe de custo, são descartadas);
+  cada carga substitui tudo. O saldo aparece como coluna "Saldo SAP" em Lançamentos.
+
+**Conferência.** Chave = pedido + CC SAP + mês. Tolerância de R$ 0,015. Base = linhas da planilha com
+classificação "Realizado" (LANÇADO e ESTORNADO) nos meses cobertos pela KSB1. As 9 situações: Conferido,
+Lançado em outro mês, Valor diferente, Rateio diferente, Pendente de lançamento, Pedido não encontrado no
+SAP, Lançado só no SAP, Estorno/soma negativa e Verificar. "Verificar" fica fora da base do percentual.
+Endpoint: `GET /api/ti/conferencia` (exige o interruptor Controle TI).
+
+**Regra de 2027 (SAP como fonte oficial do realizado).** A partir de `ti_config.sap_oficial_desde`
+(padrão 2027-01), nos meses fechados cobertos pela KSB1, as linhas Realizado da planilha **com pedido**
+são substituídas pela soma da KSB1 (só pedidos nossos); linhas sem pedido, IMOB e A LANÇAR ficam. Mês
+fechado sem KSB1 nessa época aparece como **provisório** (aviso na tela). Os números de 2026 não mudam: o
+SAP só confere. Ainda não foi exercitada com dados reais de 2027.
+
+**Validação.** Com os arquivos reais de jan–set/2026: 71,1% conferido sobre 1.179 itens (838). O
+documento do Welton traz 74% sobre 1.158; a diferença vem da versão da planilha (aqui 1.102 grupos), a
+ordem de grandeza é a mesma.
+
 ## Próximas fases
 
-2. **Lançamentos no sistema** (digitar nota, status CRIAR PEDIDO → LANÇADO, anexo da NF) e telas de
-   Realizado, Fornecedores e Bases de apoio.
-3. **KSB1/KSB2**: upload (e depois API), fechamento automático e a aba **Conferência SAP** com as 9
-   situações (Conferido, Lançado em outro mês, Valor diferente, Rateio diferente, Pendente de
-   lançamento, Pedido não encontrado, Lançado só no SAP, Estorno, Verificar). O teste do documento
-   (852 de 1.158 pedidos/CC/mês conferidos, 74%) vira teste de regressão.
+2. **Lançamentos no sistema** (digitar nota, status CRIAR PEDIDO → LANÇADO, anexo da NF), com atualização
+   por chave de conciliação (Excel/API), e telas de Realizado, Fornecedores e Bases de apoio.
 4. **Notas e saldos por API** do SAP (Duda), no lugar do upload manual.
 
 ## Pontos em aberto
