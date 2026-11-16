@@ -452,6 +452,13 @@ func main() {
 	// é dono da solicitação (solicitante OU administrador).
 	http.HandleFunc("POST /api/solicitacoes/{id}/pendencia", handlers.RequireAuth(withPrivilegedDB(handlers.MarcarPendenciaHandler), "administrador"))
 	http.HandleFunc("POST /api/solicitacoes/{id}/comentarios", handlers.RequireAuth(withPrivilegedDB(handlers.ComentarSolicitacaoHandler), ""))
+	// Controle TI (migration 025): módulo de despesas de TI. Permissões vale
+	// para qualquer usuário autenticado (alimenta o menu); /api/ti/* exige o
+	// interruptor usuarios.controle_ti (checado no banco a cada chamada).
+	http.HandleFunc("GET /api/me/permissoes", handlers.RequireAuth(withDB(handlers.PermissoesHandler), ""))
+	http.HandleFunc("GET /api/ti/modelo", handlers.RequireAuth(withDB(handlers.TIModeloHandler), ""))
+	http.HandleFunc("POST /api/ti/importar", handlers.RequireAuth(withDB(handlers.TIImportarHandler), ""))
+
 	http.HandleFunc("GET /api/solicitacoes/{id}", handlers.RequireAuth(withDB(handlers.ObterSolicitacaoHandler), ""))
 	http.HandleFunc("GET /api/solicitacoes/anexos/{anexoId}", handlers.RequireAuth(withDB(handlers.BaixarAnexoHandler), ""))
 

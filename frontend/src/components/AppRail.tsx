@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database, PanelLeftClose, PanelLeftOpen, Cpu } from 'lucide-react';
 import { WORKSPACE } from '@/lib/workspace';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import { toast } from 'sonner';
 
 // Barra de navegação — réplica do AppRail do FB_APU02 (o componente que
@@ -46,6 +47,7 @@ function getActiveId(pathname: string): string {
   if (pathname.startsWith('/admin/usuarios')) return 'usuarios';
   if (pathname.startsWith('/admin/cadastros')) return 'cadastros';
   if (pathname.startsWith('/admin/erp-bridge')) return 'erp-bridge';
+  if (pathname.startsWith('/controle-ti')) return 'controle-ti';
   if (pathname.startsWith('/fila')) return 'fila';
   if (pathname.startsWith('/painel')) return 'painel';
   if (pathname.startsWith('/solicitacoes/nova')) return 'nova-solicitacao';
@@ -151,8 +153,12 @@ export function AppRail() {
       .join('')
       .toUpperCase() ?? '?';
 
+  // Módulo Controle TI: o menu só aparece para quem tem o interruptor ligado
+  // em Gestão de Usuários (lido do servidor, ver usePermissoes).
+  const { data: permissoes } = usePermissoes();
   const items = [
     ...mainItems,
+    ...(permissoes?.controle_ti ? [{ id: 'controle-ti', icon: Cpu, label: 'Controle TI', path: '/controle-ti' }] : []),
     ...(user?.perfil === 'administrador'
       ? [
           { id: 'fila', icon: ListChecks, label: 'Fila do administrador', path: '/fila' },
