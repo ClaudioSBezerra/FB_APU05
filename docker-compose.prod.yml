@@ -123,5 +123,12 @@ networks:
     driver: bridge
 
 volumes:
+  # Volume com NOME FIXO e externo (12/11): o mesmo banco é montado tanto
+  # pelo deploy do Coolify (a partir do GitHub) quanto pelo
+  # scripts/deploy_hostinger.sh (a partir do GitLab, plano B quando o GitHub
+  # é bloqueado). Só UM dos dois pode estar rodando por vez — ver
+  # docs/deploy/HOSTINGER-SEM-COOLIFY.md, "Coolify e script". Criado na
+  # migração de 11/11; o compose nunca o cria nem o apaga.
   postgres_data_prod:
-    driver: local
+    external: true
+    name: fb_apu05_postgres_data_prod
