@@ -150,10 +150,15 @@ func Montar(in Entrada) *Modelo {
 		idxMes[m] = i
 	}
 
+	// "Carregado em" no painel = quando a planilha foi importada (não a hora da consulta)
+	carregadoEm := agora.Format(time.RFC3339)
+	if in.ImportadoEm != "" {
+		carregadoEm = in.ImportadoEm
+	}
 	m := &Modelo{
 		Meta: Meta{
 			FileName: in.Arquivo, LastClosed: in.LastClosed, RefDate: UltimoDia(in.LastClosed),
-			ParsedAt: agora.Format(time.RFC3339), Months: meses, ImportadoEm: in.ImportadoEm,
+			ParsedAt: carregadoEm, Months: meses, ImportadoEm: in.ImportadoEm,
 		},
 		Budget: make([]BudgetRow, 0, len(in.Orcamento)),
 		Lanc:   make([]LancRow, 0, len(in.Lancamentos)),

@@ -12,13 +12,39 @@ Menu **Controle TI** na barra lateral, **só para quem tem o interruptor ligado*
 Wanessa. Sem o interruptor, o menu não aparece e `/api/ti/*` responde 403. A permissão é lida do banco
 a cada chamada: ligar ou desligar vale na hora, sem sair e entrar de novo.
 
-## O que existe (fase 1)
+## O que existe
 
 | Aba | O que faz |
 | --- | --- |
-| Visão geral | 6 indicadores, grade mês a mês (fechado = realizado, aberto = projeção) e quadro por centro de custo; filtros de ano, empresa, CC, filial, tipo e conta |
-| Lançamentos | Lista nota a nota com busca (fornecedor, descrição, pedido, NF, MIRO) e filtros de status, competência e CC |
+| **Painel** | Os gráficos e análises do painel HTML de 2026, completos: **7 telas** (Visão geral, Realizado, Fornecedores, Lançamentos e as bases Orçado, A lançar e Projeção), ~35 visualizações, filtros, "Pontos de atenção" automáticos, modais e tema claro/escuro |
+| Lançamentos | Lista nota a nota do sistema, com busca e filtros (vai virar a tela de digitação na fase 2) |
 | Importar planilha | Carga do `.xlsx` (abas Parâmetros, Orçamento Forecast, Lançamentos Mensais) |
+
+### Como o painel foi levado para o sistema
+
+O painel de 2026 tem ~100 KB de lógica (cálculo, gráficos SVG, análises de atenção, modais). Reescrevê-lo
+em React arriscava mudar visual e números. Ele foi **levado como está**: `frontend/public/painel-ti/`
+(`index.html`, `painel.css`, `painel.js`), alimentado pela API (`GET /api/ti/modelo`). O que mudou em
+relação ao arquivo original, e só isso:
+
+- os dados deixaram de ser embutidos: chegam por `postMessage` (o painel avisa `fcx-pronto` e recebe
+  `fcx-modelo`); o botão "Carregar planilha" virou "Importar planilha" e abre a aba de importação;
+- sem leitor de Excel dentro do painel (a importação é feita pelo servidor) nem arrastar-e-soltar;
+- fonte Manrope embutida no CSS (o original usava o Google Fonts, bloqueado na rede da FC).
+
+**Segurança.** O painel roda num `<iframe sandbox="allow-scripts">` (origem opaca: não enxerga o
+token do sistema nem chama a API) e o nginx aplica ao caminho `/painel-ti/` uma CSP sem rede
+(`connect-src 'none'`, scripts só do próprio caminho). Essa é a **única exceção** ao
+`X-Frame-Options: DENY` do servidor (`SAMEORIGIN`, só nesse caminho). Há motivo para isso: os nomes de
+fornecedor e as descrições vêm de planilha/SAP e o código do painel monta HTML com eles.
+
+**Alterar o painel:** editar os 3 arquivos de `frontend/public/painel-ti/` (são a fonte da verdade; o
+`temp/Dashboard_FY27_Forecast_2.html` era só a origem). Os campos que o painel lê do modelo são os de
+`internal/controleti/modelo.go` — não renomeie sem ajustar o `painel.js`.
+
+**Limitações conhecidas.** A preferência de tema não é lembrada (o sandbox não tem `localStorage`); o
+painel não tem exportação nem impressão (o original também não tinha); os filtros do painel não são
+compartilhados com as outras abas.
 
 ## Regras implementadas (iguais às do painel de 2026)
 
@@ -40,8 +66,8 @@ a cada chamada: ligar ou desligar vale na hora, sem sair e entrar de novo.
 O parser original do painel (JavaScript) serve de gabarito. `internal/controleti/oraculo_test.go` compara
 o modelo montado em Go com o dele, **campo a campo** (694 linhas de orçamento, 1.444 lançamentos, 162
 linhas de projeção, 48 meses) — e um teste com o gabarito adulterado prova que o teste de fato reprova.
-Os indicadores e a grade mensal em TypeScript foram conferidos contra o que o painel antigo exibe
-(6 de 6 indicadores e 12 de 12 meses). Janeiro a setembro/2026 batem **ao centavo**; outubro difere
+Como o painel é o mesmo código do original, os números dele só dependem do modelo, que é o que o teste
+acima valida. Janeiro a setembro/2026 batem **ao centavo**; outubro difere
 porque a planilha enviada não traz os lançamentos de outubro que o painel HTML recebeu por fora.
 
 Para repetir (precisa da planilha real, que **não** fica no repositório):

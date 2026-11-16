@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Upload } from 'lucide-react';
@@ -15,24 +15,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import {
-  GRUPOS,
-  SEM_FILTRO,
-  anosDo,
-  brl,
-  brl0,
-  calcular,
-  curto,
-  dataBR,
-  passa,
-  pct,
-  rotuloMes,
-  type Filtros,
-  type TiLanc,
-  type TiModelo,
-} from '@/lib/controleTi';
+import { brl, dataBR, rotuloMes, type TiLanc, type TiModelo } from '@/lib/controleTi';
 
 // Controle TI — orçado × realizado × a lançar × projeção das despesas de TI
 // (substitui a planilha FC FY27 Forecast + painel HTML de 2026). Os números
@@ -57,10 +42,10 @@ interface ResumoImportacao {
   lancamentos: number;
 }
 
-type Aba = 'geral' | 'lancamentos' | 'importar';
+type Aba = 'painel' | 'lancamentos' | 'importar';
 
 const ABAS: { id: Aba; rotulo: string; ajuda: string }[] = [
-  { id: 'geral', rotulo: 'Visão geral', ajuda: 'o olhar rápido' },
+  { id: 'painel', rotulo: 'Painel', ajuda: 'gráficos e análises' },
   { id: 'lancamentos', rotulo: 'Lançamentos', ajuda: 'nota a nota' },
   { id: 'importar', rotulo: 'Importar planilha', ajuda: 'carga do Excel' },
 ];
@@ -95,261 +80,6 @@ function FiltroSelect({
         </SelectContent>
       </Select>
     </div>
-  );
-}
-
-function Indicador({
-  rotulo,
-  valor,
-  detalhe,
-  titulo,
-  tom,
-}: {
-  rotulo: string;
-  valor: string;
-  detalhe: React.ReactNode;
-  titulo?: string;
-  tom?: 'bom' | 'ruim';
-}) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1 rounded-lg border border-border bg-card px-4 py-3" title={titulo}>
-      <span className="truncate text-xs text-fg-helper">{rotulo}</span>
-      <span
-        className={cn(
-          'text-xl font-semibold tabular-nums',
-          tom === 'bom' && 'text-success-text',
-          tom === 'ruim' && 'text-danger-text',
-          !tom && 'text-foreground',
-        )}
-      >
-        {valor}
-      </span>
-      <span className="text-xs text-fg-helper">{detalhe}</span>
-    </div>
-  );
-}
-
-function VisaoGeral({ modelo }: { modelo: TiModelo }) {
-  const anos = useMemo(() => anosDo(modelo), [modelo]);
-  const anoInicial = anos.includes(modelo.meta.lastClosed.slice(0, 4)) ? modelo.meta.lastClosed.slice(0, 4) : anos[0] ?? '';
-  const [f, setF] = useState<Filtros>({ ano: anoInicial, ...SEM_FILTRO });
-  const set = (parcial: Partial<Filtros>) => setF((atual) => ({ ...atual, ...parcial }));
-
-  const D = useMemo(() => calcular(modelo, f), [modelo, f]);
-  const t = D.t;
-  const lc = modelo.meta.lastClosed;
-
-  // Opções dos filtros saem dos próprios dados (sem o CC fora do painel).
-  const opcoes = useMemo(() => {
-    const linhas = [...modelo.budget, ...modelo.lanc].filter((r) => passa(r, { ano: f.ano, ...SEM_FILTRO }));
-    const unicos = (chave: (r: (typeof linhas)[number]) => [string, string]) => {
-      const m = new Map<string, string>();
-      for (const r of linhas) {
-        const [v, rot] = chave(r);
-        if (v && !m.has(v)) m.set(v, rot);
-      }
-      return [...m.entries()].map(([valor, rotulo]) => ({ valor, rotulo })).sort((a, b) => a.rotulo.localeCompare(b.rotulo, 'pt-BR'));
-    };
-    return {
-      cc: unicos((r) => [r.cc, `${r.cc} — ${r.ccDesc}`]),
-      div: unicos((r) => [r.div, `${r.div} — ${r.divDesc}`]),
-      tipo: unicos((r) => [r.tipo, r.tipo]),
-      conta: unicos((r) => [r.conta, `${r.conta} — ${r.contaDesc}`]),
-    };
-  }, [modelo, f.ano]);
-
-  const filtrado = Boolean(f.grp || f.cc || f.div || f.tipo || f.conta);
-  const exec = t.Bytd ? t.Rytd / t.Bytd : null;
-  const sobra = t.B - t.CF;
-  const livre = t.B - t.R - t.C;
-  const desvio = t.B ? (t.CF - t.B) / t.B : null;
-
-  return (
-    <div className="flex flex-col gap-4">
-      <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4" aria-label="Filtros">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-xs text-fg-helper">Ano</span>
-          {anosDo(modelo).map((a) => (
-            <button
-              key={a}
-              type="button"
-              onClick={() => set({ ano: a })}
-              aria-pressed={f.ano === a}
-              className={cn(
-                'h-8 rounded-md border px-3 text-[13px] transition-colors duration-150',
-                f.ano === a
-                  ? 'border-[var(--blue-l650)] bg-[var(--blue-l950)] font-medium text-[var(--blue-d250)]'
-                  : 'border-input bg-card text-fg-secondary hover:bg-border',
-              )}
-            >
-              {a}
-            </button>
-          ))}
-          {filtrado && (
-            <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setF({ ano: f.ano, ...SEM_FILTRO })}>
-              Limpar filtros
-            </Button>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-          <FiltroSelect
-            rotulo="Empresa"
-            valor={f.grp}
-            onChange={(v) => set({ grp: v })}
-            opcoes={GRUPOS.map((g) => ({ valor: g.k, rotulo: g.l }))}
-          />
-          <FiltroSelect rotulo="Centro de custo" valor={f.cc} onChange={(v) => set({ cc: v })} opcoes={opcoes.cc} />
-          <FiltroSelect rotulo="Filial" valor={f.div} onChange={(v) => set({ div: v })} opcoes={opcoes.div} />
-          <FiltroSelect rotulo="Tipo de despesa" valor={f.tipo} onChange={(v) => set({ tipo: v })} opcoes={opcoes.tipo} />
-          <FiltroSelect rotulo="Conta contábil" valor={f.conta} onChange={(v) => set({ conta: v })} opcoes={opcoes.conta} />
-        </div>
-      </section>
-
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6" aria-label="Indicadores">
-        <Indicador
-          rotulo={`Orçado ${f.ano}`}
-          valor={curto(t.B)}
-          titulo={brl(t.B)}
-          detalhe={`${brl0(t.B / 12)} por mês, em média`}
-        />
-        <Indicador
-          rotulo={`Projeção ${f.ano}`}
-          valor={curto(t.CF)}
-          titulo={brl(t.CF)}
-          detalhe={
-            desvio == null ? 'sem orçado' : `${desvio > 0 ? '▲' : desvio < 0 ? '▼' : '●'} ${pct(Math.abs(desvio))} ${desvio > 0 ? 'acima' : 'abaixo'} do orçado`
-          }
-        />
-        <Indicador
-          rotulo="Deve sobrar do orçado"
-          valor={curto(sobra)}
-          titulo={brl(sobra)}
-          tom={sobra >= 0 ? 'bom' : 'ruim'}
-          detalhe={sobra >= 0 ? 'orçado − projeção: abaixo do orçado' : 'projeção acima do orçado'}
-        />
-        {t.fechados === 0 ? (
-          <Indicador rotulo={`Realizado ${f.ano}`} valor="—" detalhe="ano ainda sem meses fechados" />
-        ) : (
-          <Indicador
-            rotulo={`Realizado até ${rotuloMes(t.fechados === 12 ? `${f.ano}-12` : lc)}`}
-            valor={curto(t.Rytd)}
-            titulo={brl(t.Rytd)}
-            detalhe={`${pct(exec)} do orçado do período (${curto(t.Bytd)})`}
-          />
-        )}
-        <Indicador
-          rotulo="A lançar no ano"
-          valor={curto(t.C)}
-          titulo={brl(t.C)}
-          detalhe={t.Copen > 0 ? `▲ ${curto(t.Copen)} em meses já fechados` : 'nada pendente em mês fechado'}
-        />
-        <Indicador
-          rotulo="Saldo disponível"
-          valor={curto(livre)}
-          titulo={brl(livre)}
-          tom={livre >= 0 ? undefined : 'ruim'}
-          detalhe="orçado − realizado − a lançar"
-        />
-      </div>
-
-      <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
-        <div>
-          <h2 className="text-base font-semibold text-foreground">Mês a mês</h2>
-          <p className="text-xs text-fg-helper">
-            Meses fechados (até {rotuloMes(lc)}) mostram o realizado; os em aberto, a projeção. Sobra = orçado − projeção.
-          </p>
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Mês</TableHead>
-              <TableHead className="text-right">Orçado</TableHead>
-              <TableHead className="text-right">Realizado</TableHead>
-              <TableHead className="text-right">A lançar</TableHead>
-              <TableHead className="text-right">Projeção</TableHead>
-              <TableHead className="text-right">Sobra</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {D.meses.map((ym, i) => (
-              <TableRow key={ym} className={ym > lc ? 'text-fg-secondary' : undefined}>
-                <TableCell>
-                  {rotuloMes(ym)}
-                  {ym <= lc && <span className="ml-1.5 text-xs text-success-text" title="mês fechado">fechado</span>}
-                </TableCell>
-                <Num v={D.mB[i]} />
-                <Num v={D.mR[i]} />
-                <Num v={D.mC[i]} />
-                <Num v={D.mCF[i]} />
-                <Num v={D.mB[i] - D.mCF[i]} sinal />
-              </TableRow>
-            ))}
-          </TableBody>
-          <TableFooter>
-            <TableRow>
-              <TableCell>Total</TableCell>
-              <Num v={t.B} />
-              <Num v={t.R} />
-              <Num v={t.C} />
-              <Num v={t.CF} />
-              <Num v={t.B - t.CF} sinal />
-            </TableRow>
-          </TableFooter>
-        </Table>
-      </section>
-
-      <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
-        <div>
-          <h2 className="text-base font-semibold text-foreground">Por centro de custo</h2>
-          <p className="text-xs text-fg-helper">% usado = (realizado + a lançar) ÷ orçado. Em vermelho: acima do orçado ou sem orçamento.</p>
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Centro de custo</TableHead>
-              <TableHead className="text-right">Orçado</TableHead>
-              <TableHead className="text-right">Realizado</TableHead>
-              <TableHead className="text-right">A lançar</TableHead>
-              <TableHead className="text-right">Projeção</TableHead>
-              <TableHead className="text-right">% usado</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {D.porCC.map((o) => {
-              const usado = o.B ? (o.R + o.C) / o.B : null;
-              const estourou = o.B ? o.R + o.C > o.B : o.R + o.C > 0.5;
-              return (
-                <TableRow key={o.cc}>
-                  <TableCell>
-                    <span className="font-medium">{o.cc}</span> <span className="text-fg-helper">{o.desc}</span>
-                  </TableCell>
-                  <Num v={o.B} />
-                  <Num v={o.R} />
-                  <Num v={o.C} />
-                  <Num v={o.CF} />
-                  <TableCell className={cn('text-right tabular-nums', estourou && 'font-medium text-danger-text')}>{pct(usado)}</TableCell>
-                </TableRow>
-              );
-            })}
-            {D.porCC.length === 0 && (
-              <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={6} className="py-6 text-center text-fg-helper">
-                  Nenhum dado para estes filtros.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </section>
-    </div>
-  );
-}
-
-function Num({ v, sinal = false }: { v: number; sinal?: boolean }) {
-  return (
-    <TableCell className={cn('text-right tabular-nums', sinal && v < -0.5 && 'text-danger-text')}>
-      {Math.abs(v) < 0.5 ? '—' : brl0(v)}
-    </TableCell>
   );
 }
 
@@ -472,6 +202,50 @@ function Lancamentos({ modelo }: { modelo: TiModelo }) {
   );
 }
 
+// Painel — os gráficos e análises do painel de despesas de TI de 2026 (7 telas:
+// Visão geral, Realizado, Fornecedores, Lançamentos e as bases Orçado, A lançar e
+// Projeção), levados para dentro do sistema SEM reescrever o cálculo: é o mesmo
+// código do painel original, o que garante o mesmo visual e os mesmos números.
+//
+// Roda num <iframe sandbox="allow-scripts"> (origem opaca: não enxerga a sessão do
+// sistema nem chama a API) e uma CSP restrita no nginx (sem rede). Os dados chegam
+// por postMessage — o painel avisa "fcx-pronto" e recebe "fcx-modelo". Fonte da
+// verdade do código: frontend/public/painel-ti/ (ver docs/referencia/04-CONTROLE-TI.md).
+function Painel({ modelo, onImportar }: { modelo: TiModelo; onImportar: () => void }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+
+  const enviar = useCallback(() => {
+    frame.current?.contentWindow?.postMessage({ type: 'fcx-modelo', modelo }, '*');
+  }, [modelo]);
+
+  useEffect(() => {
+    function aoReceber(e: MessageEvent) {
+      // só mensagens do NOSSO iframe (a origem dele é opaca, então a identidade é a janela)
+      if (e.source !== frame.current?.contentWindow) return;
+      if (e.data?.type === 'fcx-pronto') enviar();
+      if (e.data?.type === 'fcx-importar') onImportar();
+    }
+    window.addEventListener('message', aoReceber);
+    return () => window.removeEventListener('message', aoReceber);
+  }, [enviar, onImportar]);
+
+  // dados novos (depois de importar uma planilha) com o painel já aberto
+  useEffect(() => {
+    enviar();
+  }, [enviar]);
+
+  return (
+    <iframe
+      ref={frame}
+      src="/painel-ti/index.html"
+      title="Painel de despesas de TI"
+      sandbox="allow-scripts"
+      className="block w-full rounded-lg border border-border bg-card"
+      style={{ height: 'calc(100vh - 10.5rem)', minHeight: 560 }}
+    />
+  );
+}
+
 function Importar({ modelo }: { modelo: TiModelo }) {
   const queryClient = useQueryClient();
   const entrada = useRef<HTMLInputElement>(null);
@@ -579,7 +353,7 @@ function Importar({ modelo }: { modelo: TiModelo }) {
 }
 
 export default function ControleTI() {
-  const [aba, setAba] = useState<Aba>('geral');
+  const [aba, setAba] = useState<Aba>('painel');
   const { data: modelo, error, isLoading } = useQuery({
     queryKey: ['ti-modelo'],
     queryFn: () => pedir<TiModelo>('/api/ti/modelo'),
@@ -588,7 +362,7 @@ export default function ControleTI() {
   const vazio = modelo && modelo.budget.length === 0 && modelo.lanc.length === 0;
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 p-6">
+    <div className={cn('mx-auto flex w-full flex-col gap-4 p-6', aba === 'painel' ? 'max-w-none' : 'max-w-7xl')}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold text-foreground">Controle TI</h1>
@@ -638,7 +412,7 @@ export default function ControleTI() {
         </div>
       )}
 
-      {modelo && !vazio && aba === 'geral' && <VisaoGeral modelo={modelo} />}
+      {modelo && !vazio && aba === 'painel' && <Painel modelo={modelo} onImportar={() => setAba('importar')} />}
       {modelo && !vazio && aba === 'lancamentos' && <Lancamentos modelo={modelo} />}
       {modelo && aba === 'importar' && <Importar modelo={modelo} />}
     </div>
