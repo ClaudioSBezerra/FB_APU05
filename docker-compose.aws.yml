@@ -4,7 +4,7 @@
 # Keycloak, etc.). Regra: esta stack é totalmente isolada —
 #   * projeto compose "orcamento" (rede orcamento_net e volume orcamento_pgdata próprios);
 #   * containers orcamento-*; banco Postgres PRÓPRIO, sem porta publicada;
-#   * api sem porta publicada; só o web publica, em 172.17.0.1:3012 (docker0), de onde o
+#   * api sem porta publicada; só o web publica, na 3012 do host, de onde o
 #     nginx_proxy do servidor (/apps/infra-server-fercos-sap/nginx) faz o proxy_pass.
 # Nunca apontar DATABASE_URL para outro banco do servidor.
 #
@@ -76,8 +76,10 @@ services:
     container_name: orcamento-web
     restart: always
     ports:
-      # só na interface docker0: o nginx_proxy chega por 172.17.0.1; não fica exposto na rede
-      - "172.17.0.1:3012:80"
+      # mesmo padrão dos outros sistemas do servidor (StockFlow 3008, FB_APU02 3006): o
+      # nginx_proxy está em outras redes docker e chega por 172.17.0.1:<porta>. Preso só ao
+      # docker0 NÃO funciona (timeout) — por isso 0.0.0.0.
+      - "3012:80"
     depends_on:
       api:
         condition: service_healthy

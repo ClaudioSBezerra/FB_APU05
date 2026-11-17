@@ -108,7 +108,7 @@ for _ in $(seq 1 60); do
 done
 [[ "$status" == "healthy" ]] || die "o web não ficou saudável — veja: ssh $HOST docker logs orcamento-api"
 
-ssh "$HOST" "curl -fsS http://172.17.0.1:3012/api/health" && echo
+ssh "$HOST" "curl -fsS http://127.0.0.1:3012/api/health" && echo
 info "OK: $SHA no ar em http://172.17.0.1:3012 (nginx_proxy -> $DOMINIO depende do bloco no nginx.conf)"
 
 # imagens antigas desta stack (só orcamento-*): mantém a atual e a anterior
