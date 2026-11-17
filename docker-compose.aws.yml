@@ -95,6 +95,12 @@ services:
 networks:
   orcamento_net:
     driver: bridge
+    # Sub-rede FIXA: sem isso o Docker escolhe 172.31.0.0/16, que o servidor roteia para a
+    # rede corporativa (172.31.0.0/20 via ens5) — o tráfego do host/nginx_proxy para o web
+    # dá timeout. 10.201.0.0/24 não colide com nenhuma rota nem rede docker do servidor.
+    ipam:
+      config:
+        - subnet: 10.201.0.0/24
 
 volumes:
   orcamento_pgdata: {}
