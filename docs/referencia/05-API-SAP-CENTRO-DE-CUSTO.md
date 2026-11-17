@@ -42,15 +42,18 @@ por `to_Text` / `to_CostCenter`.
 `CostCtrResponsibleUser` / `CostCtrResponsiblePersonName` (responsável), `CostCenterCategory`,
 `Department`, `ValidityStartDate/EndDate`, bloqueios, `to_Text` (nome).
 
-## Pontos a decidir antes de implementar
+## Como o Orçamento usa
 
-1. **Quem inicia a conexão.** O doc `03-INTEGRACAO-SAP-S4HANA.md` pedia que o **SAP empurrasse** os dados
-   (rotas nossas com `X-API-Key`); esta API é de **leitura** — nós é que chamamos o SAP. Confirmar com o Time
-   TI SAP/Duda qual modelo vale para centros de custo.
+Leitura **uma vez por dia, às 06:00**, configurada em Configurações (ver `06-API-SAP-CONTAS-CONTABEIS.md`, seção
+"No Orçamento", que vale para as duas APIs). A API de contas contábeis está na mesma fila e no mesmo agendamento.
+
+## Pontos a decidir antes de gravar nos cadastros
+
+1. ~~Quem inicia a conexão.~~ **Decidido:** o Orçamento puxa, 1x/dia às 06:00 (o doc `03` pedia push; vale só
+   para filiais e saldos, com a Duda).
 2. **Rede.** O host de homologação resolve e responde na máquina de desenvolvimento (VPN), mas **não resolve
-   no servidor da AWS** (`orcamento.ferreiracosta.com.br`). Para o sistema consumir, é preciso DNS/rota do
-   servidor até o SAP (Infra).
-3. **Credencial** (usuário Basic ou cliente OAuth) com o arranjo de comunicação, e o **host/porta de produção**.
+   no servidor da AWS** (`orcamento.ferreiracosta.com.br`). É preciso DNS/rota do servidor até o SAP (Infra).
+3. **Credencial** (usuário Basic) com o arranjo de comunicação, e o **host/porta de produção**.
 4. **Responsável do CC:** `CostCtrResponsibleUser` pode substituir a matrícula do colaborador para ligar usuário
    ↔ centro de custo (a matrícula deixou de ser pedida no cadastro de usuários em 17/11/2026).
 5. Mapeamento `ControllingArea`/`CompanyCode`/`BusinessArea` ↔ nossas Divisões e CCs (`centros_custo`).

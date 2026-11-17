@@ -137,6 +137,18 @@ func initPrivilegedDBAsync() {
 // não precisa de dbPrivileged). Ignora silenciosamente cada tick em que
 // dbApp ainda não conectou (initAppDBAsync roda em paralelo) — o próximo
 // tick, 5 minutos depois, tenta de novo.
+// initSAPRotinaAsync confere a cada 30 s se a leitura diária do SAP (06:00, Recife) está devida.
+func initSAPRotinaAsync() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		for range ticker.C {
+			if database := getDBApp(); database != nil {
+				handlers.RotinaSAPDiaria(database, time.Now())
+			}
+		}
+	}()
+}
+
 func initPainelRecalculoAsync() {
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
@@ -289,6 +301,7 @@ func main() {
 	initAppDBAsync()
 	initPrivilegedDBAsync()
 	initPainelRecalculoAsync()
+	initSAPRotinaAsync()
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -456,6 +469,15 @@ func main() {
 	// para qualquer usuário autenticado (alimenta o menu); /api/ti/* exige o
 	// interruptor usuarios.controle_ti (checado no banco a cada chamada).
 	http.HandleFunc("GET /api/me/permissoes", handlers.RequireAuth(withDB(handlers.PermissoesHandler), ""))
+	// "Solicitar promoção" (migration 028): usuário novo é solicitante; pede promoção a atendente e
+	// os administradores ativos recebem e-mail. Qualquer usuário autenticado.
+	http.HandleFunc("GET /api/me/promocao", handlers.RequireAuth(withDB(handlers.PromocaoStatusHandler), ""))
+	http.HandleFunc("POST /api/me/solicitar-promocao", handlers.RequireAuth(withDB(handlers.SolicitarPromocaoHandler), ""))
+	// Configurações (migration 029): e-mail da promoção e integração SAP (centros de custo e contas,
+	// leitura 1x/dia às 06:00). Só administrador.
+	http.HandleFunc("GET /api/admin/configuracoes", handlers.RequireAuth(withDB(handlers.ConfiguracoesHandler), "administrador"))
+	http.HandleFunc("PUT /api/admin/configuracoes", handlers.RequireAuth(withDB(handlers.ConfiguracoesHandler), "administrador"))
+	http.HandleFunc("POST /api/admin/configuracoes/sap/{servico}/testar", handlers.RequireAuth(withDB(handlers.SAPTestarHandler), "administrador"))
 	http.HandleFunc("GET /api/ti/modelo", handlers.RequireAuth(withDB(handlers.TIModeloHandler), ""))
 	http.HandleFunc("POST /api/ti/importar", handlers.RequireAuth(withDB(handlers.TIImportarHandler), ""))
 	http.HandleFunc("GET /api/ti/conferencia", handlers.RequireAuth(withDB(handlers.TIConferenciaHandler), ""))

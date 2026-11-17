@@ -8,6 +8,7 @@ const titles: [prefix: string, title: string][] = [
   ['/solicitacoes/nova', 'Nova solicitação'],
   ['/admin/usuarios', 'Gestão de usuários'],
   ['/admin/cadastros', 'Cadastros mestres'],
+  ['/admin/configuracoes', 'Configurações'],
   ['/admin/erp-bridge', 'ERP Bridge — credenciais'],
   ['/controle-ti', 'Controle TI'],
   ['/painel', 'Painel'],

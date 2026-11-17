@@ -1,0 +1,279 @@
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { CheckCircle2, XCircle, PlugZap } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+
+// Configurações (só administrador): parâmetros do sistema e integração SAP.
+// API: GET/PUT /api/admin/configuracoes e POST /api/admin/configuracoes/sap/{cc|gl}/testar
+// (handlers/configuracoes.go). O Authorization é injetado pelo interceptor global de fetch.
+
+interface ResultadoSAP {
+  ok: boolean;
+  total: number;
+  mensagem: string;
+  duracao_ms: number;
+  origem: 'agendada' | 'manual';
+}
+interface ServicoSAP {
+  chave: 'cc' | 'gl';
+  nome: string;
+  ativo: boolean;
+  url_base: string;
+  ultima_execucao: string;
+  ultimo_resultado?: ResultadoSAP;
+}
+interface Config {
+  promocao: { emails_extra: string[] };
+  sap: { horario: string; usuario: string; senha_definida: boolean; servicos: ServicoSAP[] };
+}
+
+async function chamar<T>(url: string, init?: RequestInit): Promise<T> {
+  const resp = await fetch(url, init);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data?.error || `Erro HTTP ${resp.status}`);
+  return data as T;
+}
+
+const quando = (iso: string) =>
+  iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'nunca';
+
+function ResultadoLinha({ r, ultima }: { r?: ResultadoSAP; ultima: string }) {
+  if (!r) return <p className="text-xs text-muted-foreground">Ainda não foi executado.</p>;
+  const Icone = r.ok ? CheckCircle2 : XCircle;
+  return (
+    <p className="flex items-start gap-1.5 text-xs" role="status">
+      <Icone className={r.ok ? 'mt-0.5 size-3.5 shrink-0 text-success-text' : 'mt-0.5 size-3.5 shrink-0 text-danger-text'} />
+      <span>
+        <span className="font-medium">
+          {quando(ultima)} ({r.origem === 'agendada' ? 'agendada' : 'teste manual'}):
+        </span>{' '}
+        {r.mensagem}
+        {r.ok && r.duracao_ms > 0 ? ` (${r.duracao_ms} ms)` : ''}
+      </span>
+    </p>
+  );
+}
+
+export default function Configuracoes() {
+  const { data, isLoading, error } = useQuery<Config>({
+    queryKey: ['configuracoes'],
+    queryFn: () => chamar<Config>('/api/admin/configuracoes'),
+  });
+  if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Carregando…</div>;
+  if (error || !data) {
+    return (
+      <div role="alert" className="p-6 text-sm text-danger-text">
+        Não foi possível carregar as configurações.
+      </div>
+    );
+  }
+  return <Formulario data={data} />;
+}
+
+// Os rascunhos nascem dos dados carregados (estado inicial) e seguem com o usuário: depois de salvar
+// ou testar, os resultados mostrados vêm de `data` (atualizado), sem apagar o que ele está digitando.
+function Formulario({ data }: { data: Config }) {
+  const queryClient = useQueryClient();
+  const [emails, setEmails] = useState(() => data.promocao.emails_extra.join('\n'));
+  const [horario, setHorario] = useState(() => data.sap.horario || '06:00');
+  const [usuario, setUsuario] = useState(() => data.sap.usuario);
+  const [senha, setSenha] = useState('');
+  const [urls, setUrls] = useState<Record<string, string>>(() =>
+    Object.fromEntries(data.sap.servicos.map((s) => [s.chave, s.url_base])),
+  );
+  const [ativos, setAtivos] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(data.sap.servicos.map((s) => [s.chave, s.ativo])),
+  );
+
+  const salvar = useMutation({
+    mutationFn: (corpo: object) =>
+      chamar<Config>('/api/admin/configuracoes', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(corpo),
+      }),
+    onSuccess: (nova) => {
+      queryClient.setQueryData(['configuracoes'], nova);
+      setSenha('');
+      toast.success('Configurações salvas');
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const testar = useMutation({
+    mutationFn: (chave: string) =>
+      chamar<ResultadoSAP>(`/api/admin/configuracoes/sap/${chave}/testar`, { method: 'POST' }),
+    onSuccess: (r) => {
+      queryClient.invalidateQueries({ queryKey: ['configuracoes'] });
+      if (r.ok) toast.success(r.mensagem);
+      else toast.error(r.mensagem);
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  function salvarPromocao() {
+    salvar.mutate({ promocao: { emails_extra: emails.split(/[\n;,]+/).map((e) => e.trim()).filter(Boolean) } });
+  }
+
+  function salvarSAP() {
+    const servicos: Record<string, { ativo: boolean; url_base: string }> = {};
+    for (const s of data?.sap.servicos ?? []) {
+      servicos[s.chave] = { ativo: !!ativos[s.chave], url_base: (urls[s.chave] ?? '').trim() };
+    }
+    salvar.mutate({
+      sap: { horario, usuario: usuario.trim(), ...(senha ? { senha } : {}), servicos },
+    });
+  }
+
+  const temCredencial = data.sap.usuario !== '' && data.sap.senha_definida;
+
+  return (
+    <div className="mx-auto grid max-w-3xl gap-8 p-6">
+      <h1 className="text-lg font-semibold text-foreground">Configurações</h1>
+
+      <section aria-labelledby="cfg-parametros" className="grid gap-4 rounded-lg border bg-card p-5">
+        <div>
+          <h2 id="cfg-parametros" className="text-base font-semibold">
+            Parâmetros
+          </h2>
+          <p className="text-xs text-muted-foreground">Valores que o sistema usa no dia a dia.</p>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="cfg-emails">E-mail para promoção de usuários</Label>
+          <Textarea
+            id="cfg-emails"
+            rows={3}
+            placeholder={'controladoria@ferreiracosta.com.br\noutro@ferreiracosta.com.br'}
+            value={emails}
+            onChange={(e) => setEmails(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Um e-mail por linha. Quando alguém usa <em>Solicitar promoção</em>, estes endereços recebem o pedido
+            <strong> além de todos os administradores ativos</strong>. Deixe vazio para avisar só os administradores.
+          </p>
+        </div>
+        <div>
+          <Button size="sm" onClick={salvarPromocao} disabled={salvar.isPending}>
+            Salvar parâmetros
+          </Button>
+        </div>
+      </section>
+
+      <section aria-labelledby="cfg-sap" className="grid gap-5 rounded-lg border bg-card p-5">
+        <div>
+          <h2 id="cfg-sap" className="text-base font-semibold">
+            Integração SAP
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            O sistema lê o SAP (somente leitura) uma vez por dia, no horário abaixo (horário de Recife). Hoje a leitura
+            confere o acesso e conta os registros; a gravação nos cadastros entra depois que o mapeamento for definido.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="sap-horario">Horário da leitura diária</Label>
+            <Input id="sap-horario" type="time" value={horario} onChange={(e) => setHorario(e.target.value)} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="sap-usuario">Usuário do SAP</Label>
+            <Input
+              id="sap-usuario"
+              autoComplete="off"
+              value={usuario}
+              onChange={(e) => setUsuario(e.target.value)}
+              placeholder="usuário técnico"
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="sap-senha">Senha do SAP</Label>
+            <Input
+              id="sap-senha"
+              type="password"
+              autoComplete="new-password"
+              value={senha}
+              onChange={(e) => setSenha(e.target.value)}
+              placeholder={data.sap.senha_definida ? '•••••••• (definida)' : 'não definida'}
+            />
+          </div>
+        </div>
+        <p className="-mt-2 text-xs text-muted-foreground">
+          A senha é gravada criptografada e nunca é mostrada de volta. Deixe o campo vazio para manter a atual.
+          {data.sap.senha_definida && (
+            <>
+              {' '}
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-foreground"
+                onClick={() => salvar.mutate({ sap: { limpar_senha: true, servicos: {} } })}
+              >
+                Remover senha
+              </button>
+            </>
+          )}
+        </p>
+
+        <div className="grid gap-4">
+          {data.sap.servicos.map((s) => (
+            <div key={s.chave} className="grid gap-3 rounded-md border p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold">{s.nome}</h3>
+                  <Badge variant={ativos[s.chave] ? 'default' : 'secondary'}>{ativos[s.chave] ? 'Ativo' : 'Desligado'}</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor={`sap-ativo-${s.chave}`} className="text-xs text-muted-foreground">
+                    Ler todo dia
+                  </Label>
+                  <Switch
+                    id={`sap-ativo-${s.chave}`}
+                    checked={!!ativos[s.chave]}
+                    onCheckedChange={(v) => setAtivos((a) => ({ ...a, [s.chave]: v }))}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor={`sap-url-${s.chave}`}>URL do serviço</Label>
+                <Input
+                  id={`sap-url-${s.chave}`}
+                  value={urls[s.chave] ?? ''}
+                  onChange={(e) => setUrls((u) => ({ ...u, [s.chave]: e.target.value }))}
+                  className="font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Só https, em servidor de um domínio da Ferreira Costa. Hoje aponta para a homologação; troque pela de
+                  produção quando for liberada.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <ResultadoLinha r={s.ultimo_resultado} ultima={s.ultima_execucao} />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => testar.mutate(s.chave)}
+                  disabled={!temCredencial || testar.isPending}
+                  title={temCredencial ? 'Faz uma leitura de 1 registro no SAP' : 'Salve o usuário e a senha antes de testar'}
+                >
+                  <PlugZap className="mr-1 size-3.5" />
+                  {testar.isPending && testar.variables === s.chave ? 'Testando...' : 'Testar conexão'}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div>
+          <Button size="sm" onClick={salvarSAP} disabled={salvar.isPending}>
+            Salvar integração SAP
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+}

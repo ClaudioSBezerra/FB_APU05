@@ -54,6 +54,10 @@ func SanitizarNome(v string, max int) string {
 	}
 	var b strings.Builder
 	for _, r := range v {
+		if unicode.IsSpace(r) { // quebra de linha e tab viram espaço (não juntam palavras)
+			b.WriteRune(' ')
+			continue
+		}
 		if r == utf8.RuneError || caractereProibido(r) {
 			continue
 		}

@@ -13,6 +13,7 @@ import ChangePassword from '@/pages/ChangePassword'
 import GestaoUsuarios from '@/pages/GestaoUsuarios'
 import AbrirSolicitacao from '@/pages/AbrirSolicitacao'
 import FilaAtendimento from '@/pages/FilaAtendimento'
+import Configuracoes from '@/pages/Configuracoes'
 import { paginaInicial, podeAtender } from '@/lib/perfis'
 import ERPBridgeCredenciais from '@/pages/ERPBridgeCredenciais'
 import CadastrosMestres from '@/pages/CadastrosMestres'
@@ -124,6 +125,14 @@ function App() {
                     element={
                       <AdminRoute>
                         <ERPBridgeCredenciais />
+                      </AdminRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/configuracoes"
+                    element={
+                      <AdminRoute>
+                        <Configuracoes />
                       </AdminRoute>
                     }
                   />
