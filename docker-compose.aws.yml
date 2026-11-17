@@ -1,0 +1,98 @@
+# Servidor AWS da FC (aws-fc, 172.16.249.77) — domínio orcamento.ferreiracosta.com.br.
+#
+# Servidor COMPARTILHADO com outros sistemas (FB_APU02 "cliente-*", StockFlow, FB_APU04,
+# Keycloak, etc.). Regra: esta stack é totalmente isolada —
+#   * projeto compose "orcamento" (rede orcamento_net e volume orcamento_pgdata próprios);
+#   * containers orcamento-*; banco Postgres PRÓPRIO, sem porta publicada;
+#   * api sem porta publicada; só o web publica, em 172.17.0.1:3012 (docker0), de onde o
+#     nginx_proxy do servidor (/apps/infra-server-fercos-sap/nginx) faz o proxy_pass.
+# Nunca apontar DATABASE_URL para outro banco do servidor.
+#
+# As imagens são construídas na máquina de desenvolvimento e enviadas por
+# `docker save | ssh | docker load` (scripts/deploy_aws.sh): o disco do servidor é curto
+# e ele não precisa de acesso ao GitHub/Docker Hub para o build.
+name: orcamento
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: orcamento-db
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - orcamento_pgdata:/var/lib/postgresql/data
+    networks:
+      - orcamento_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  api:
+    image: orcamento-api:${TAG}
+    container_name: orcamento-api
+    restart: always
+    expose:
+      - "8081"
+    environment:
+      - PORT=8081
+      - DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}?sslmode=disable
+      - DATABASE_URL_APP=postgres://fb_apu05_app:${DB_APP_PASSWORD}@db:5432/${DB_NAME}?sslmode=disable
+      - DATABASE_URL_PRIVILEGIADA=postgres://fb_apu05_privilegiado:${DB_PRIVILEGIADA_PASSWORD}@db:5432/${DB_NAME}?sslmode=disable
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - COOKIE_SECURE=true
+      - APP_URL=${APP_URL}
+      - ALLOWED_ORIGINS=${APP_URL}
+      - IAM_BASE_URL=${IAM_BASE_URL:-}
+      - IAM_CLIENT_ID=${IAM_CLIENT_ID:-}
+      - IAM_REDIRECT_URI=${IAM_REDIRECT_URI:-}
+      - IAM_ALLOWED_CLIENT_IDS=${IAM_ALLOWED_CLIENT_IDS:-}
+      - IAM_SCOPES=${IAM_SCOPES:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - orcamento_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/api/health"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  web:
+    image: orcamento-web:${TAG}
+    container_name: orcamento-web
+    restart: always
+    ports:
+      # só na interface docker0: o nginx_proxy chega por 172.17.0.1; não fica exposto na rede
+      - "172.17.0.1:3012:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - orcamento_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+networks:
+  orcamento_net:
+    driver: bridge
+
+volumes:
+  orcamento_pgdata: {}
