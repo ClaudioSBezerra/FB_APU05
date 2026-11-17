@@ -295,7 +295,10 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			}
 
 			email := linha.Email
-			nome := linha.Nome
+			nome := SanitizarNome(linha.Nome, maxNome)
+			if nome == "" {
+				nome = linha.Nome
+			}
 
 			var existeID string
 			err = tx.QueryRow(`SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)`, email).Scan(&existeID)

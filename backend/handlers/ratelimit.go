@@ -69,7 +69,14 @@ var (
 func GetClientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[len(parts)-1])
+		// N-ésimo IP da direita, N = TRUSTED_PROXY_HOPS (padrão 1 = o último, como antes).
+		// Atrás de ALB + nginx do servidor + nginx do frontend (AWS) são 3 saltos; com 1 todos
+		// os clientes pareceriam o mesmo IP e os rate limits ficariam inúteis.
+		idx := len(parts) - trustedProxyHops()
+		if idx < 0 {
+			idx = 0
+		}
+		return strings.TrimSpace(parts[idx])
 	}
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
 		return xri

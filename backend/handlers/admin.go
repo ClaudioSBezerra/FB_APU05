@@ -128,9 +128,13 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusBadRequest, "'cod_empresa' e 'numcad' devem ser positivos e no máximo 2147483647")
 			return
 		}
-		if req.Nome != nil && strings.TrimSpace(*req.Nome) == "" {
-			jsonErr(w, http.StatusBadRequest, "'nome' não pode ser vazio")
-			return
+		if req.Nome != nil {
+			nome, errNome := NomeSeguro("nome", *req.Nome, maxNome)
+			if errNome != nil {
+				jsonErr(w, http.StatusBadRequest, errNome.Error())
+				return
+			}
+			req.Nome = &nome
 		}
 		if req.Email != nil && (strings.TrimSpace(*req.Email) == "" || !strings.Contains(*req.Email, "@")) {
 			jsonErr(w, http.StatusBadRequest, "'email' inválido")
@@ -411,10 +415,12 @@ func CreateUsuarioLocalHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusBadRequest, "e-mail inválido")
 			return
 		}
-		if req.Nome == "" {
-			jsonErr(w, http.StatusBadRequest, "nome é obrigatório")
+		nomeOK, errNome := NomeSeguro("nome", req.Nome, maxNome)
+		if errNome != nil {
+			jsonErr(w, http.StatusBadRequest, errNome.Error())
 			return
 		}
+		req.Nome = nomeOK
 		// Mesma política de senha do FB_APU02 (RegisterHandler): mínimo 8
 		// caracteres.
 		if len(req.Senha) < 8 {

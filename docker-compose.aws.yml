@@ -49,6 +49,8 @@ services:
       - COOKIE_SECURE=true
       - APP_URL=${APP_URL}
       - ALLOWED_ORIGINS=${APP_URL}
+      # IP do cliente atrás de ALB + nginx_proxy + nginx do web = 3 saltos (rate limit por IP)
+      - TRUSTED_PROXY_HOPS=${TRUSTED_PROXY_HOPS:-3}
       - IAM_BASE_URL=${IAM_BASE_URL:-}
       - IAM_CLIENT_ID=${IAM_CLIENT_ID:-}
       - IAM_REDIRECT_URI=${IAM_REDIRECT_URI:-}

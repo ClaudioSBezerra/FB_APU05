@@ -100,6 +100,10 @@ func KeycloakSSOHandler(db *sql.DB) http.HandlerFunc {
 			if at := strings.IndexByte(email, '@'); at > 0 {
 				nome = email[:at]
 			}
+			// o e-mail vem de fora (Keycloak): remove < >, controles e invisíveis do nome gravado
+			if limpo := SanitizarNome(nome, maxNome); limpo != "" {
+				nome = limpo
+			}
 			// ON CONFLICT (LOWER(email)) DO UPDATE ... RETURNING: protege contra a
 			// corrida de duas requisições concorrentes de primeiro login do mesmo
 			// e-mail, inclusive com casing diferente (ex: duplo clique, ou
