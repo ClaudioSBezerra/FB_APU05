@@ -10,7 +10,7 @@ package handlers
 // por NOME no cabeçalho, não por posição fixa — tolera reordenar,
 // maiúsculas/minúsculas, e ignora colunas extras (ex. "perfil", presente ou
 // não no arquivo, nunca é usada: todo usuário criado nasce 'solicitante').
-// Só email/nome/cod_empresa/numcad são obrigatórias; centro_custo_codigo e
+// Só email/nome são obrigatórias (cod_empresa/numcad viraram opcionais); centro_custo_codigo e
 // centro_custo_nome são opcionais. Motivo de não reaproveitar
 // lerCadastroCSV: aquele exige cabeçalho EXATO (mesmo texto, mesma ordem),
 // e essa planilha real já rejeitou por isso mais de uma vez.
@@ -62,7 +62,7 @@ type linhaUsuarioCSV struct {
 // rejeitado inteiro (cabeçalho mal formado); as demais (centro_custo_codigo,
 // centro_custo_nome) são opcionais, e qualquer outra coluna (ex. "perfil")
 // é ignorada.
-var colunasObrigatoriasUsuariosCSV = []string{"email", "nome", "cod_empresa", "numcad"}
+var colunasObrigatoriasUsuariosCSV = []string{"email", "nome"}
 
 // lerUsuariosCSV faz parse do CSV resolvendo colunas pelo NOME do
 // cabeçalho (minúsculas, após TrimSpace) — não pela posição. BOM UTF-8
@@ -124,11 +124,16 @@ func lerUsuariosCSV(corpo []byte) ([]linhaUsuarioCSV, error) {
 		}
 
 		linha := linhaUsuarioCSV{
-			Numero:        numeroLinha,
-			Email:         strings.TrimSpace(campos[indice["email"]]),
-			Nome:          strings.TrimSpace(campos[indice["nome"]]),
-			CodEmpresaStr: strings.TrimSpace(campos[indice["cod_empresa"]]),
-			NumcadStr:     strings.TrimSpace(campos[indice["numcad"]]),
+			Numero: numeroLinha,
+			Email:  strings.TrimSpace(campos[indice["email"]]),
+			Nome:   strings.TrimSpace(campos[indice["nome"]]),
+		}
+		// cod_empresa/numcad são opcionais (17/11/2026): a matrícula não é mais exigida.
+		if i, ok := indice["cod_empresa"]; ok {
+			linha.CodEmpresaStr = strings.TrimSpace(campos[i])
+		}
+		if i, ok := indice["numcad"]; ok {
+			linha.NumcadStr = strings.TrimSpace(campos[i])
 		}
 		if i, ok := primeiroIndiceEncontrado(indice, "centro_custo_codigo"); ok {
 			linha.CentroCustoCodigo = strings.TrimSpace(campos[i])
@@ -339,8 +344,8 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 				_, err = tx.Exec(`
 					UPDATE usuarios SET
 						nome = $1,
-						cod_empresa = $2,
-						numcad = $3,
+						cod_empresa = COALESCE($2::int, cod_empresa),
+						numcad = COALESCE($3::int, numcad),
 						cc_proprio_id = COALESCE($4, cc_proprio_id),
 						updated_at = now()
 					WHERE id = $5
@@ -384,20 +389,25 @@ func CarregarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 // bloqueia a linha.
 func validarELerLinhaUsuario(
 	tx *sql.Tx, numeroLinha int, email, nome, codEmpresaStr, numcadStr, centroCustoCodigo, centroCustoNome string,
-) (msgErro string, codEmpresa, numcad int, centroCustoID interface{}, avisoCC string) {
+) (msgErro string, codEmpresa, numcad interface{}, centroCustoID interface{}, avisoCC string) {
 	if email == "" || !strings.Contains(email, "@") {
-		return fmt.Sprintf("linha %d: e-mail inválido", numeroLinha), 0, 0, nil, ""
+		return fmt.Sprintf("linha %d: e-mail inválido", numeroLinha), nil, nil, nil, ""
 	}
 	if nome == "" {
-		return fmt.Sprintf("linha %d: campo 'nome' obrigatório", numeroLinha), 0, 0, nil, ""
+		return fmt.Sprintf("linha %d: campo 'nome' obrigatório", numeroLinha), nil, nil, nil, ""
 	}
-	codEmpresa, convErr := strconv.Atoi(codEmpresaStr)
-	if convErr != nil || codEmpresa <= 0 || codEmpresa > identidadeOracleMaxima {
-		return fmt.Sprintf("linha %d: campo 'cod_empresa' deve ser um número positivo de até 10 dígitos", numeroLinha), 0, 0, nil, ""
-	}
-	numcad, convErr = strconv.Atoi(numcadStr)
-	if convErr != nil || numcad <= 0 || numcad > identidadeOracleMaxima {
-		return fmt.Sprintf("linha %d: campo 'numcad' deve ser um número positivo de até 10 dígitos", numeroLinha), 0, 0, nil, ""
+	// Matrícula opcional: ambas vazias = sem identidade Oracle; só uma preenchida = erro;
+	// preenchidas = validadas como antes.
+	if codEmpresaStr != "" || numcadStr != "" {
+		ce, convErr := strconv.Atoi(codEmpresaStr)
+		if convErr != nil || ce <= 0 || ce > identidadeOracleMaxima {
+			return fmt.Sprintf("linha %d: campo 'cod_empresa' deve ser um número positivo de até 10 dígitos (ou deixe cod_empresa e numcad vazios)", numeroLinha), nil, nil, nil, ""
+		}
+		nc, convErr := strconv.Atoi(numcadStr)
+		if convErr != nil || nc <= 0 || nc > identidadeOracleMaxima {
+			return fmt.Sprintf("linha %d: campo 'numcad' deve ser um número positivo de até 10 dígitos (ou deixe cod_empresa e numcad vazios)", numeroLinha), nil, nil, nil, ""
+		}
+		codEmpresa, numcad = ce, nc
 	}
 	if centroCustoCodigo != "" {
 		if id, resolveErr := resolveCentroCustoIDPorCodigo(tx, centroCustoCodigo); resolveErr == nil {

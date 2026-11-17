@@ -31,6 +31,12 @@ import (
 	"github.com/lib/pq"
 )
 
+// perfilValido: os três perfis do sistema. administrador = administrador do ambiente (tudo);
+// atendente = Nova solicitação + Fila de atendimento; solicitante = abre solicitações e acompanha.
+func perfilValido(p string) bool {
+	return p == "administrador" || p == "atendente" || p == "solicitante"
+}
+
 // uuidFormatRegexp valida o formato (não a existência) de um UUID vindo do
 // path — recusa com 400 antes de chegar ao banco; sem isso, um id malformado
 // vira erro de sintaxe do Postgres na query `WHERE id = $1` (coluna UUID) e
@@ -116,8 +122,8 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusBadRequest, "informe ao menos um campo para atualizar")
 			return
 		}
-		if req.Perfil != nil && *req.Perfil != "administrador" && *req.Perfil != "solicitante" {
-			jsonErr(w, http.StatusBadRequest, "perfil deve ser 'administrador' ou 'solicitante'")
+		if req.Perfil != nil && !perfilValido(*req.Perfil) {
+			jsonErr(w, http.StatusBadRequest, "perfil deve ser 'administrador', 'atendente' ou 'solicitante'")
 			return
 		}
 		if (req.CodEmpresa == nil) != (req.Numcad == nil) {
@@ -430,17 +436,21 @@ func CreateUsuarioLocalHandler(db *sql.DB) http.HandlerFunc {
 		if req.Perfil == "" {
 			req.Perfil = "solicitante"
 		}
-		if req.Perfil != "administrador" && req.Perfil != "solicitante" {
-			jsonErr(w, http.StatusBadRequest, "perfil deve ser 'administrador' ou 'solicitante'")
+		if !perfilValido(req.Perfil) {
+			jsonErr(w, http.StatusBadRequest, "perfil deve ser 'administrador', 'atendente' ou 'solicitante'")
 			return
 		}
-		// cod_empresa/numcad (migration 019): identidade do colaborador em
-		// SFC.SFC_VW_COLABORADORES (Oracle, FCCORP) — sem isso, a
-		// sincronização diária de CC via ERP Bridge nunca alcança este
-		// usuário (a view não tem e-mail para casar de outro jeito).
-		if !identidadeOracleValida(req.CodEmpresa, req.Numcad) {
-			jsonErr(w, http.StatusBadRequest, "campos 'cod_empresa' e 'numcad' são obrigatórios, positivos e no máximo 2147483647")
-			return
+		// cod_empresa/numcad (migration 019) deixaram de ser obrigatórios (17/11/2026): a matrícula
+		// não é mais pedida no cadastro. Se vierem (integração/CSV legados), valem juntos e
+		// validados; sem eles o usuário nasce sem identidade Oracle (o sync de CC do ERP Bridge
+		// só alcança quem a tem — o CC próprio passa a ser definido em Gestão de Usuários).
+		var codEmpresaArg, numcadArg interface{}
+		if req.CodEmpresa != 0 || req.Numcad != 0 {
+			if !identidadeOracleValida(req.CodEmpresa, req.Numcad) {
+				jsonErr(w, http.StatusBadRequest, "'cod_empresa' e 'numcad', quando informados, devem ser enviados juntos, positivos e no máximo 2147483647")
+				return
+			}
+			codEmpresaArg, numcadArg = req.CodEmpresa, req.Numcad
 		}
 
 		hash, err := HashPassword(req.Senha)
@@ -465,7 +475,7 @@ func CreateUsuarioLocalHandler(db *sql.DB) http.HandlerFunc {
 			INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad)
 			VALUES ($1, $2, $3, $4, $5, $6)
 			RETURNING id
-		`, req.Email, req.Nome, req.Perfil, hash, req.CodEmpresa, req.Numcad).Scan(&novoID)
+		`, req.Email, req.Nome, req.Perfil, hash, codEmpresaArg, numcadArg).Scan(&novoID)
 		if err != nil {
 			if isUniqueViolationOnConstraint(err, "idx_usuarios_cod_empresa_numcad") {
 				jsonErr(w, http.StatusConflict, "já existe um usuário com esse código de empresa + matrícula")

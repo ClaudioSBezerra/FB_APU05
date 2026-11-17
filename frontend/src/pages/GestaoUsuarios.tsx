@@ -1,3 +1,4 @@
+import { PERFIS, type Perfil } from '@/lib/perfis';
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -46,7 +47,7 @@ interface Usuario {
   id: string;
   email: string;
   nome: string;
-  perfil: 'solicitante' | 'administrador';
+  perfil: Perfil;
   ativo: boolean;
   created_at: string;
   cod_empresa: number | null;
@@ -105,62 +106,13 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-// IdentidadeOracleCell — edição inline de cod_empresa/numcad para um usuário
-// já existente (ex.: provisionado via SSO, que nunca passa pelo formulário
-// de criação local onde esses campos são obrigatórios). Os dois sempre
-// salvam juntos (o backend recusa um par parcial) — onBlur em vez de
-// onChange para não disparar um PATCH a cada dígito.
-function IdentidadeOracleCell({
-  usuario,
-  onSalvar,
-}: {
-  usuario: Usuario;
-  onSalvar: (codEmpresa: number, numcad: number) => void;
-}) {
-  const [codEmpresa, setCodEmpresa] = useState(usuario.cod_empresa?.toString() ?? '');
-  const [numcad, setNumcad] = useState(usuario.numcad?.toString() ?? '');
-
-  function salvarSeMudou() {
-    const codEmpresaNum = Number(codEmpresa);
-    const numcadNum = Number(numcad);
-    if (!codEmpresaNum || !numcadNum) return;
-    if (codEmpresaNum === usuario.cod_empresa && numcadNum === usuario.numcad) return;
-    onSalvar(codEmpresaNum, numcadNum);
-  }
-
-  return (
-    <div className="flex gap-1.5">
-      <Input
-        type="number"
-        max={2147483647}
-        value={codEmpresa}
-        onChange={(e) => setCodEmpresa(e.target.value)}
-        onBlur={salvarSeMudou}
-        placeholder="Empresa"
-        className="h-8 w-20"
-      />
-      <Input
-        type="number"
-        max={2147483647}
-        value={numcad}
-        onChange={(e) => setNumcad(e.target.value)}
-        onBlur={salvarSeMudou}
-        placeholder="Matrícula"
-        className="h-8 w-24"
-      />
-    </div>
-  );
-}
-
 const GestaoUsuarios = () => {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [nome, setNome] = useState('');
   const [senha, setSenha] = useState('');
-  const [perfil, setPerfil] = useState<'solicitante' | 'administrador'>('solicitante');
-  const [codEmpresa, setCodEmpresa] = useState('');
-  const [numcad, setNumcad] = useState('');
+  const [perfil, setPerfil] = useState<Perfil>('solicitante');
   const [cargaOpen, setCargaOpen] = useState(false);
   const [arquivoCarga, setArquivoCarga] = useState<File | null>(null);
   const [resultadoCarga, setResultadoCarga] = useState<CargaResultado | null>(null);
@@ -185,7 +137,7 @@ const GestaoUsuarios = () => {
     const termo = busca.trim().toLowerCase();
     if (!termo) return todos;
     return todos.filter((u) =>
-      [u.nome, u.email, u.centro_custo_nome ?? '', String(u.cod_empresa ?? ''), String(u.numcad ?? '')]
+      [u.nome, u.email, u.centro_custo_nome ?? '']
         .join(' ')
         .toLowerCase()
         .includes(termo),
@@ -202,8 +154,6 @@ const GestaoUsuarios = () => {
           nome,
           senha,
           perfil,
-          cod_empresa: Number(codEmpresa),
-          numcad: Number(numcad),
         }),
       }),
     onSuccess: () => {
@@ -213,8 +163,6 @@ const GestaoUsuarios = () => {
       setNome('');
       setSenha('');
       setPerfil('solicitante');
-      setCodEmpresa('');
-      setNumcad('');
       queryClient.invalidateQueries({ queryKey: ['usuarios'] });
     },
     onError: (err: Error) => toast.error(err.message),
@@ -226,7 +174,7 @@ const GestaoUsuarios = () => {
       body,
     }: {
       id: string;
-      body: Partial<Pick<Usuario, 'perfil' | 'ativo' | 'cod_empresa' | 'numcad' | 'aprovador' | 'controle_ti'>> & {
+      body: Partial<Pick<Usuario, 'perfil' | 'ativo' | 'aprovador' | 'controle_ti'>> & {
         nome?: string;
         email?: string;
         centro_custo_id?: string;
@@ -319,11 +267,11 @@ const GestaoUsuarios = () => {
               <>
                 <p className="text-xs text-muted-foreground">
                   Arquivo CSV (separador &quot;;&quot;, UTF-8). Colunas obrigatórias:{' '}
-                  <code>email;nome;cod_empresa;numcad</code>. Opcionais: <code>centro_custo_codigo</code> e{' '}
+                  <code>email;nome</code>. Opcionais: <code>centro_custo_codigo</code> e{' '}
                   <code>centro_custo_nome</code> (se o CC não existir ainda, é criado automaticamente quando o nome
                   vier preenchido). A ordem das colunas não importa, maiúsculas/minúsculas tanto faz, e colunas
                   extras (ex. &quot;perfil&quot;) são ignoradas — todo usuário criado entra como solicitante,
-                  promova a administrador depois na tabela abaixo.
+                  mude para atendente ou administrador depois na tabela abaixo.
                 </p>
                 <Input
                   type="file"
@@ -388,37 +336,18 @@ const GestaoUsuarios = () => {
                 <Label htmlFor="novo-senha">Senha (mínimo 8 caracteres)</Label>
                 <Input id="novo-senha" type="password" value={senha} onChange={(e) => setSenha(e.target.value)} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="grid gap-1.5">
-                  <Label htmlFor="novo-cod-empresa">Código da empresa</Label>
-                  <Input
-                    id="novo-cod-empresa"
-                    type="number"
-                    max={2147483647}
-                    value={codEmpresa}
-                    onChange={(e) => setCodEmpresa(e.target.value)}
-                  />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="novo-numcad">Matrícula (NUMCAD)</Label>
-                  <Input
-                    id="novo-numcad"
-                    type="number"
-                    max={2147483647}
-                    value={numcad}
-                    onChange={(e) => setNumcad(e.target.value)}
-                  />
-                </div>
-              </div>
               <div className="grid gap-1.5">
                 <Label>Perfil</Label>
-                <Select value={perfil} onValueChange={(v) => setPerfil(v as 'solicitante' | 'administrador')}>
+                <Select value={perfil} onValueChange={(v) => setPerfil(v as Perfil)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="solicitante">Solicitante</SelectItem>
-                    <SelectItem value="administrador">Administrador</SelectItem>
+                    {PERFIS.map((p) => (
+                      <SelectItem key={p.valor} value={p.valor}>
+                        {p.rotulo}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -430,7 +359,7 @@ const GestaoUsuarios = () => {
               <Button
                 onClick={() => createMutation.mutate()}
                 disabled={
-                  createMutation.isPending || !email || !nome || senha.length < 8 || !codEmpresa || !numcad
+                  createMutation.isPending || !email || !nome || senha.length < 8
                 }
               >
                 {createMutation.isPending ? 'Criando...' : 'Criar'}
@@ -446,7 +375,7 @@ const GestaoUsuarios = () => {
         <Input
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
-          placeholder="Buscar por nome, e-mail, empresa/matrícula ou centro de custo..."
+          placeholder="Buscar por nome, e-mail ou centro de custo..."
           className="pl-8"
         />
       </div>
@@ -468,7 +397,6 @@ const GestaoUsuarios = () => {
               <TableHead>Ativo</TableHead>
               <TableHead>Aprovador</TableHead>
               <TableHead>Controle TI</TableHead>
-              <TableHead>Empresa / Matrícula (Oracle)</TableHead>
               <TableHead>Centro de custo</TableHead>
               <TableHead>Criado em</TableHead>
               <TableHead>Ações</TableHead>
@@ -482,14 +410,17 @@ const GestaoUsuarios = () => {
                 <TableCell>
                   <Select
                     value={u.perfil}
-                    onValueChange={(v) => updateMutation.mutate({ id: u.id, body: { perfil: v as 'solicitante' | 'administrador' } })}
+                    onValueChange={(v) => updateMutation.mutate({ id: u.id, body: { perfil: v as Perfil } })}
                   >
                     <SelectTrigger className="h-8 w-40">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="solicitante">Solicitante</SelectItem>
-                      <SelectItem value="administrador">Administrador</SelectItem>
+                      {PERFIS.map((p) => (
+                        <SelectItem key={p.valor} value={p.valor}>
+                          {p.rotulo}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </TableCell>
@@ -520,14 +451,6 @@ const GestaoUsuarios = () => {
                     />
                     {u.controle_ti && <Badge variant="info">Controle TI</Badge>}
                   </div>
-                </TableCell>
-                <TableCell>
-                  <IdentidadeOracleCell
-                    usuario={u}
-                    onSalvar={(codEmpresa, numcadValor) =>
-                      updateMutation.mutate({ id: u.id, body: { cod_empresa: codEmpresa, numcad: numcadValor } })
-                    }
-                  />
                 </TableCell>
                 <TableCell className="text-muted-foreground">{u.centro_custo_nome ?? '—'}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">

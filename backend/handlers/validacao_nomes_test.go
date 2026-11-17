@@ -46,3 +46,34 @@ func TestGetClientIPSaltosConfiaveis(t *testing.T) {
 		t.Errorf("forjado: %q", got)
 	}
 }
+
+func TestPerfilPermitido(t *testing.T) {
+	casos := []struct {
+		perfil, exigido string
+		quer            bool
+	}{
+		{"administrador", "administrador", true},
+		{"atendente", "administrador", false},
+		{"atendente", "administrador,atendente", true},
+		{"administrador", "administrador,atendente", true},
+		{"administrador", "administrador, atendente", true}, // espaço depois da vírgula
+		{"solicitante", "administrador,atendente", false},
+		{"", "administrador,atendente", false},
+		{"", "", false},
+	}
+	for _, c := range casos {
+		if got := perfilPermitido(c.perfil, c.exigido); got != c.quer {
+			t.Errorf("perfilPermitido(%q, %q) = %v, quer %v", c.perfil, c.exigido, got, c.quer)
+		}
+	}
+	for _, p := range []string{"administrador", "atendente", "solicitante"} {
+		if !perfilValido(p) {
+			t.Errorf("%q deveria ser perfil válido", p)
+		}
+	}
+	for _, p := range []string{"", "root", "admin", "Administrador"} {
+		if perfilValido(p) {
+			t.Errorf("%q NÃO deveria ser perfil válido", p)
+		}
+	}
+}

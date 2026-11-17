@@ -9,6 +9,7 @@
  */
 
 import { SESSION_KEY_VERIFIER, SESSION_KEY_STATE, fetchIAMConfig } from './buildLoginUrl';
+import type { Perfil } from '@/lib/perfis';
 
 export class CallbackError extends Error {
   constructor(message: string, public readonly code: string) {
@@ -43,7 +44,7 @@ export interface SSOLoginResponse {
     id: string;
     email: string;
     nome: string;
-    perfil: 'solicitante' | 'administrador';
+    perfil: Perfil;
   };
 }
 

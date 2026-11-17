@@ -28,7 +28,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 
-// Fila do administrador (Epic 4 — Stories 4.1 a 4.5). Duas listas: a fila
+// Fila de atendimento (Epic 4 — Stories 4.1 a 4.5). Duas listas: a fila
 // propriamente dita (status='aberta', GET /api/fila/solicitacoes — Story
 // 4.1) e "minhas solicitações" (status='em_atendimento' do admin logado,
 // GET /api/fila/minhas — rota de apoio criada para esta tela), de onde
@@ -215,7 +215,7 @@ function EstadoLista({ carregando, erro }: { carregando: boolean; erro: unknown 
   return null;
 }
 
-const FilaAdministrador = () => {
+const FilaAtendimento = () => {
   const queryClient = useQueryClient();
   const [detalheId, setDetalheId] = useState<string | null>(null);
   const [pendenciaItem, setPendenciaItem] = useState<ItemFila | null>(null);
@@ -404,7 +404,7 @@ const FilaAdministrador = () => {
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
-      <h1 className="text-lg font-semibold text-foreground">Fila do administrador</h1>
+      <h1 className="text-lg font-semibold text-foreground">Fila de atendimento</h1>
 
       <SecaoFila titulo="Aguardando atendimento" quantidade={filaQuery.data?.length}>
         <EstadoLista carregando={filaQuery.isLoading} erro={filaQuery.error} />
@@ -676,4 +676,4 @@ const FilaAdministrador = () => {
   );
 };
 
-export default FilaAdministrador;
+export default FilaAtendimento;

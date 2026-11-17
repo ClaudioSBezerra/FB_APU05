@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { buildLoginUrl, fetchIAMConfig } from '@/lib/keycloak/buildLoginUrl';
+import type { Perfil } from '@/lib/perfis';
 
 // Payload de POST /api/auth/login em caso de sucesso — mesmo formato que
 // AuthContext.login() espera (ver backend/handlers/auth.go, AuthResponse),
@@ -12,7 +13,7 @@ interface LocalLoginResponse {
     id: string;
     email: string;
     nome: string;
-    perfil: 'solicitante' | 'administrador';
+    perfil: Perfil;
   };
 }
 

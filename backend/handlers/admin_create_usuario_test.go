@@ -90,12 +90,66 @@ func TestCreateUsuarioLocalHandler_RejectsInvalidPerfil(t *testing.T) {
 	}
 }
 
-func TestCreateUsuarioLocalHandler_RejectsMissingCodEmpresaOuNumcad(t *testing.T) {
-	handler := CreateUsuarioLocalHandler(nil)
-	rec := httptest.NewRecorder()
-	body := `{"email":"a@b.com","nome":"Fulano","senha":"senha12345"}`
-	handler(rec, newCreateUsuarioRequest(body))
+func TestCreateUsuarioLocalHandler_RejectsSoUmDosDoisCodEmpresaNumcad(t *testing.T) {
+	// A matrícula é opcional (17/11/2026), mas, se vier, vem completa: só um dos dois é 400.
+	for _, body := range []string{
+		`{"email":"a@b.com","nome":"Fulano","senha":"senha12345","cod_empresa":1}`,
+		`{"email":"a@b.com","nome":"Fulano","senha":"senha12345","numcad":12345}`,
+	} {
+		handler := CreateUsuarioLocalHandler(nil)
+		rec := httptest.NewRecorder()
+		handler(rec, newCreateUsuarioRequest(body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("esperado 400 para %s, obtido %d (body=%s)", body, rec.Code, rec.Body.String())
+		}
+	}
+}
 
+func TestCreateUsuarioLocalHandler_SemMatriculaCria(t *testing.T) {
+	db, mock := newSQLMock(t)
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad)")).
+		WithArgs("sem.matricula@fortesbezerra.com.br", "Fulano", "solicitante", sqlmock.AnyArg(), nil, nil).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testAlvoID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios_auditoria")).
+		WithArgs(testAtorID, testAlvoID, "solicitante").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	rec := httptest.NewRecorder()
+	CreateUsuarioLocalHandler(db)(rec, newCreateUsuarioRequest(`{"email":"sem.matricula@fortesbezerra.com.br","nome":"Fulano","senha":"senha12345"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas sqlmock não satisfeitas: %v", err)
+	}
+}
+
+func TestCreateUsuarioLocalHandler_PerfilAtendente(t *testing.T) {
+	db, mock := newSQLMock(t)
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO usuarios (email, nome, perfil, password_hash, cod_empresa, numcad)")).
+		WithArgs("atendente@fortesbezerra.com.br", "Atendente", "atendente", sqlmock.AnyArg(), nil, nil).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testAlvoID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO usuarios_auditoria")).
+		WithArgs(testAtorID, testAlvoID, "atendente").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	rec := httptest.NewRecorder()
+	CreateUsuarioLocalHandler(db)(rec, newCreateUsuarioRequest(`{"email":"atendente@fortesbezerra.com.br","nome":"Atendente","senha":"senha12345","perfil":"atendente"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperado 201, obtido %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectativas sqlmock não satisfeitas: %v", err)
+	}
+}
+
+func TestCreateUsuarioLocalHandler_PerfilInvalido(t *testing.T) {
+	rec := httptest.NewRecorder()
+	CreateUsuarioLocalHandler(nil)(rec, newCreateUsuarioRequest(`{"email":"a@b.com","nome":"Fulano","senha":"senha12345","perfil":"root"}`))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}

@@ -11,7 +11,7 @@ const titles: [prefix: string, title: string][] = [
   ['/admin/erp-bridge', 'ERP Bridge — credenciais'],
   ['/controle-ti', 'Controle TI'],
   ['/painel', 'Painel'],
-  ['/fila', 'Fila do administrador'],
+  ['/fila', 'Fila de atendimento'],
 ];
 
 function AppHeader() {

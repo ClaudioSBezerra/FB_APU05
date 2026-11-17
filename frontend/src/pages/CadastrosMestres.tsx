@@ -323,8 +323,8 @@ function useOpcoesEntidade(ref: RefEntidade | undefined) {
         }>('/api/admin/usuarios');
         return usuarios.map((u) => ({
           id: u.id,
-          rotulo: `${u.nome}${u.cod_empresa && u.numcad ? ` — matrícula ${u.cod_empresa}/${u.numcad}` : ''} (${u.email})`,
-          busca: `${u.nome} ${u.email} ${u.cod_empresa ?? ''} ${u.numcad ?? ''}`.toLowerCase(),
+          rotulo: `${u.nome} (${u.email})`,
+          busca: `${u.nome} ${u.email}`.toLowerCase(),
         }));
       }
       const registros = await fetchTudoPaginado<{ id: string; codigo: string; nome: string }>(`/api/admin/cadastros/${ref}`);

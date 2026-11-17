@@ -33,9 +33,21 @@ type contextKey string
 // JWT próprio validado (jwt.MapClaims) — inclui `user_id`, `perfil`, `exp`.
 const ClaimsContextKey contextKey = "claims"
 
+// perfilPermitido: perfilExigido pode ser um perfil ("administrador") ou vários separados por
+// vírgula ("administrador,atendente") — basta o do token estar na lista.
+func perfilPermitido(perfil, perfilExigido string) bool {
+	for _, p := range strings.Split(perfilExigido, ",") {
+		if perfil != "" && perfil == strings.TrimSpace(p) {
+			return true
+		}
+	}
+	return false
+}
+
 // RequireAuth exige um JWT próprio válido (assinado com JWT_SECRET, não
 // expirado, não presente na blacklist). Quando perfilExigido não é vazio,
-// também exige que a claim `perfil` do token bata exatamente com ele.
+// também exige que a claim `perfil` do token seja um dos perfis exigidos (um, ou vários
+// separados por vírgula: "administrador,atendente").
 //
 // 401 (Unauthorized) se o header Authorization estiver ausente/malformado, o
 // token for inválido/expirado, ou o token estiver na blacklist (revogado por
@@ -73,7 +85,7 @@ func RequireAuth(next http.HandlerFunc, perfilExigido string) http.HandlerFunc {
 
 		if perfilExigido != "" {
 			perfil, _ := claims["perfil"].(string)
-			if perfil != perfilExigido {
+			if !perfilPermitido(perfil, perfilExigido) {
 				jsonErr(w, http.StatusForbidden, "Permissão insuficiente")
 				return
 			}

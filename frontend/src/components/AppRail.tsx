@@ -1,3 +1,4 @@
+import { podeAtender } from '@/lib/perfis';
 import { useState } from 'react';
 import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database, PanelLeftClose, PanelLeftOpen, Cpu } from 'lucide-react';
 import { WORKSPACE } from '@/lib/workspace';
@@ -156,12 +157,14 @@ export function AppRail() {
   // Módulo Controle TI: o menu só aparece para quem tem o interruptor ligado
   // em Gestão de Usuários (lido do servidor, ver usePermissoes).
   const { data: permissoes } = usePermissoes();
+  // Atendente: só Nova solicitação e Fila de atendimento (sem Painel). Administrador: tudo.
+  const filaItem = { id: 'fila', icon: ListChecks, label: 'Fila de atendimento', path: '/fila' };
   const items = [
-    ...mainItems,
+    ...(user?.perfil === 'atendente' ? mainItems.filter((i) => i.id === 'nova-solicitacao') : mainItems),
     ...(permissoes?.controle_ti ? [{ id: 'controle-ti', icon: Cpu, label: 'Controle TI', path: '/controle-ti' }] : []),
+    ...(podeAtender(user?.perfil) ? [filaItem] : []),
     ...(user?.perfil === 'administrador'
       ? [
-          { id: 'fila', icon: ListChecks, label: 'Fila do administrador', path: '/fila' },
           { id: 'usuarios', icon: Users, label: 'Gestão de usuários', path: '/admin/usuarios' },
           { id: 'cadastros', icon: Database, label: 'Cadastros mestres', path: '/admin/cadastros' },
           { id: 'erp-bridge', icon: Plug, label: 'ERP Bridge — credenciais', path: '/admin/erp-bridge' },

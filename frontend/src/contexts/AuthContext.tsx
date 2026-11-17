@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { SESSION_KEY_AUTH_VIA_SSO } from '@/lib/keycloak/buildLoginUrl';
+import type { Perfil } from '@/lib/perfis';
 
 // Diferente do AuthContext de referência no FB_APU02 (multi-empresa): o
 // FB_APU05 é single-company (AD-7) — sem environment/group/company/
@@ -9,7 +10,7 @@ interface User {
   id: string;
   email: string;
   nome: string;
-  perfil: 'solicitante' | 'administrador';
+  perfil: Perfil;
 }
 
 interface AuthContextType {

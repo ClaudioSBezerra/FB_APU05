@@ -110,3 +110,38 @@ func TestRequireAuth_ValidTokenMatchingPerfil(t *testing.T) {
 		t.Fatalf("esperado user_id injetado no contexto = user-456, obtido %q", gotUserID)
 	}
 }
+
+// TestRequireAuth_AtendenteNaFilaMasNaoNaAdministracao: o atendente (perfil novo, 17/11/2026) entra
+// nas rotas da fila ("administrador,atendente") e é barrado (403) nas de administração.
+func TestRequireAuth_AtendenteNaFilaMasNaoNaAdministracao(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-secret-at-least-32-bytes-long!!")
+
+	chamar := func(perfil, exigido string) int {
+		token, err := GenerateToken("user-1", perfil)
+		if err != nil {
+			t.Fatalf("GenerateToken falhou: %v", err)
+		}
+		protected := RequireAuth(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }, exigido)
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		protected(rec, req)
+		return rec.Code
+	}
+
+	casos := []struct {
+		perfil, exigido string
+		quer            int
+	}{
+		{"atendente", "administrador,atendente", http.StatusOK},     // fila: ok
+		{"administrador", "administrador,atendente", http.StatusOK}, // administrador continua na fila
+		{"solicitante", "administrador,atendente", http.StatusForbidden},
+		{"atendente", "administrador", http.StatusForbidden}, // usuários, cadastros, ERP Bridge: não
+		{"administrador", "administrador", http.StatusOK},
+	}
+	for _, c := range casos {
+		if got := chamar(c.perfil, c.exigido); got != c.quer {
+			t.Errorf("perfil %q em rota %q: esperado %d, obtido %d", c.perfil, c.exigido, c.quer, got)
+		}
+	}
+}

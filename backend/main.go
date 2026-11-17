@@ -433,13 +433,13 @@ func main() {
 	// conexão geral (withDB/fb_apu05_app); AssumirSolicitacaoHandler é quem
 	// precisa da conexão privilegiada (withPrivilegedDB/
 	// fb_apu05_privilegiado) — a única com GRANT UPDATE nessas colunas.
-	http.HandleFunc("GET /api/fila/solicitacoes", handlers.RequireAuth(withDB(handlers.ListarFilaHandler), "administrador"))
+	http.HandleFunc("GET /api/fila/solicitacoes", handlers.RequireAuth(withDB(handlers.ListarFilaHandler), "administrador,atendente"))
 
 	// Minhas solicitações em atendimento (suporte de front-end às Stories
 	// 4.2-4.5) — só leitura, mesma conexão geral; nunca estende
 	// ListarFilaHandler (escopo fechado da Story 4.1, só status='aberta').
-	http.HandleFunc("GET /api/fila/minhas", handlers.RequireAuth(withDB(handlers.MinhasSolicitacoesHandler), "administrador"))
-	http.HandleFunc("POST /api/solicitacoes/{id}/assumir", handlers.RequireAuth(withPrivilegedDB(handlers.AssumirSolicitacaoHandler), "administrador"))
+	http.HandleFunc("GET /api/fila/minhas", handlers.RequireAuth(withDB(handlers.MinhasSolicitacoesHandler), "administrador,atendente"))
+	http.HandleFunc("POST /api/solicitacoes/{id}/assumir", handlers.RequireAuth(withPrivilegedDB(handlers.AssumirSolicitacaoHandler), "administrador,atendente"))
 
 	// Pendência e reabertura (Story 4.2, Epic 4) — 2 novas escritas em
 	// status/versao de `solicitacoes`, mesma linha/lock do AD-4:
@@ -450,7 +450,7 @@ func main() {
 	// "administrador"). ObterSolicitacaoHandler é só leitura (withDB) —
 	// expõe o histórico de solicitacao_comentarios e a versao atual a quem
 	// é dono da solicitação (solicitante OU administrador).
-	http.HandleFunc("POST /api/solicitacoes/{id}/pendencia", handlers.RequireAuth(withPrivilegedDB(handlers.MarcarPendenciaHandler), "administrador"))
+	http.HandleFunc("POST /api/solicitacoes/{id}/pendencia", handlers.RequireAuth(withPrivilegedDB(handlers.MarcarPendenciaHandler), "administrador,atendente"))
 	http.HandleFunc("POST /api/solicitacoes/{id}/comentarios", handlers.RequireAuth(withPrivilegedDB(handlers.ComentarSolicitacaoHandler), ""))
 	// Controle TI (migration 025): módulo de despesas de TI. Permissões vale
 	// para qualquer usuário autenticado (alimenta o menu); /api/ti/* exige o
@@ -471,7 +471,7 @@ func main() {
 	// reescrevendo um template fixo (AD-12). Nunca finaliza a solicitação
 	// (Story 4.5, backlog) nem aceita tipo_solicitacao="obras" (Lote-Obra é
 	// a Story 4.4).
-	http.HandleFunc("POST /api/solicitacoes/lote-despesa", handlers.RequireAuth(withPrivilegedDB(handlers.GerarLoteDespesaHandler), "administrador"))
+	http.HandleFunc("POST /api/solicitacoes/lote-despesa", handlers.RequireAuth(withPrivilegedDB(handlers.GerarLoteDespesaHandler), "administrador,atendente"))
 
 	// Gerar lote Obra (Story 4.4, Epic 4, FR-15/AD-3) — segunda rota de
 	// internal/exportacao: mesmo princípio de GerarLoteDespesaHandler
@@ -481,15 +481,15 @@ func main() {
 	// (todas 'CRIAR') entra em `bloqueados` em vez de abortar o lote
 	// inteiro. Nunca finaliza a solicitação (Story 4.5) nem cria a ordem
 	// real no SAP para uma linha 'CRIAR' (só na finalização).
-	http.HandleFunc("POST /api/solicitacoes/lote-obra", handlers.RequireAuth(withPrivilegedDB(handlers.GerarLoteObraHandler), "administrador"))
+	http.HandleFunc("POST /api/solicitacoes/lote-obra", handlers.RequireAuth(withPrivilegedDB(handlers.GerarLoteObraHandler), "administrador,atendente"))
 
 	// Prévia de lote em CSV (15/10) — mesma elegibilidade dos dois acima,
 	// mas nunca grava em exportacoes_sap e nunca precisa do .xlsm: serve
 	// para demonstrar o conteúdo do lote (ex. para o time de SAP) enquanto
 	// EXPORT_TEMPLATE_LOTE_DESPESA/EXPORT_TEMPLATE_LOTE_OBRA não estão
 	// configuradas. Conexão GERAL (withDB) — somente leitura.
-	http.HandleFunc("POST /api/solicitacoes/lote-despesa/csv", handlers.RequireAuth(withDB(handlers.PreviewLoteDespesaCSVHandler), "administrador"))
-	http.HandleFunc("POST /api/solicitacoes/lote-obra/csv", handlers.RequireAuth(withDB(handlers.PreviewLoteObraCSVHandler), "administrador"))
+	http.HandleFunc("POST /api/solicitacoes/lote-despesa/csv", handlers.RequireAuth(withDB(handlers.PreviewLoteDespesaCSVHandler), "administrador,atendente"))
+	http.HandleFunc("POST /api/solicitacoes/lote-obra/csv", handlers.RequireAuth(withDB(handlers.PreviewLoteObraCSVHandler), "administrador,atendente"))
 
 	// Finalizar solicitação (Story 4.5, Epic 4, FR-14/AD-3/AD-5) — terceira
 	// rota de internal/exportacao: encerra a solicitação já exportada
@@ -499,7 +499,7 @@ func main() {
 	// ordem real em `obra_ordens` para cada linha de Obras 'CRIAR' — tudo
 	// numa única transação pela conexão PRIVILEGIADA (mesma conexão de
 	// internal/fila/GerarLote*).
-	http.HandleFunc("POST /api/solicitacoes/{id}/finalizar", handlers.RequireAuth(withPrivilegedDB(handlers.FinalizarSolicitacaoHandler), "administrador"))
+	http.HandleFunc("POST /api/solicitacoes/{id}/finalizar", handlers.RequireAuth(withPrivilegedDB(handlers.FinalizarSolicitacaoHandler), "administrador,atendente"))
 
 	// Painel consolidado (Story 5.1, Epic 5, FR-17, AD-1/AD-14) — único
 	// handler de "Painéis e Indicadores": só leitura (withDB, conexão

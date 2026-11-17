@@ -12,7 +12,8 @@ import ResetPassword from '@/pages/ResetPassword'
 import ChangePassword from '@/pages/ChangePassword'
 import GestaoUsuarios from '@/pages/GestaoUsuarios'
 import AbrirSolicitacao from '@/pages/AbrirSolicitacao'
-import FilaAdministrador from '@/pages/FilaAdministrador'
+import FilaAtendimento from '@/pages/FilaAtendimento'
+import { paginaInicial, podeAtender } from '@/lib/perfis'
 import ERPBridgeCredenciais from '@/pages/ERPBridgeCredenciais'
 import CadastrosMestres from '@/pages/CadastrosMestres'
 import ControleTI from '@/pages/ControleTI'
@@ -39,7 +40,34 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />
   }
   if (user?.perfil !== 'administrador') {
-    return <Navigate to="/painel" replace />
+    return <Navigate to={paginaInicial(user?.perfil)} replace />
+  }
+  return <>{children}</>
+}
+
+// AtendimentoRoute — Fila de atendimento: administrador e atendente.
+function AtendimentoRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, user } = useAuth()
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+  if (!podeAtender(user?.perfil)) {
+    return <Navigate to={paginaInicial(user?.perfil)} replace />
+  }
+  return <>{children}</>
+}
+
+// PaginaInicial — cada perfil cai na sua página (atendente: fila; demais: painel).
+function PaginaInicial() {
+  const { user } = useAuth()
+  return <Navigate to={paginaInicial(user?.perfil)} replace />
+}
+
+// PainelRoute — atendente não usa o Painel (só Nova solicitação e Fila de atendimento).
+function PainelRoute({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth()
+  if (user?.perfil === 'atendente') {
+    return <Navigate to="/fila" replace />
   }
   return <>{children}</>
 }
@@ -51,7 +79,7 @@ function ControleTIRoute({ children }: { children: React.ReactNode }) {
   const { data, isLoading } = usePermissoes()
   if (isLoading) return null
   if (!data?.controle_ti) {
-    return <Navigate to="/painel" replace />
+    return <PaginaInicial />
   }
   return <>{children}</>
 }
@@ -72,15 +100,15 @@ function App() {
             <ProtectedRoute>
               <Layout>
                 <Routes>
-                  <Route path="/" element={<Navigate to="/painel" replace />} />
-                  <Route path="/painel" element={<PainelConsolidado />} />
+                  <Route path="/" element={<PaginaInicial />} />
+                  <Route path="/painel" element={<PainelRoute><PainelConsolidado /></PainelRoute>} />
                   <Route path="/solicitacoes/nova" element={<AbrirSolicitacao />} />
                   <Route
                     path="/fila"
                     element={
-                      <AdminRoute>
-                        <FilaAdministrador />
-                      </AdminRoute>
+                      <AtendimentoRoute>
+                        <FilaAtendimento />
+                      </AtendimentoRoute>
                     }
                   />
                   <Route
@@ -115,7 +143,7 @@ function App() {
                       </ControleTIRoute>
                     }
                   />
-                  <Route path="*" element={<Navigate to="/painel" replace />} />
+                  <Route path="*" element={<PaginaInicial />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>
