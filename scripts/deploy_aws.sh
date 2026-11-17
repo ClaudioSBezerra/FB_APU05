@@ -72,12 +72,12 @@ if [[ "$MODE" == check ]]; then
   exit 0
 fi
 
-# --- o que vai para produção é o que está no GitLab -----------------------------------
+# --- o que vai para a AWS é o que está no GitHub (o GitLab está fora do caminho) -----------------------------------
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] \
   || die "há alterações não commitadas — commit e push antes do deploy"
-git fetch -q origin main || die "não consegui falar com o GitLab (token expirou?)"
-[[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] \
-  || die "HEAD difere de origin/main — faça 'git push origin main' antes"
+git fetch -q github main || die "não consegui falar com o GitHub"
+[[ "$(git rev-parse HEAD)" == "$(git rev-parse github/main)" ]] \
+  || die "HEAD difere de github/main — faça 'git push github main' antes"
 SHA="$(git rev-parse --short=12 HEAD)"
 info "commit: $SHA — $(git log -1 --format=%s)"
 
