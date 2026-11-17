@@ -11,7 +11,6 @@ import (
 
 	"fb_apu05/crypto"
 	"fb_apu05/internal/sapodata"
-	"fb_apu05/services"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
@@ -22,33 +21,6 @@ const (
 )
 
 func ptr[T any](v T) *T { return &v }
-
-func TestValidarEntrada_Promocao(t *testing.T) {
-	in := configuracoesEntrada{}
-	in.Promocao = &struct {
-		EmailsExtra []string `json:"emails_extra"`
-	}{EmailsExtra: []string{" Controladoria@FC.com.br ", "", "outro@fc.com.br"}}
-	g, err := validarEntrada(in, map[string]string{})
-	if err != nil || g[cfgPromocaoEmails] != "controladoria@fc.com.br;outro@fc.com.br" {
-		t.Fatalf("esperava e-mails normalizados, veio %q (%v)", g[cfgPromocaoEmails], err)
-	}
-	in.Promocao.EmailsExtra = []string{"isto-nao-eh-email"}
-	if _, err := validarEntrada(in, nil); err == nil {
-		t.Error("e-mail inválido deveria ser recusado")
-	}
-	in.Promocao.EmailsExtra = []string{"<x@y.com>"}
-	if _, err := validarEntrada(in, nil); err == nil {
-		t.Error("e-mail com < > deveria ser recusado")
-	}
-	many := make([]string, 11)
-	for i := range many {
-		many[i] = "u" + string(rune('a'+i)) + "@fc.com.br"
-	}
-	in.Promocao.EmailsExtra = many
-	if _, err := validarEntrada(in, nil); err == nil {
-		t.Error("mais de 10 e-mails deveria ser recusado")
-	}
-}
 
 func TestValidarEntrada_SAP(t *testing.T) {
 	novo := func() configuracoesEntrada {
@@ -162,7 +134,7 @@ func TestConfiguracoesGET_NaoDevolveSenha(t *testing.T) {
 	db, mock := newSQLMock(t)
 	cifrada, _ := crypto.EncryptField("senha-secreta-123")
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT chave, valor FROM configuracoes")).WillReturnRows(linhasConfig(
-		cfgPromocaoEmails, "a@fc.com.br;b@fc.com.br", cfgSapHorario, "06:00", cfgSapUsuario, "svc_orcamento", cfgSapSenha, cifrada,
+		cfgSapHorario, "06:00", cfgSapUsuario, "svc_orcamento", cfgSapSenha, cifrada,
 		"sap_cc_ativo", "true", "sap_cc_url_base", urlCC, "sap_gl_ativo", "false", "sap_gl_url_base", urlGL,
 		"sap_cc_ultimo_resultado", `{"ok":true,"total":2731,"mensagem":"conexão ok","duracao_ms":120,"origem":"agendada"}`))
 	rec := httptest.NewRecorder()
@@ -174,8 +146,8 @@ func TestConfiguracoesGET_NaoDevolveSenha(t *testing.T) {
 	if strings.Contains(corpo, cifrada) || strings.Contains(corpo, "senha-secreta") {
 		t.Fatalf("a senha (ou o texto cifrado) vazou na resposta: %s", corpo)
 	}
-	if !strings.Contains(corpo, `"emails_extra":["a@fc.com.br","b@fc.com.br"]`) {
-		t.Errorf("e-mails extras ausentes: %s", corpo)
+	if strings.Contains(corpo, "promocao") {
+		t.Errorf("o parâmetro de promoção não existe mais: %s", corpo)
 	}
 }
 
@@ -257,27 +229,5 @@ func TestRotinaSAPDiaria_SoRodaOQueEstaDevidoEAtivo(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Error(err)
-	}
-}
-
-func TestPromocao_EmailsExtraSomamComOsAdministradores(t *testing.T) {
-	db, mock := newSQLMock(t)
-	reg := trocarEnvio(t, func(a []string, _ services.PedidoPromocao) (int, error) { return len(a), nil })
-	mock.ExpectQuery(regexp.QuoteMeta(sqlPromoUsuario)).WithArgs(testAlvoID).
-		WillReturnRows(sqlmock.NewRows([]string{"nome", "email", "perfil"}).AddRow("Maria", "m@fc.com.br", "solicitante"))
-	mock.ExpectQuery(regexp.QuoteMeta(sqlPromoAdmins)).WillReturnRows(sqlmock.NewRows([]string{"email"}).AddRow("adm@fc.com.br"))
-	mock.ExpectQuery(regexp.QuoteMeta(sqlPromoExtra)).WithArgs("promocao_email_extra").
-		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("controladoria@fc.com.br;ADM@fc.com.br"))
-	mock.ExpectQuery(regexp.QuoteMeta(sqlPromoInsert)).
-		WithArgs(testAlvoID, "solicitante", "", 2, 86400).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-
-	rec := httptest.NewRecorder()
-	SolicitarPromocaoHandler(db)(rec, reqPromocao(http.MethodPost, "/x", `{}`))
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("esperado 201: %d %s", rec.Code, rec.Body.String())
-	}
-	if len(reg.admins) != 2 || reg.admins[0] != "adm@fc.com.br" || reg.admins[1] != "controladoria@fc.com.br" {
-		t.Fatalf("destinatários inesperados (sem repetir o administrador): %v", reg.admins)
 	}
 }

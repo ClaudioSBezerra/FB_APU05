@@ -6,10 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 
-// Configurações (só administrador): parâmetros do sistema e integração SAP.
+// Configurações (só administrador): integração SAP (leitura diária de centros de custo e contas).
 // API: GET/PUT /api/admin/configuracoes e POST /api/admin/configuracoes/sap/{cc|gl}/testar
 // (handlers/configuracoes.go). O Authorization é injetado pelo interceptor global de fetch.
 
@@ -29,7 +28,6 @@ interface ServicoSAP {
   ultimo_resultado?: ResultadoSAP;
 }
 interface Config {
-  promocao: { emails_extra: string[] };
   sap: { horario: string; usuario: string; senha_definida: boolean; servicos: ServicoSAP[] };
 }
 
@@ -80,7 +78,6 @@ export default function Configuracoes() {
 // ou testar, os resultados mostrados vêm de `data` (atualizado), sem apagar o que ele está digitando.
 function Formulario({ data }: { data: Config }) {
   const queryClient = useQueryClient();
-  const [emails, setEmails] = useState(() => data.promocao.emails_extra.join('\n'));
   const [horario, setHorario] = useState(() => data.sap.horario || '06:00');
   const [usuario, setUsuario] = useState(() => data.sap.usuario);
   const [senha, setSenha] = useState('');
@@ -117,10 +114,6 @@ function Formulario({ data }: { data: Config }) {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  function salvarPromocao() {
-    salvar.mutate({ promocao: { emails_extra: emails.split(/[\n;,]+/).map((e) => e.trim()).filter(Boolean) } });
-  }
-
   function salvarSAP() {
     const servicos: Record<string, { ativo: boolean; url_base: string }> = {};
     for (const s of data?.sap.servicos ?? []) {
@@ -136,34 +129,6 @@ function Formulario({ data }: { data: Config }) {
   return (
     <div className="mx-auto grid max-w-3xl gap-8 p-6">
       <h1 className="text-lg font-semibold text-foreground">Configurações</h1>
-
-      <section aria-labelledby="cfg-parametros" className="grid gap-4 rounded-lg border bg-card p-5">
-        <div>
-          <h2 id="cfg-parametros" className="text-base font-semibold">
-            Parâmetros
-          </h2>
-          <p className="text-xs text-muted-foreground">Valores que o sistema usa no dia a dia.</p>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="cfg-emails">E-mail para promoção de usuários</Label>
-          <Textarea
-            id="cfg-emails"
-            rows={3}
-            placeholder={'controladoria@ferreiracosta.com.br\noutro@ferreiracosta.com.br'}
-            value={emails}
-            onChange={(e) => setEmails(e.target.value)}
-          />
-          <p className="text-xs text-muted-foreground">
-            Um e-mail por linha. Quando alguém usa <em>Solicitar promoção</em>, estes endereços recebem o pedido
-            <strong> além de todos os administradores ativos</strong>. Deixe vazio para avisar só os administradores.
-          </p>
-        </div>
-        <div>
-          <Button size="sm" onClick={salvarPromocao} disabled={salvar.isPending}>
-            Salvar parâmetros
-          </Button>
-        </div>
-      </section>
 
       <section aria-labelledby="cfg-sap" className="grid gap-5 rounded-lg border bg-card p-5">
         <div>

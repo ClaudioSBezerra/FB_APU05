@@ -6,8 +6,7 @@ package handlers
 //	PUT  /api/admin/configuracoes                       — grava (parcial)
 //	POST /api/admin/configuracoes/sap/{servico}/testar  — sonda o SAP agora (servico = cc | gl)
 //
-// Parâmetros:
-//   - e-mails extras que também recebem os pedidos de promoção (além dos administradores ativos);
+// Integração SAP:
 //   - integração SAP, lida 1x/dia (padrão 06:00, horário de Recife): credencial Basic única e, por
 //     serviço (cc = centros de custo, gl = contas contábeis), URL e liga/desliga.
 //
@@ -31,12 +30,9 @@ import (
 )
 
 const (
-	cfgPromocaoEmails = "promocao_email_extra"
-	cfgSapHorario     = "sap_horario"
-	cfgSapUsuario     = "sap_usuario"
-	cfgSapSenha       = "sap_senha"
-
-	maxEmailsPromocao = 10
+	cfgSapHorario = "sap_horario"
+	cfgSapUsuario = "sap_usuario"
+	cfgSapSenha   = "sap_senha"
 )
 
 var horarioRegexp = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
@@ -61,28 +57,6 @@ func lerConfiguracoes(db *sql.DB) (map[string]string, error) {
 	return m, rows.Err()
 }
 
-// EmailsExtraPromocao devolve os e-mails do parâmetro (válidos), para o aviso de promoção.
-func EmailsExtraPromocao(db *sql.DB) []string {
-	var valor string
-	if err := db.QueryRow(`SELECT valor FROM configuracoes WHERE chave = $1`, cfgPromocaoEmails).Scan(&valor); err != nil {
-		return nil
-	}
-	return dividirEmails(valor)
-}
-
-func dividirEmails(valor string) []string {
-	var out []string
-	vistos := map[string]bool{}
-	for _, p := range strings.FieldsFunc(valor, func(r rune) bool { return r == ';' || r == ',' || r == '\n' || r == ' ' }) {
-		e := strings.ToLower(strings.TrimSpace(p))
-		if e != "" && !vistos[e] && EmailValido(e) {
-			vistos[e] = true
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
 type resultadoSalvo struct {
 	OK        bool   `json:"ok"`
 	Total     int    `json:"total"`
@@ -101,9 +75,6 @@ type servicoConfig struct {
 }
 
 type configuracoesResposta struct {
-	Promocao struct {
-		EmailsExtra []string `json:"emails_extra"`
-	} `json:"promocao"`
 	SAP struct {
 		Horario       string          `json:"horario"`
 		Usuario       string          `json:"usuario"`
@@ -114,10 +85,6 @@ type configuracoesResposta struct {
 
 func montarResposta(m map[string]string) configuracoesResposta {
 	var r configuracoesResposta
-	r.Promocao.EmailsExtra = dividirEmails(m[cfgPromocaoEmails])
-	if r.Promocao.EmailsExtra == nil {
-		r.Promocao.EmailsExtra = []string{}
-	}
 	r.SAP.Horario = m[cfgSapHorario]
 	r.SAP.Usuario = m[cfgSapUsuario]
 	r.SAP.SenhaDefinida = m[cfgSapSenha] != ""
@@ -163,9 +130,6 @@ func ConfiguracoesHandler(db *sql.DB) http.HandlerFunc {
 }
 
 type configuracoesEntrada struct {
-	Promocao *struct {
-		EmailsExtra []string `json:"emails_extra"`
-	} `json:"promocao"`
 	SAP *struct {
 		Horario     *string `json:"horario"`
 		Usuario     *string `json:"usuario"`
@@ -181,23 +145,6 @@ type configuracoesEntrada struct {
 // validarEntrada transforma a entrada em pares chave→valor a gravar (a senha já cifrada), ou erro de validação.
 func validarEntrada(in configuracoesEntrada, atual map[string]string) (map[string]string, error) {
 	grava := map[string]string{}
-	if in.Promocao != nil {
-		var validos []string
-		for _, e := range in.Promocao.EmailsExtra {
-			e = strings.ToLower(strings.TrimSpace(e))
-			if e == "" {
-				continue
-			}
-			if !EmailValido(e) {
-				return nil, errors.New("e-mail inválido: " + SanitizarNome(e, 80))
-			}
-			validos = append(validos, e)
-		}
-		if len(validos) > maxEmailsPromocao {
-			return nil, errors.New("no máximo 10 e-mails")
-		}
-		grava[cfgPromocaoEmails] = strings.Join(validos, ";")
-	}
 	if in.SAP == nil {
 		return grava, nil
 	}

@@ -10,13 +10,10 @@ package services
 import (
 	"crypto/tls"
 	"fmt"
-	"html"
 	"log"
-	"mime"
 	"net/smtp"
 	"os"
 	"strconv"
-	"strings"
 )
 
 // EmailConfig contém a configuração SMTP, lida do ambiente a cada chamada
@@ -153,97 +150,4 @@ func SendPasswordResetEmail(email, resetToken string) error {
 	}
 	log.Printf("[Email] Redefinição de senha enviada com sucesso para %s", email)
 	return nil
-}
-
-// PedidoPromocao reúne o que vai no e-mail de "Solicitar promoção".
-type PedidoPromocao struct {
-	Nome, Email, PerfilAtual, PerfilSolicitado, Mensagem string
-}
-
-// SendPromotionRequestEmail avisa os administradores de que um usuário pediu promoção. Envia UM
-// e-mail por administrador (um destinatário em cada mensagem: um endereço inválido não derruba os
-// outros, e os administradores não veem os e-mails uns dos outros). Todo texto vindo do usuário é
-// escapado no HTML e saneado no assunto (sem quebra de linha: não há injeção de cabeçalho).
-// Devolve quantos e-mails foram enviados; erro só se NENHUM saiu.
-func SendPromotionRequestEmail(admins []string, p PedidoPromocao) (int, error) {
-	config := GetEmailConfig()
-	if config.Password == "" {
-		log.Printf("[Email] SMTP não configurado (SMTP_PASSWORD vazio) — pedido de promoção de %s não enviado", p.Email)
-		return 0, fmt.Errorf("serviço de e-mail não configurado — configure SMTP_HOST/SMTP_USER/SMTP_PASSWORD")
-	}
-	appURL := strings.TrimRight(os.Getenv("APP_URL"), "/")
-	if appURL == "" {
-		appURL = "http://localhost:3000"
-	}
-	assunto, corpo := montarEmailPromocao(appURL, p)
-
-	enviados := 0
-	var ultimoErro error
-	for _, destino := range admins {
-		if strings.ContainsAny(destino, "\r\n<>,;") { // defesa extra contra cabeçalho forjado
-			continue
-		}
-		msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
-			config.From, destino, assunto, corpo)
-		var err error
-		if config.Port == 465 {
-			err = sendMailSSL(config, []string{destino}, []byte(msg))
-		} else {
-			addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
-			err = smtp.SendMail(addr, smtp.PlainAuth("", config.Username, config.Password, config.Host), config.Username, []string{destino}, []byte(msg))
-		}
-		if err != nil {
-			log.Printf("[Email] Falha ao avisar %s do pedido de promoção: %v", destino, err)
-			ultimoErro = err
-			continue
-		}
-		enviados++
-	}
-	if enviados == 0 {
-		if ultimoErro == nil {
-			ultimoErro = fmt.Errorf("nenhum destinatário válido")
-		}
-		return 0, fmt.Errorf("falha ao enviar e-mail: %w", ultimoErro)
-	}
-	log.Printf("[Email] Pedido de promoção de %s enviado a %d administrador(es)", p.Email, enviados)
-	return enviados, nil
-}
-
-// montarEmailPromocao monta o assunto (já codificado, RFC 2047) e o corpo HTML do pedido de promoção.
-// Função pura, para teste: todo texto do usuário é escapado no HTML e o assunto não tem quebra de linha.
-func montarEmailPromocao(appURL string, p PedidoPromocao) (assunto, corpo string) {
-	link := appURL + "/admin/usuarios"
-
-	esc := html.EscapeString
-	mensagem := ""
-	if strings.TrimSpace(p.Mensagem) != "" {
-		mensagem = `<p style="margin:16px 0 4px;"><strong>Mensagem do usuário:</strong></p>` +
-			`<p style="background:#f4f4f8;padding:12px;border-radius:6px;margin:0;">` + esc(p.Mensagem) + `</p>`
-	}
-	corpo = fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333333; max-width: 600px; margin: 0 auto;">
-  <div style="background-color: #f4f4f8; padding: 40px; border-radius: 8px;">
-    <div style="background: #2d3748; color: white; padding: 20px; border-radius: 8px; text-align: center;">
-      <div style="font-size: 20px; font-weight: bold;">Módulo de Controladoria</div>
-    </div>
-    <div style="background: white; padding: 30px; border-radius: 8px; margin-top: 16px;">
-      <p>Olá, administrador(a).</p>
-      <p><strong>%s</strong> (%s) pediu promoção do perfil <strong>%s</strong> para <strong>%s</strong>.</p>
-      %s
-      <p style="margin-top:20px;">Para atender, abra <em>Gestão de usuários</em>, localize o usuário e altere o perfil. Se não for o caso, basta ignorar este e-mail.</p>
-      <div style="text-align: center; margin: 30px 0;">
-        <a href="%s" style="display: inline-block; padding: 12px 24px; background: #2d3748; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">Abrir Gestão de usuários</a>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-`, esc(p.Nome), esc(p.Email), esc(p.PerfilAtual), esc(p.PerfilSolicitado), mensagem, esc(link))
-
-	// Assunto: o nome pode ter acento, então vai codificado (RFC 2047); controles já foram removidos.
-	assunto = mime.QEncoding.Encode("utf-8", "Módulo de Controladoria - Pedido de promoção: "+strings.Join(strings.Fields(p.Nome), " "))
-
-	return assunto, corpo
 }

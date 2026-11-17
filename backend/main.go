@@ -469,11 +469,7 @@ func main() {
 	// para qualquer usuário autenticado (alimenta o menu); /api/ti/* exige o
 	// interruptor usuarios.controle_ti (checado no banco a cada chamada).
 	http.HandleFunc("GET /api/me/permissoes", handlers.RequireAuth(withDB(handlers.PermissoesHandler), ""))
-	// "Solicitar promoção" (migration 028): usuário novo é solicitante; pede promoção a atendente e
-	// os administradores ativos recebem e-mail. Qualquer usuário autenticado.
-	http.HandleFunc("GET /api/me/promocao", handlers.RequireAuth(withDB(handlers.PromocaoStatusHandler), ""))
-	http.HandleFunc("POST /api/me/solicitar-promocao", handlers.RequireAuth(withDB(handlers.SolicitarPromocaoHandler), ""))
-	// Configurações (migration 029): e-mail da promoção e integração SAP (centros de custo e contas,
+	// Configurações (migration 029): integração SAP (centros de custo e contas,
 	// leitura 1x/dia às 06:00). Só administrador.
 	http.HandleFunc("GET /api/admin/configuracoes", handlers.RequireAuth(withDB(handlers.ConfiguracoesHandler), "administrador"))
 	http.HandleFunc("PUT /api/admin/configuracoes", handlers.RequireAuth(withDB(handlers.ConfiguracoesHandler), "administrador"))

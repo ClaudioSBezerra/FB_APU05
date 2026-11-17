@@ -1,9 +1,6 @@
 import { podeAtender } from '@/lib/perfis';
 import { useState } from 'react';
-import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database, PanelLeftClose, PanelLeftOpen, Cpu, Settings, ArrowUpCircle } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
-import { usePromocao } from '@/hooks/usePromocao';
-import { Textarea } from '@/components/ui/textarea';
+import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database, PanelLeftClose, PanelLeftOpen, Cpu, Settings } from 'lucide-react';
 import { WORKSPACE } from '@/lib/workspace';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
@@ -71,39 +68,6 @@ export function AppRail() {
   const [pwConfirm, setPwConfirm] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
-
-  // "Solicitar promoção": todo usuário novo é solicitante; daqui ele pede para virar atendente e os
-  // administradores recebem e-mail. Uma solicitação a cada 24 h (o servidor trava).
-  const queryClient = useQueryClient();
-  const { data: promocao } = usePromocao();
-  const [promoDialog, setPromoDialog] = useState(false);
-  const [promoMsg, setPromoMsg] = useState('');
-  const [promoLoading, setPromoLoading] = useState(false);
-
-  async function handleSolicitarPromocao() {
-    if (promoLoading) return;
-    setPromoLoading(true);
-    try {
-      const res = await fetch('/api/me/solicitar-promocao', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mensagem: promoMsg.trim() }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        toast.error(data.error || 'Não foi possível enviar o pedido');
-        return;
-      }
-      toast.success('Pedido enviado aos administradores');
-      setPromoDialog(false);
-      setPromoMsg('');
-      queryClient.invalidateQueries({ queryKey: ['promocao'] });
-    } catch {
-      toast.error('Erro de conexão');
-    } finally {
-      setPromoLoading(false);
-    }
-  }
 
   // Preferência por navegador; storage pode falhar (modo privado) — cai em fechado.
   const [expanded, setExpanded] = useState(() => {
@@ -303,12 +267,6 @@ export function AppRail() {
                 <Mail className="mr-2 h-3.5 w-3.5" />
                 {forgotLoading ? 'Enviando...' : 'Esqueci minha senha'}
               </DropdownMenuItem>
-              {user?.perfil === 'solicitante' && (
-                <DropdownMenuItem className="text-xs cursor-pointer" onClick={() => setPromoDialog(true)}>
-                  <ArrowUpCircle className="mr-2 h-3.5 w-3.5" />
-                  Solicitar promoção
-                </DropdownMenuItem>
-              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-xs text-destructive focus:text-destructive cursor-pointer" onClick={logout}>
                 <LogOut className="mr-2 h-3.5 w-3.5" />
@@ -318,55 +276,6 @@ export function AppRail() {
           </DropdownMenu>
         </div>
       </div>
-
-      <Dialog
-        open={promoDialog}
-        onOpenChange={(o) => {
-          setPromoDialog(o);
-          if (!o) setPromoMsg('');
-        }}
-      >
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Solicitar promoção</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-3 py-2 text-sm">
-            <p className="text-muted-foreground">
-              Seu perfil hoje é <strong className="text-foreground">Solicitante</strong>. Para atender a fila, peça a
-              promoção para <strong className="text-foreground">Atendente</strong>: os administradores recebem um
-              e-mail com o seu pedido e quem decide é um administrador.
-            </p>
-            {promocao && !promocao.pode_solicitar && promocao.ultimo_pedido && (
-              <p role="status" className="rounded-md border bg-muted px-3 py-2 text-xs">
-                Você já pediu em{' '}
-                {new Date(promocao.ultimo_pedido).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}.
-                {promocao.proximo_pedido &&
-                  ` Poderá pedir de novo depois de ${new Date(promocao.proximo_pedido).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}.`}
-              </p>
-            )}
-            <div className="grid gap-1.5">
-              <Label htmlFor="promo-msg">Mensagem (opcional)</Label>
-              <Textarea
-                id="promo-msg"
-                rows={4}
-                maxLength={500}
-                placeholder="Ex.: vou atender as solicitações de TI da minha área"
-                value={promoMsg}
-                onChange={(e) => setPromoMsg(e.target.value)}
-              />
-              <span className="text-right text-xs text-muted-foreground">{promoMsg.length}/500</span>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPromoDialog(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={handleSolicitarPromocao} disabled={promoLoading || promocao?.pode_solicitar === false}>
-              {promoLoading ? 'Enviando...' : 'Enviar pedido'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog
         open={pwDialog}

@@ -7,7 +7,6 @@ package handlers
 
 import (
 	"fmt"
-	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -68,15 +67,6 @@ func SanitizarNome(v string, max int) string {
 		s = string([]rune(s)[:max])
 	}
 	return s
-}
-
-// EmailValido: RFC 5322 simples via net/mail, sem nome de exibição, até 254 caracteres.
-func EmailValido(e string) bool {
-	if e == "" || len(e) > 254 {
-		return false
-	}
-	a, err := mail.ParseAddress(e)
-	return err == nil && a.Address == e && !strings.ContainsAny(e, "<> ")
 }
 
 // trustedProxyHops: quantos proxies confiáveis há entre a internet e a API (padrão 1).
