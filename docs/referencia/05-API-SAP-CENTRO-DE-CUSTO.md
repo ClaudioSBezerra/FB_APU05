@@ -80,12 +80,21 @@ modo direto (HTTPS + Basic) de antes. A chave **nunca** vai para o git nem para 
 `sapodata.LerCentrosCusto` (paginado, 500 por página, `$expand=to_Text`, só vigentes hoje) e grava em
 `centros_custo` (`handlers/centros_custo_sap_carga.go`), numa transação só:
 
+- **Código:** o código SAP completo é **filial + CC de 4 dígitos** (`10016000` = filial `1001` + CC `6000`). Cada
+  código completo vira um centro de custo em `centros_custo`.
+- **Divisão = filial:** o código sem os 4 últimos dígitos (`1001`, `1002`, `81`…). A divisão é **criada na carga** se
+  não existir (nome: o da tabela de parâmetros do Controle TI, ex. `1001` GARANHUNS; senão o próprio código, para
+  ajustar depois em Cadastros). A coluna `filial` do centro recebe o mesmo valor (só se estiver vazia).
 - **Nome:** descrição em PT (cai para o nome curto, depois para outro idioma).
-- **Divisão:** `BusinessArea` do SAP ↔ `divisoes.codigo` (exato ou ignorando zeros à esquerda). Centro **novo** sem
-  divisão correspondente **não é criado** (aparece em "sem divisão" no resultado e no log, por BusinessArea) —
-  basta cadastrar a divisão e esperar a próxima carga. Centro **já existente** sem divisão correspondente só
-  tem o nome atualizado.
-- **Não tocados:** `filial`. **Nunca apagados:** centro que sumiu do SAP continua no cadastro.
+- **Fase 1 (esta):** os 106 centros antigos de 4 dígitos (CC "puro", ligados a 507 usuários, 2 solicitações e 2
+  exceções) **não são tocados**. Validação em 18/11/2026: 98 deles existem no SAP como final de código; 8 não
+  (`6091`, `6245`, `6246`, `6271`, `6471`, `6564`, `CC-TESTE-01`, `CC-TESTE-02`).
+- **Fases seguintes:** (2) remapear o CC próprio dos usuários para o código completo usando empresa + filial da view
+  de colaboradores (a filial ainda não é gravada no sistema; falta o mapeamento empresa/filial → prefixo SAP);
+  (3) remover os de 4 dígitos que ninguém mais usa. **Atenção:** as alçadas casam por filial + código do CC —
+  conferir como a matriz do SAP escreve essa chave antes de a solicitação passar a usar o código completo.
+- **Não tocados:** campos do orçamento além de nome, divisão e filial. **Nunca apagados:** centro que sumiu do SAP
+  continua no cadastro.
 - **Segurança da carga:** se o SAP devolver zero centros ou der erro, nada é gravado e o resultado vai como falha.
 - Resultado e horário aparecem em Configurações (mesmo quadro da sonda).
 
@@ -102,7 +111,7 @@ QAS medido: 4.716 centros vigentes (4.771 no total), ~6 s para ler tudo, 66 `Bus
    clicar em **Testar** (confere chave, rede e conta os registros) e só então **ativar**.
 5. **Rede:** o container do Orçamento tem de alcançar o IP/host do gateway (o app roda dentro da rede Ferreira
    Costa; usuários só acessam conectados).
-6. **Divisões:** antes da 1ª carga em PRD, conferir se as `BusinessArea` do SAP existem em `divisoes.codigo`
-   (no QAS são 66; as que faltarem ficam em "sem divisão" e podem ser cadastradas depois).
-7. Primeira carga em PRD acompanhada: ver o resultado em Configurações e o log `[SAP] Centros de custo novos sem divisão`.
+6. **Divisões:** a carga cria as filiais sozinha (no QAS são 66 prefixos). Depois da 1ª carga, ajustar em Cadastros os
+   nomes que ficaram iguais ao código.
+7. Primeira carga em PRD acompanhada: ver o resultado em Configurações (criados, atualizados, divisões novas, ignorados).
 8. **Rotacionar** a `apikey` do QAS depois da virada.
