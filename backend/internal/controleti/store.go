@@ -179,11 +179,12 @@ func Importar(db *sql.DB, p *Planilha, usuarioID, arquivo string) (Resumo, error
 		return res, fmt.Errorf("limpar lançamentos: %w", err)
 	}
 	if err := insereEmLotes(tx, "ti_lancamentos",
-		[]string{"fonte", "ref", "origem", "status", "pedido", "folha", "miro", "nf", "competencia", "vencimento", "valor", "fornecedor", "descricao", "cc_sap", "conta"},
+		[]string{"fonte", "ref", "origem", "status", "pedido", "folha", "miro", "nf", "competencia", "vencimento", "valor", "fornecedor", "descricao", "cc_sap", "conta", "bp", "cnpj"},
 		len(p.Lancamentos), func(i int) []any {
 			l := p.Lancamentos[i]
 			return []any{FontePlanilha, l.Ref, l.Origem, l.Status, l.Pedido, l.Folha, l.Miro, l.NF,
-				nuloSeVazio(l.Competencia), nuloSeVazio(l.Vencimento), l.Valor, l.Fornecedor, l.Descricao, l.CCSap, l.Conta}
+				nuloSeVazio(l.Competencia), nuloSeVazio(l.Vencimento), l.Valor, l.Fornecedor, l.Descricao, l.CCSap, l.Conta,
+				cortar(l.BP, 20), cortar(l.CNPJ, 30)}
 		}); err != nil {
 		return res, err
 	}
@@ -320,7 +321,7 @@ func carregarEntrada(db *sql.DB, agora time.Time) (Entrada, error) {
 	rows, err = db.Query(`
 		SELECT ref, origem, status, pedido, folha, miro, nf,
 		       COALESCE(to_char(competencia, 'YYYY-MM-DD'), ''), COALESCE(to_char(vencimento, 'YYYY-MM-DD'), ''),
-		       valor::float8, fornecedor, descricao, cc_sap, conta
+		       valor::float8, fornecedor, descricao, cc_sap, conta, bp, cnpj
 		FROM ti_lancamentos ORDER BY id
 	`)
 	if err != nil {
@@ -329,7 +330,7 @@ func carregarEntrada(db *sql.DB, agora time.Time) (Entrada, error) {
 	for rows.Next() {
 		var l Lanc
 		if err := rows.Scan(&l.Ref, &l.Origem, &l.Status, &l.Pedido, &l.Folha, &l.Miro, &l.NF,
-			&l.Competencia, &l.Vencimento, &l.Valor, &l.Fornecedor, &l.Descricao, &l.CCSap, &l.Conta); err != nil {
+			&l.Competencia, &l.Vencimento, &l.Valor, &l.Fornecedor, &l.Descricao, &l.CCSap, &l.Conta, &l.BP, &l.CNPJ); err != nil {
 			rows.Close()
 			return Entrada{}, err
 		}

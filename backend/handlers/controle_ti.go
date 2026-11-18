@@ -105,11 +105,12 @@ func TIModeloHandler(db *sql.DB) http.HandlerFunc {
 // resultadoArquivo é o desfecho de cada arquivo da importação.
 type resultadoArquivo struct {
 	Arquivo  string                       `json:"arquivo"`
-	Tipo     string                       `json:"tipo,omitempty"` // forecast | ksb1 | ksb2
+	Tipo     string                       `json:"tipo,omitempty"` // forecast | ksb1 | ksb2 | fbl1n
 	Ok       bool                         `json:"ok"`
 	Erro     string                       `json:"erro,omitempty"`
 	Forecast *controleti.Resumo           `json:"forecast,omitempty"`
 	SAP      *controleti.ResumoLeituraSAP `json:"sap,omitempty"`
+	FBL1N    *controleti.ResumoFBL1N      `json:"fbl1n,omitempty"`
 }
 
 const (
@@ -186,8 +187,8 @@ func TIImportarHandler(db *sql.DB) http.HandlerFunc {
 			arquivos = append(arquivos, &arquivo{nome: nome, dados: dados, tipo: tipo, res: res})
 		}
 
-		// Forecast primeiro, depois KSB1, depois KSB2
-		ordem := map[string]int{controleti.TipoForecast: 0, controleti.TipoKSB1: 1, controleti.TipoKSB2: 2}
+		// Forecast primeiro, depois KSB1, KSB2 e FBL1N
+		ordem := map[string]int{controleti.TipoForecast: 0, controleti.TipoKSB1: 1, controleti.TipoKSB2: 2, controleti.TipoFBL1N: 3}
 		sort.SliceStable(arquivos, func(i, j int) bool { return ordem[arquivos[i].tipo] < ordem[arquivos[j].tipo] })
 
 		userID := GetUserIDFromContext(r)
@@ -216,6 +217,14 @@ func TIImportarHandler(db *sql.DB) http.HandlerFunc {
 				if linhas, leitura, err = controleti.LerKSB2(a.dados); err == nil {
 					if _, err = controleti.ImportarKSB2(db, linhas, leitura, userID, a.nome); err == nil {
 						a.res.SAP = &leitura
+					}
+				}
+			case controleti.TipoFBL1N:
+				var linhas []controleti.PartidaFBL1N
+				var leitura controleti.ResumoFBL1N
+				if linhas, leitura, err = controleti.LerFBL1N(a.dados); err == nil {
+					if _, err = controleti.ImportarFBL1N(db, linhas, leitura, userID, a.nome); err == nil {
+						a.res.FBL1N = &leitura
 					}
 				}
 			}

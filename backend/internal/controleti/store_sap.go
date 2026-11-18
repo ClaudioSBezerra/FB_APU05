@@ -150,5 +150,71 @@ func carregarSAP(db *sql.DB, in *Entrada) error {
 		in.KSB2Em = quando.Time.Format(time.RFC3339)
 	}
 	_ = db.QueryRow(`SELECT valor FROM ti_config WHERE chave = 'sap_oficial_desde'`).Scan(&in.SapDesde)
+	return carregarFBL1N(db, in)
+}
+
+// ImportarFBL1N grava a FBL1N: é uma foto das partidas no dia da exportação, então substitui tudo.
+func ImportarFBL1N(db *sql.DB, linhas []PartidaFBL1N, leitura ResumoFBL1N, usuarioID, arquivo string) (int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("iniciar transação: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var cargaID int64
+	if err := tx.QueryRow(`
+		INSERT INTO ti_cargas_sap (tipo, arquivo, linhas, aproveitadas, usuario_id)
+		VALUES ('fbl1n', $1, $2, $3, $4) RETURNING id
+	`, cortar(arquivo, 255), leitura.Linhas, leitura.Aproveitadas, usuarioOuNulo(usuarioID)).Scan(&cargaID); err != nil {
+		return 0, fmt.Errorf("registrar carga: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM ti_fbl1n`); err != nil {
+		return 0, fmt.Errorf("limpar a FBL1N: %w", err)
+	}
+	if err := insereEmLotes(tx, "ti_fbl1n",
+		[]string{"carga_id", "empresa", "bp", "fornecedor", "tipo_doc", "referencia", "valor", "documento", "dt_lanc", "vencimento", "dt_comp", "doc_comp", "bloqueio", "divisao", "texto"},
+		len(linhas), func(i int) []any {
+			l := linhas[i]
+			return []any{cargaID, cortar(l.Empresa, 10), cortar(l.BP, 20), cortar(l.Fornecedor, 255), cortar(l.Tipo, 10), cortar(l.Ref, 60),
+				l.Valor, cortar(l.Doc, 30), nuloSeVazio(l.DtLanc), nuloSeVazio(l.Venc), nuloSeVazio(l.DtComp), cortar(l.DocComp, 30),
+				l.Bloq, cortar(l.Divisao, 10), cortar(l.Texto, 80)}
+		}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("confirmar carga: %w", err)
+	}
+	return cargaID, nil
+}
+
+// carregarFBL1N junta ao modelo as partidas guardadas e a origem da carga.
+func carregarFBL1N(db *sql.DB, in *Entrada) error {
+	rows, err := db.Query(`
+		SELECT empresa, bp, fornecedor, tipo_doc, referencia, valor::float8, documento,
+		       COALESCE(to_char(dt_lanc, 'YYYY-MM-DD'), ''), COALESCE(to_char(vencimento, 'YYYY-MM-DD'), ''),
+		       COALESCE(to_char(dt_comp, 'YYYY-MM-DD'), ''), doc_comp, bloqueio, divisao, texto
+		FROM ti_fbl1n ORDER BY id
+	`)
+	if err != nil {
+		return fmt.Errorf("ler ti_fbl1n: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p PartidaFBL1N
+		if err := rows.Scan(&p.Empresa, &p.BP, &p.Fornecedor, &p.Tipo, &p.Ref, &p.Valor, &p.Doc, &p.DtLanc, &p.Venc, &p.DtComp, &p.DocComp, &p.Bloq, &p.Divisao, &p.Texto); err != nil {
+			return err
+		}
+		in.FBL1N = append(in.FBL1N, p)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var quando sql.NullTime
+	var arquivo string
+	_ = db.QueryRow(`SELECT arquivo, created_at FROM ti_cargas_sap WHERE tipo = 'fbl1n' ORDER BY id DESC LIMIT 1`).Scan(&arquivo, &quando)
+	in.FBL1NFonte = arquivo
+	if quando.Valid {
+		in.FBL1NEm = quando.Time.Format(time.RFC3339)
+	}
 	return nil
 }

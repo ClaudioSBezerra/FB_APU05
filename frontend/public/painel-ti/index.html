@@ -22,13 +22,15 @@
       <div class="sub" id="subline"></div>
     </div>
     <div class="actions">
-      <button class="btn primary" id="btnLoad">Importar planilha</button>
-      <button id="btnTheme" title="Alternar tema claro/escuro">◐ Tema</button>
+      <button class="btn primary" id="btnLoad" title="Abre a aba Importar planilha (Forecast, KSB1, KSB2 e FBL1N)">Importar planilha</button>
+      <button id="btnTheme" class="ico" title="Alternar tema claro/escuro" aria-label="Alternar tema">◐</button>
     </div>
   </div>
 </header>
 <div class="wrap">
-  <div class="err" id="err"></div>
+  <div class="err" id="err"></div><div class="okmsg" id="okmsg"></div>
+  <div class="banner-prev" id="prevBanner" style="display:none"></div>
+  <div class="banner-close" id="closeBanner" style="display:none"></div>
 
   <nav class="tabs" id="tabs">
     <div class="tmain" role="tablist">
@@ -42,6 +44,7 @@
       <button data-v="orc" title="Orçamento aprovado">Orçado</button>
       <button data-v="prov" title="Itens previstos, ainda não lançados no SAP">A lançar</button>
       <button data-v="fcst" title="Projeção do ano e dos próximos anos">Projeção</button>
+      <button data-v="conf" title="Planilha × SAP (KSB1): o que bate, o que falta e o que entrou depois do fechamento">Conferência SAP</button>
     </div>
   </nav>
 
@@ -240,8 +243,30 @@
         </div>
       </div>
       <div class="lbar"><span class="seg mseg" id="l-meses"></span><span class="chips" id="l-chips"></span></div>
+      <div style="margin:2px 0 10px"><span class="seg" id="l-view"></span> <span class="small muted" id="l-viewHint"></span></div>
+      <div id="l-pag"></div>
       <div class="scroll" id="tbLanc" style="max-height:600px"></div>
       <div class="small muted" id="lancInfo" style="margin-top:6px"></div>
+      <div class="small" id="l-wait" style="margin-top:8px"></div>
+    </section>
+    <section class="card" style="margin-top:16px" id="l-orfCard">
+      <div class="card-h"><h2>No SAP (FBL1N) e fora do painel</h2><span class="hint" id="l-orfInfo"></span></div>
+      <p class="small muted" style="margin:0 0 8px">Notas dos fornecedores da lista de BPs que estão no SAP mas não foram ligadas a nenhum lançamento do painel. Muitas são de outras áreas (ex.: energia, gráfica); use para achar o que é de TI e ficou fora da planilha.</p>
+      <details id="l-orfDet"><summary>Ver notas</summary><div class="scroll" id="tbOrf" style="max-height:420px;margin-top:8px"></div></details>
+    </section>
+  </div>
+
+  <!-- ================= CONFERÊNCIA SAP ================= -->
+  <div class="view" data-view="conf">
+    <section class="grid kpis" id="c-kpis"></section>
+    <section class="grid two-eq sec">
+      <div class="card"><div class="card-h"><h2>Situação dos pedidos</h2><span class="hint">pedido + CC + mês · clique para filtrar a lista</span></div><div id="c-sit"></div></div>
+      <div class="card"><div class="card-h"><h2>Fonte do realizado por mês</h2><span class="hint">SAP = KSB1 · Planilha = provisório</span></div><div id="c-src"></div></div>
+    </section>
+    <section class="card sec">
+      <div class="card-h"><h2>Lista de conferência</h2><div class="actions"><input type="search" id="c-q" placeholder="Buscar pedido, fornecedor…" style="min-width:220px"><select id="c-st"></select></div></div>
+      <div class="scroll" id="c-list" style="max-height:560px"></div>
+      <div class="small muted" id="c-info" style="margin-top:6px"></div>
     </section>
   </div>
 

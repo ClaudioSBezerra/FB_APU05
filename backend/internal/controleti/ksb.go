@@ -122,7 +122,7 @@ var (
 	colunasKSB2 = []string{"Nº doc.de referência", "Quantidade total", "Valor/MR", "Centro custo"}
 )
 
-// DetectarTipo diz se o arquivo é a planilha Forecast, uma KSB1 ou uma KSB2.
+// DetectarTipo diz se o arquivo é a planilha Forecast, uma KSB1, uma KSB2 ou uma FBL1N.
 func DetectarTipo(dados []byte) (string, error) {
 	f, err := abrirXLSX(dados)
 	if err != nil {
@@ -149,7 +149,10 @@ func DetectarTipo(dados []byte) (string, error) {
 	if _, _, ok := cabecalhoSAP(rows, colunasKSB2...); ok {
 		return TipoKSB2, nil
 	}
-	return "", errors.New("arquivo não reconhecido: não é a planilha Forecast (aba Parâmetros), nem uma KSB1 nem uma KSB2")
+	if _, _, ok := cabecalhoSAP(rows, colunasFBL1N...); ok {
+		return TipoFBL1N, nil
+	}
+	return "", errors.New("arquivo não reconhecido: não é a planilha Forecast (aba Parâmetros), nem uma KSB1, KSB2 ou FBL1N")
 }
 
 func celulaSAP(row []string, col map[string]int, nome string) string {

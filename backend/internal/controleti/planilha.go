@@ -60,6 +60,8 @@ type Lanc struct {
 	Competencia, Vencimento                      string
 	Valor                                        float64
 	Fornecedor, Descricao, CCSap, Conta          string
+	// BP e CNPJ: colunas novas da planilha Despesas TI 2027 (podem não existir).
+	BP, CNPJ string
 	// ForcaRealizado marca as linhas criadas a partir da KSB1 (realizado oficial do
 	// SAP, fase 3): contam como realizado qualquer que seja o status.
 	ForcaRealizado bool
@@ -332,6 +334,7 @@ func lerLancamentos(pl *Planilha, rows [][]string) error {
 			Competencia: diaDe(g(row, "Competência")), Vencimento: diaDe(g(row, "Vencimento")),
 			Valor: r2(valor), Fornecedor: g(row, "Fornecedor"), Descricao: g(row, "Descrição"),
 			CCSap: g(row, "CC SAP"), Conta: g(row, "Conta Contábil"),
+			BP: somenteDigitos(g(row, "BP")), CNPJ: g(row, "CNPJ/CPF"),
 		})
 	}
 	return nil

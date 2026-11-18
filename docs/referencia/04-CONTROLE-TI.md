@@ -124,6 +124,40 @@ SAP só confere. Ainda não foi exercitada com dados reais de 2027.
 documento do Welton traz 74% sobre 1.158; a diferença vem da versão da planilha (aqui 1.102 grupos), a
 ordem de grandeza é a mesma.
 
+## Pagamentos pela FBL1N (migration 031, 18/11/2026)
+
+Nova fonte da aba *Importar planilha*: a **FBL1N** (partidas de fornecedor, todas as empresas), detectada pelas
+colunas `Conta`, `Referência`, `Data de compensação` e `Doc.compensação`. É uma **foto** do dia da exportação e
+substitui a anterior (`ti_fbl1n`). Cada nota lançada (classificação Realizado, da planilha, com competência)
+ganha um status: **Paga**, **Em aberto**, **Vencida** (em aberto com vencimento anterior a hoje; mostra bloqueio) ou
+**Não localizada** (com o motivo). O painel mostra isso em Lançamentos e a aba Lançamentos do sistema ganha a coluna
+Pagamento. Partidas da FBL1N que nenhuma linha explica ficam em `pag.orphans` do modelo.
+
+**Cruzamento** (`internal/controleti/fbl1n.go`, port da `fcxPag` do Dashboard TI 2027): por grupo BP + NF, do maior
+valor para o menor, em 4 passos — BP + NF; BP + NF parcial (um único candidato, valor entre 75% e 101%);
+BP + valor + mês (±1 mês, valor 75%–100,1%); BP + MIRO agrupada + valor. O documento da FBL1N é o contábil (5102…),
+não a MIRO, por isso o cruzamento é aproximado até o SAP vir por API (documento de referência = MIRO → exato).
+
+**BP e CNPJ/CPF.** A planilha *Despesas TI 2027* traz as colunas `BP` e `CNPJ/CPF` (opcionais na importação;
+`ti_lancamentos.bp/cnpj`). Sem BP na linha, o BP mais usado pelo mesmo fornecedor na planilha; sem isso, o BP que a
+própria FBL1N traz para um fornecedor de mesmo nome (extensão nossa). Medido com os dados do Welton (1.425 notas):
+com a coluna BP o resultado é **idêntico** ao do dashboard dele (0 divergências, órfãs idênticas); sem a coluna,
+84,3% das notas ficam com o mesmo status e 1.091 de 1.303 são localizadas. Por isso a coluna BP vale a pena.
+
+**Validação.** `fbl1n_oraculo_test.go` refaz o cruzamento com as entradas do Dashboard TI 2027.html e compara linha
+a linha (os arquivos reais não ficam no repositório):
+
+```bash
+TI_FBL1N_HTML=".../Dashboard TI 2027.html" TI_FBL1N_XLSX=".../EXPORT_….xlsx" go test ./internal/controleti -run FBL1N -v
+```
+
+**Painel.** O painel de 2026 foi atualizado para a versão do Dashboard TI 2027 (aba Lançamentos com pagamento,
+aviso de fechamento do dia 6, Fornecedores) por *merge de 3 vias* (original de 2026 × nosso adaptado × versão 2027),
+mantendo as adaptações do sistema (dados por `postMessage`, "Importar planilha"). O modelo ganhou `meta.year`,
+`meta.monthSrc`, `meta.sapMonths`, `lanc[].src/bp/cnpj/pag` e `pag`. **Ainda não implementado** (do documento do
+Welton): fechamento automático do dia 6 às 00:30 com foto travada e aviso por e-mail, linhas da planilha
+substituídas pela KSB1 mantidas na aba Lançamentos (`kind X`), conectores por API.
+
 ## Próximas fases
 
 2. **Lançamentos no sistema** (digitar nota, status CRIAR PEDIDO → LANÇADO, anexo da NF), com atualização

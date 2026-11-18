@@ -51,7 +51,7 @@ interface ResumoSap {
   ultimo_mes: string;
 }
 
-type TipoArquivo = 'forecast' | 'ksb1' | 'ksb2';
+type TipoArquivo = 'forecast' | 'ksb1' | 'ksb2' | 'fbl1n';
 
 interface ResultadoArquivo {
   arquivo: string;
@@ -60,12 +60,14 @@ interface ResultadoArquivo {
   erro?: string;
   forecast?: ResumoImportacao;
   sap?: ResumoSap;
+  fbl1n?: { linhas: number; aproveitadas: number; empresas: string[] };
 }
 
 const ROTULO_TIPO: Record<TipoArquivo, string> = {
   forecast: 'Planilha Forecast',
   ksb1: 'KSB1 · realizado',
   ksb2: 'KSB2 · compromissado',
+  fbl1n: 'FBL1N · pagamentos',
 };
 
 type Aba = 'painel' | 'lancamentos' | 'conferencia' | 'importar';
@@ -155,6 +157,7 @@ function Lancamentos({ modelo }: { modelo: TiModelo }) {
 
   const total = linhas.reduce((acc, l) => acc + l.valor, 0);
   const temSaldo = Boolean(modelo.meta.sap.ksb2Em);
+  const temPag = Boolean(modelo.pag);
 
   return (
     <section className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4">
@@ -194,6 +197,7 @@ function Lancamentos({ modelo }: { modelo: TiModelo }) {
             <TableHead>Pedido</TableHead>
             <TableHead>Vencimento</TableHead>
             <TableHead className="text-right">Valor</TableHead>
+            {temPag && <TableHead title="Status de pagamento pela FBL1N">Pagamento</TableHead>}
             {temSaldo && (
               <TableHead className="text-right" title="Saldo em aberto do pedido na KSB2 (itens a lançar)">
                 Saldo SAP
@@ -214,6 +218,20 @@ function Lancamentos({ modelo }: { modelo: TiModelo }) {
               <TableCell className="tabular-nums">{l.pedido || '—'}</TableCell>
               <TableCell className="whitespace-nowrap tabular-nums">{dataBR(l.venc)}</TableCell>
               <TableCell className={cn('whitespace-nowrap text-right tabular-nums', l.valor < 0 && 'text-danger-text')}>{brl(l.valor)}</TableCell>
+              {temPag && (
+                <TableCell className="whitespace-nowrap">
+                  {l.pag ? (
+                    <Badge
+                      variant={l.pag.st === 'Paga' ? 'default' : l.pag.st === 'Vencida' ? 'destructive' : 'secondary'}
+                      title={`${l.pag.how}${l.pag.dtComp ? ` · compensada em ${dataBR(l.pag.dtComp)}` : ''}${l.pag.bloq ? ' · com bloqueio' : ''}`}
+                    >
+                      {l.pag.st}
+                    </Badge>
+                  ) : (
+                    <span className="text-fg-helper">—</span>
+                  )}
+                </TableCell>
+              )}
               {temSaldo && (
                 <TableCell className="whitespace-nowrap text-right tabular-nums text-fg-secondary">{l.saldoSap == null ? '—' : brl(l.saldoSap)}</TableCell>
               )}
@@ -221,7 +239,7 @@ function Lancamentos({ modelo }: { modelo: TiModelo }) {
           ))}
           {linhas.length === 0 && (
             <TableRow className="hover:bg-transparent">
-              <TableCell colSpan={temSaldo ? 9 : 8} className="py-6 text-center text-fg-helper">
+              <TableCell colSpan={8 + (temSaldo ? 1 : 0) + (temPag ? 1 : 0)} className="py-6 text-center text-fg-helper">
                 Nenhum lançamento para estes filtros.
               </TableCell>
             </TableRow>
@@ -605,6 +623,11 @@ function Importar({ modelo }: { modelo: TiModelo }) {
           <li>
             <strong>KSB2</strong> (compromissado) — é a foto do saldo em aberto: substitui a anterior.
           </li>
+          <li>
+            <strong>FBL1N</strong> (partidas de fornecedor, todas as empresas) — mostra se cada nota lançada está <strong>paga, em aberto, vencida</strong> ou
+            não localizada. É a foto do dia da exportação: substitui a anterior. O cruzamento é por BP + NF; se a planilha tiver as colunas BP e CNPJ/CPF, fica
+            mais preciso.
+          </li>
         </ul>
       </div>
 
@@ -628,6 +651,13 @@ function Importar({ modelo }: { modelo: TiModelo }) {
             'nenhuma carregada.'
           )}{' '}
           · KSB2: {ksb2Quando ? <span className="font-medium text-fg-secondary">de {ksb2Quando}</span> : 'nenhuma carregada.'}
+          {' '}
+          · FBL1N:{' '}
+          {modelo.pag ? (
+            <span className="font-medium text-fg-secondary">de {modelo.pag.meta.extraido.split('-').reverse().join('/')}</span>
+          ) : (
+            'nenhuma carregada.'
+          )}
         </p>
       </div>
 
@@ -689,6 +719,11 @@ function Importar({ modelo }: { modelo: TiModelo }) {
                   pedido, ignoradas) · meses {rotuloMes(r.sap.primeiro_mes)} a {rotuloMes(r.sap.ultimo_mes)}
                 </p>
               )}
+              {r.ok && r.fbl1n && r.tipo === 'fbl1n' && (
+                <p className="mt-1 text-[13px]">
+                  {r.fbl1n.aproveitadas.toLocaleString('pt-BR')} partidas de fornecedor ({r.fbl1n.empresas.join(', ')}) · o status de pagamento aparece em Lançamentos
+                </p>
+              )}
               {r.ok && r.sap && r.tipo === 'ksb2' && (
                 <p className="mt-1 text-[13px]">
                   {r.sap.aproveitadas.toLocaleString('pt-BR')} linhas de saldo ({r.sap.totais.toLocaleString('pt-BR')} linhas de total ignoradas)
@@ -705,7 +740,7 @@ function Importar({ modelo }: { modelo: TiModelo }) {
             <DialogTitle>Importar {arquivos.length === 1 ? 'o arquivo' : `os ${arquivos.length} arquivos`}?</DialogTitle>
             <DialogDescription>
               A planilha Forecast, se estiver entre eles, <strong>substitui</strong> os dados que vieram de planilha. A KSB1 substitui os meses que cobre, e a
-              KSB2 substitui a anterior. Se um arquivo falhar, nada é alterado por ele, e os outros seguem.
+              KSB2 e a FBL1N substituem as anteriores. Se um arquivo falhar, nada é alterado por ele, e os outros seguem.
             </DialogDescription>
           </DialogHeader>
           <ul className="max-h-40 overflow-auto text-sm text-fg-secondary">

@@ -23,6 +23,12 @@ type Meta struct {
 	ImportadoEm string `json:"importadoEm"`
 	// Sap descreve o que há de KSB1/KSB2 e quais meses são oficiais do SAP ou provisórios.
 	Sap MetaSAP `json:"sap"`
+	// Year, MonthSrc e SapMonths alimentam o painel de 2027: ano de referência, a fonte de cada mês
+	// ("SAP" = coberto pela KSB1, "Planilha" = fechado só pela planilha, "aberto" = mês corrente em diante)
+	// e a lista dos meses cobertos pela KSB1 já fechados.
+	Year      string            `json:"year"`
+	MonthSrc  map[string]string `json:"monthSrc"`
+	SapMonths []string          `json:"sapMonths"`
 }
 
 // MetaSAP: a regra de 2027 do documento do Welton — nos meses fechados cobertos pela KSB1
@@ -79,6 +85,15 @@ type LancRow struct {
 	Grp       string  `json:"grp"`
 	// SaldoSap: saldo em aberto do pedido na KSB2, ao lado dos itens a lançar.
 	SaldoSap *float64 `json:"saldoSap"`
+	// BP e CNPJ vêm das colunas novas da planilha Despesas TI 2027 (opcionais).
+	BP   string `json:"bp"`
+	CNPJ string `json:"cnpj"`
+	// Src: "SAP" para as linhas do realizado oficial vindas da KSB1, "Planilha" para as demais.
+	Src string `json:"src"`
+	// Pag: status de pagamento cruzado com a FBL1N (só linhas realizadas da planilha).
+	Pag *Pag `json:"pag,omitempty"`
+	// daSAP marca a linha vinda da KSB1 (realizado oficial do SAP): fica fora do cruzamento de pagamento.
+	daSAP bool
 }
 
 // CFRow é a projeção (Current Forecast) por divisão, CC e conta.
@@ -100,6 +115,8 @@ type Modelo struct {
 	Budget []BudgetRow `json:"budget"`
 	CF     []CFRow     `json:"cf"`
 	Lanc   []LancRow   `json:"lanc"`
+	// Pag: partidas da FBL1N que não explicam nenhuma nota (só com FBL1N carregada).
+	Pag *PagModelo `json:"pag,omitempty"`
 }
 
 // OrcDB é uma linha de orçamento como está no banco: valores por mês.
@@ -123,6 +140,11 @@ type Entrada struct {
 	SaldosSAP map[string]float64 // pedido -> saldo em aberto (KSB2)
 	KSB2Em    string
 	SapDesde  string // AAAA-MM; vazio = DesdePadraoSAP
+
+	// Pagamentos (FBL1N) — opcional; sem partidas o painel não mostra status de pagamento.
+	FBL1N      []PartidaFBL1N
+	FBL1NFonte string // nome do arquivo
+	FBL1NEm    string // quando foi carregada (RFC 3339)
 }
 
 // DesdePadraoSAP: a partir de janeiro/2027 o SAP é o realizado oficial (documento do Welton).
@@ -219,6 +241,7 @@ func Montar(in Entrada) *Modelo {
 	lancamentos, metaSap := aplicarSAPOficial(in, meses)
 	metaSap.Ksb2Em = in.KSB2Em
 	m.Meta.Sap = metaSap
+	m.Meta.Year, m.Meta.MonthSrc, m.Meta.SapMonths = fontesPorMes(meses, in.LastClosed, metaSap)
 
 	for _, l := range lancamentos {
 		div, cc := DivCCDoSap(l.CCSap)
@@ -235,6 +258,10 @@ func Montar(in Entrada) *Modelo {
 			Div: div, DivDesc: divDesc(div), CC: cc, CCDesc: ccDesc(cc),
 			Conta: l.Conta, ContaDesc: contaDesc(l.Conta), Tipo: tipoDe(l.Conta),
 			Classif: classif, CCSap: l.CCSap, Grp: grp(div),
+			BP: l.BP, CNPJ: l.CNPJ, daSAP: l.ForcaRealizado, Src: "Planilha",
+		}
+		if l.ForcaRealizado {
+			r.Src = "SAP"
 		}
 		if len(l.Competencia) >= 7 {
 			c := l.Competencia[:7]
@@ -251,6 +278,15 @@ func Montar(in Entrada) *Modelo {
 			}
 		}
 		m.Lanc = append(m.Lanc, r)
+	}
+
+	if len(in.FBL1N) > 0 {
+		extraido := agora.Format("2006-01-02")
+		if len(in.FBL1NEm) >= 10 {
+			extraido = in.FBL1NEm[:10]
+		}
+		pm := CruzarPagamentos(m.Lanc, in.FBL1N, in.FBL1NFonte, extraido, hojeISO(agora))
+		m.Pag = &pm
 	}
 
 	m.CF = projecao(m.Budget, m.Lanc, meses, idxMes, in.LastClosed)
@@ -432,4 +468,27 @@ func inteiro(s string) (int, bool) {
 		n = n*10 + int(r-'0')
 	}
 	return n, true
+}
+
+// fontesPorMes diz, para o painel, de onde vem cada mês: cobertos pela KSB1 e já fechados = "SAP";
+// fechados sem KSB1 = "Planilha" (provisório); do mês corrente em diante = "aberto".
+func fontesPorMes(meses []string, lastClosed string, sap MetaSAP) (string, map[string]string, []string) {
+	ano := ""
+	if len(lastClosed) >= 4 {
+		ano = lastClosed[:4]
+	}
+	fonte := make(map[string]string, len(meses))
+	sapMeses := []string{}
+	for _, ym := range meses {
+		switch {
+		case ym > lastClosed:
+			fonte[ym] = "aberto"
+		case sap.Ksb1De != "" && ym >= sap.Ksb1De && ym <= sap.Ksb1Ate:
+			fonte[ym] = "SAP"
+			sapMeses = append(sapMeses, ym)
+		default:
+			fonte[ym] = "Planilha"
+		}
+	}
+	return ano, fonte, sapMeses
 }

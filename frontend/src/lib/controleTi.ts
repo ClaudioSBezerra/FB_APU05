@@ -10,6 +10,9 @@ export interface TiMeta {
   months: string[]; // AAAA-MM, mesmo índice dos arrays `m`
   importadoEm: string; // última importação (RFC 3339); vazio se nunca houve
   sap: MetaSap;
+  year?: string;
+  monthSrc?: Record<string, string>; // "SAP" | "Planilha" | "aberto"
+  sapMonths?: string[];
 }
 
 // O que há de KSB1/KSB2 e quais meses são oficiais do SAP (a partir de `desde`) ou provisórios.
@@ -62,6 +65,27 @@ export interface TiLanc {
   ccSap: string;
   grp: string;
   saldoSap: number | null; // saldo em aberto do pedido na KSB2 (itens a lançar)
+  bp?: string;
+  cnpj?: string;
+  src?: string; // "SAP" (realizado oficial da KSB1) | "Planilha"
+  pag?: TiPag; // status de pagamento (FBL1N), só em linhas realizadas
+}
+
+export interface TiPag {
+  st: 'Paga' | 'Em aberto' | 'Vencida' | 'Não localizada';
+  how: string;
+  dtComp?: string;
+  docComp?: string;
+  liq?: number;
+  vencSap?: string;
+  ref?: string;
+  emp?: string;
+  bloq?: boolean;
+}
+
+export interface TiPagModelo {
+  meta: { fonte: string; extraido: string; empresas: string[]; linhas: number };
+  orphans: unknown[];
 }
 
 export interface TiCF {
@@ -82,6 +106,7 @@ export interface TiModelo {
   budget: TiBudget[];
   cf: TiCF[];
   lanc: TiLanc[];
+  pag?: TiPagModelo; // presente quando há FBL1N carregada
 }
 
 // ---------- formatação (pt-BR) ----------
