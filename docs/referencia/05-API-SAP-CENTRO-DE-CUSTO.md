@@ -70,6 +70,8 @@ O time de SAP publicou a API num gateway interno (Kong) — **GET somente**, aut
 | URL externa | `http://sap-api-gateway.ferreiracosta.com:8000/sap/qas/cost-center-read/` |
 | Parâmetro obrigatório | `?sap-client=300` (não é fixado no Kong; o código manda) |
 
+**Uma apikey por API:** a tela tem a apikey **geral** (vale para qualquer serviço sem chave própria) e, dentro de cada serviço (centros de custo, contas), uma apikey **própria** opcional — a do serviço vale mais que a geral. No QAS a mesma chave serviu para os dois serviços; quando o Kong emitir uma por API, é só preencher a de cada um.
+
 **Como liga:** informe a **apikey** e o **mandante** em **Configurações → Gateway SAP** (criptografados no banco) — ou, alternativa, defina a variável de ambiente **`SAP_API_KEY`** no servidor (Coolify/compose);
 `SAP_CLIENT` traz o mandante. Com `SAP_API_KEY` definida, o Orçamento usa `apikey` no lugar de usuário/senha
 (a credencial Basic da tela deixa de ser exigida) e a URL em Configurações pode ser `http://` de **IP privado** ou

@@ -24,6 +24,7 @@ interface ServicoSAP {
   nome: string;
   ativo: boolean;
   url_base: string;
+  apikey_definida: boolean;
   ultima_execucao: string;
   ultimo_resultado?: ResultadoSAP;
 }
@@ -91,6 +92,7 @@ function Formulario({ data }: { data: Config }) {
   const [senha, setSenha] = useState('');
   const [apikey, setApikey] = useState('');
   const [sapClient, setSapClient] = useState(() => data.sap.sap_client);
+  const [apikeysSv, setApikeysSv] = useState<Record<string, string>>({});
   const [urls, setUrls] = useState<Record<string, string>>(() =>
     Object.fromEntries(data.sap.servicos.map((s) => [s.chave, s.url_base])),
   );
@@ -109,6 +111,7 @@ function Formulario({ data }: { data: Config }) {
       queryClient.setQueryData(['configuracoes'], nova);
       setSenha('');
       setApikey('');
+      setApikeysSv({});
       toast.success('Configurações salvas');
     },
     onError: (err: Error) => toast.error(err.message),
@@ -126,9 +129,10 @@ function Formulario({ data }: { data: Config }) {
   });
 
   function salvarSAP() {
-    const servicos: Record<string, { ativo: boolean; url_base: string }> = {};
+    const servicos: Record<string, { ativo: boolean; url_base: string; apikey?: string }> = {};
     for (const s of data?.sap.servicos ?? []) {
-      servicos[s.chave] = { ativo: !!ativos[s.chave], url_base: (urls[s.chave] ?? '').trim() };
+      const k = (apikeysSv[s.chave] ?? '').trim();
+      servicos[s.chave] = { ativo: !!ativos[s.chave], url_base: (urls[s.chave] ?? '').trim(), ...(k ? { apikey: k } : {}) };
     }
     salvar.mutate({
       sap: {
@@ -242,7 +246,8 @@ function Formulario({ data }: { data: Config }) {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            A apikey é gravada criptografada e nunca é mostrada de volta. Deixe vazio para manter a atual.
+            Esta é a apikey <strong>geral</strong>: vale para todo serviço que não tiver a sua própria (campo dentro de cada serviço abaixo, para quando o
+            Kong emitir uma chave por API). Gravada criptografada, nunca mostrada de volta. Deixe vazio para manter a atual.
             {data.sap.apikey_definida && (
               <>
                 {' '}
@@ -286,9 +291,30 @@ function Formulario({ data }: { data: Config }) {
                   className="font-mono text-xs"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Só https, em servidor de um domínio da Ferreira Costa. Hoje aponta para a homologação; troque pela de
+                  Direto no SAP: só https, em servidor de um domínio da Ferreira Costa. Pelo gateway (com apikey): http da rede interna,
+                  ex.: <code>http://10.131.1.80:8000/sap/qas/{s.chave === 'cc' ? 'cost-center-read' : 'gl-account-read'}/</code>. Troque pela de
                   produção quando for liberada.
                 </p>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor={`sap-apikey-${s.chave}`}>Apikey deste serviço (opcional)</Label>
+                <Input
+                  id={`sap-apikey-${s.chave}`}
+                  type="password"
+                  autoComplete="new-password"
+                  value={apikeysSv[s.chave] ?? ''}
+                  onChange={(e) => setApikeysSv((a) => ({ ...a, [s.chave]: e.target.value }))}
+                  placeholder={s.apikey_definida ? '•••••••• (definida para este serviço)' : 'vazio = usa a apikey geral acima'}
+                />
+                {s.apikey_definida && (
+                  <button
+                    type="button"
+                    className="w-fit text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                    onClick={() => salvar.mutate({ sap: { servicos: { [s.chave]: { limpar_apikey: true } } } })}
+                  >
+                    Remover a apikey deste serviço (volta a usar a geral)
+                  </button>
+                )}
               </div>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <ResultadoLinha r={s.ultimo_resultado} ultima={s.ultima_execucao} />

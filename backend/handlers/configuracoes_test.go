@@ -50,32 +50,20 @@ func TestValidarEntrada_SAP(t *testing.T) {
 	}
 	// URL de outro domínio e de outro serviço
 	in = novo()
-	in.SAP.Servicos = map[string]struct {
-		Ativo   *bool   `json:"ativo"`
-		URLBase *string `json:"url_base"`
-	}{"cc": {URLBase: ptr("https://evil.com/API_COSTCENTER_SRV")}}
+	in.SAP.Servicos = map[string]servicoEntrada{"cc": {URLBase: ptr("https://evil.com/API_COSTCENTER_SRV")}}
 	if _, err := validarEntrada(in, nil); err == nil {
 		t.Error("URL de outro domínio deveria ser recusada")
 	}
-	in.SAP.Servicos = map[string]struct {
-		Ativo   *bool   `json:"ativo"`
-		URLBase *string `json:"url_base"`
-	}{"gl": {URLBase: ptr(urlCC)}}
+	in.SAP.Servicos = map[string]servicoEntrada{"gl": {URLBase: ptr(urlCC)}}
 	if _, err := validarEntrada(in, nil); err == nil {
 		t.Error("URL de centros de custo não pode valer para contas")
 	}
-	in.SAP.Servicos = map[string]struct {
-		Ativo   *bool   `json:"ativo"`
-		URLBase *string `json:"url_base"`
-	}{"xx": {Ativo: ptr(false)}}
+	in.SAP.Servicos = map[string]servicoEntrada{"xx": {Ativo: ptr(false)}}
 	if _, err := validarEntrada(in, nil); err == nil {
 		t.Error("serviço desconhecido deveria ser recusado")
 	}
 	// ativar sem credencial: recusa; com credencial já gravada: aceita
-	in.SAP.Servicos = map[string]struct {
-		Ativo   *bool   `json:"ativo"`
-		URLBase *string `json:"url_base"`
-	}{"gl": {Ativo: ptr(true)}}
+	in.SAP.Servicos = map[string]servicoEntrada{"gl": {Ativo: ptr(true)}}
 	atual := map[string]string{cfgServico(sapodata.ContasContabeis, "url_base"): urlGL}
 	if _, err := validarEntrada(in, atual); err == nil {
 		t.Error("ativar sem usuário/senha deveria ser recusado")
@@ -226,10 +214,7 @@ func TestRotinaSAPDiaria_SoRodaOQueEstaDevidoEAtivo(t *testing.T) {
 func TestValidarEntrada_Gateway(t *testing.T) {
 	const urlGW = "http://10.131.1.80:8000/sap/qas/cost-center-read/"
 	// http de IP privado só vale com apikey (sem ela é o modo direto: https + domínio FC)
-	in := configuracoesEntrada{SAP: &sapEntrada{Servicos: map[string]struct {
-		Ativo   *bool   `json:"ativo"`
-		URLBase *string `json:"url_base"`
-	}{"cc": {URLBase: ptr(urlGW)}}}}
+	in := configuracoesEntrada{SAP: &sapEntrada{Servicos: map[string]servicoEntrada{"cc": {URLBase: ptr(urlGW)}}}}
 	if _, err := validarEntrada(in, nil); err == nil {
 		t.Error("URL do gateway sem apikey deveria ser recusada")
 	}
@@ -251,10 +236,7 @@ func TestValidarEntrada_Gateway(t *testing.T) {
 		t.Errorf("apikey já gravada deveria bastar: %v", err)
 	}
 	// ativar exige credencial
-	ativo := configuracoesEntrada{SAP: &sapEntrada{Servicos: map[string]struct {
-		Ativo   *bool   `json:"ativo"`
-		URLBase *string `json:"url_base"`
-	}{"cc": {Ativo: ptr(true)}}}}
+	ativo := configuracoesEntrada{SAP: &sapEntrada{Servicos: map[string]servicoEntrada{"cc": {Ativo: ptr(true)}}}}
 	if _, err := validarEntrada(ativo, map[string]string{cfgServico(sapodata.CentrosCusto, "url_base"): urlCC}); err == nil {
 		t.Error("ativar sem credencial deveria ser recusado")
 	}
@@ -269,5 +251,37 @@ func TestValidarEntrada_Gateway(t *testing.T) {
 	grava, _ = validarEntrada(configuracoesEntrada{SAP: &sapEntrada{LimparApiKey: true}}, nil)
 	if v, ok := grava[cfgSapApiKey]; !ok || v != "" {
 		t.Errorf("limpar_apikey deveria zerar: %v", grava)
+	}
+}
+
+func TestApiKeyPorServico(t *testing.T) {
+	geral, _ := crypto.EncryptField("chave-geral-1234")
+	doGL, _ := crypto.EncryptField("chave-do-gl-5678")
+	m := map[string]string{cfgSapApiKey: geral, cfgServico(sapodata.ContasContabeis, "apikey"): doGL}
+	if got := credencialSAP(m, sapodata.ContasContabeis).APIKey; got != "chave-do-gl-5678" {
+		t.Errorf("a apikey do serviço deve valer mais que a geral: %q", got)
+	}
+	if got := credencialSAP(m, sapodata.CentrosCusto).APIKey; got != "chave-geral-1234" {
+		t.Errorf("sem apikey própria vale a geral: %q", got)
+	}
+	// gravação: só com a apikey do serviço já basta para a URL do gateway e para ativar
+	in := configuracoesEntrada{SAP: &sapEntrada{Servicos: map[string]servicoEntrada{
+		"gl": {ApiKey: ptr("chave-do-gl-5678"), URLBase: ptr("http://10.131.1.80:8000/sap/qas/gl-account-read/"), Ativo: ptr(true)},
+	}}}
+	grava, err := validarEntrada(in, nil)
+	if err != nil {
+		t.Fatalf("apikey do serviço deveria bastar: %v", err)
+	}
+	if v := grava[cfgServico(sapodata.ContasContabeis, "apikey")]; v == "" || v == "chave-do-gl-5678" {
+		t.Errorf("a apikey do serviço deve ir criptografada: %q", v)
+	}
+	// o outro serviço continua sem credencial
+	in.SAP.Servicos = map[string]servicoEntrada{"cc": {Ativo: ptr(true)}}
+	if _, err := validarEntrada(in, map[string]string{cfgServico(sapodata.CentrosCusto, "url_base"): urlCC}); err == nil {
+		t.Error("o serviço cc sem credencial não deveria ativar")
+	}
+	grava, _ = validarEntrada(configuracoesEntrada{SAP: &sapEntrada{Servicos: map[string]servicoEntrada{"gl": {LimparApiKey: true}}}}, nil)
+	if v, ok := grava[cfgServico(sapodata.ContasContabeis, "apikey")]; !ok || v != "" {
+		t.Errorf("limpar_apikey do serviço deveria zerar: %v", grava)
 	}
 }

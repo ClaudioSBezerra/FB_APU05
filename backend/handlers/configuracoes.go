@@ -77,6 +77,7 @@ type servicoConfig struct {
 	Nome            string          `json:"nome"`
 	Ativo           bool            `json:"ativo"`
 	URLBase         string          `json:"url_base"`
+	ApiKeyDefinida  bool            `json:"apikey_definida"` // apikey própria deste serviço
 	UltimaExecucao  string          `json:"ultima_execucao"`
 	UltimoResultado *resultadoSalvo `json:"ultimo_resultado,omitempty"`
 }
@@ -107,6 +108,7 @@ func montarResposta(m map[string]string) configuracoesResposta {
 			Chave: sv.Chave, Nome: sv.Nome,
 			Ativo:          m[cfgServico(sv, "ativo")] == "true",
 			URLBase:        m[cfgServico(sv, "url_base")],
+			ApiKeyDefinida: m[cfgServico(sv, "apikey")] != "",
 			UltimaExecucao: m[cfgServico(sv, "ultima_execucao")],
 		}
 		if raw := m[cfgServico(sv, "ultimo_resultado")]; raw != "" {
@@ -144,17 +146,23 @@ func ConfiguracoesHandler(db *sql.DB) http.HandlerFunc {
 }
 
 type sapEntrada struct {
-	Horario      *string `json:"horario"`
-	Usuario      *string `json:"usuario"`
-	Senha        *string `json:"senha"`
-	LimparSenha  bool    `json:"limpar_senha"`
+	Horario      *string                   `json:"horario"`
+	Usuario      *string                   `json:"usuario"`
+	Senha        *string                   `json:"senha"`
+	LimparSenha  bool                      `json:"limpar_senha"`
+	ApiKey       *string                   `json:"apikey"`
+	LimparApiKey bool                      `json:"limpar_apikey"`
+	SapClient    *string                   `json:"sap_client"`
+	Servicos     map[string]servicoEntrada `json:"servicos"`
+}
+
+// servicoEntrada: ajustes de um serviço (cc, gl). Cada API do gateway pode ter a SUA apikey; sem ela
+// vale a apikey geral.
+type servicoEntrada struct {
+	Ativo        *bool   `json:"ativo"`
+	URLBase      *string `json:"url_base"`
 	ApiKey       *string `json:"apikey"`
 	LimparApiKey bool    `json:"limpar_apikey"`
-	SapClient    *string `json:"sap_client"`
-	Servicos     map[string]struct {
-		Ativo   *bool   `json:"ativo"`
-		URLBase *string `json:"url_base"`
-	} `json:"servicos"`
 }
 
 type configuracoesEntrada struct {
@@ -236,20 +244,39 @@ func validarEntrada(in configuracoesEntrada, atual map[string]string) (map[strin
 		if !ok {
 			return nil, errors.New("serviço desconhecido: " + SanitizarNome(chave, 10))
 		}
+		// apikey própria do serviço (cada API do gateway pode ter a sua)
+		svKeyFinal := atual[cfgServico(sv, "apikey")] != ""
+		switch {
+		case sc.LimparApiKey:
+			grava[cfgServico(sv, "apikey")] = ""
+			svKeyFinal = false
+		case sc.ApiKey != nil && *sc.ApiKey != "":
+			k := strings.TrimSpace(*sc.ApiKey)
+			if len(k) < 8 || len(k) > 200 || strings.ContainsAny(k, " \r\n\x00\t") {
+				return nil, errors.New(sv.Nome + ": apikey inválida")
+			}
+			cifrada, err := crypto.EncryptField(k)
+			if err != nil {
+				return nil, errors.New("não foi possível proteger a apikey")
+			}
+			grava[cfgServico(sv, "apikey")] = cifrada
+			svKeyFinal = true
+		}
+		gw := apikeyFinal || svKeyFinal
 		urlFinal := atual[cfgServico(sv, "url_base")]
 		if sc.URLBase != nil {
 			urlFinal = strings.TrimSpace(*sc.URLBase)
-			if err := sapodata.ValidarURL(urlFinal, sv, apikeyFinal); err != nil {
+			if err := sapodata.ValidarURL(urlFinal, sv, gw); err != nil {
 				return nil, errors.New(sv.Nome + ": " + err.Error())
 			}
 			grava[cfgServico(sv, "url_base")] = urlFinal
 		}
 		if sc.Ativo != nil {
 			if *sc.Ativo {
-				if !apikeyFinal && (usuarioFinal == "" || !senhaFinal) {
+				if !gw && (usuarioFinal == "" || !senhaFinal) {
 					return nil, errors.New(sv.Nome + ": informe a apikey do gateway (ou o usuário e a senha do SAP) antes de ativar")
 				}
-				if err := sapodata.ValidarURL(urlFinal, sv, apikeyFinal); err != nil {
+				if err := sapodata.ValidarURL(urlFinal, sv, gw); err != nil {
 					return nil, errors.New(sv.Nome + ": " + err.Error())
 				}
 			}
@@ -330,7 +357,11 @@ func credencialSAP(m map[string]string, sv sapodata.Servico) sapodata.Config {
 		}
 	}
 	apikey := ""
-	if cifrada := m[cfgSapApiKey]; cifrada != "" {
+	cifrada := m[cfgServico(sv, "apikey")] // a do serviço vale mais que a geral
+	if cifrada == "" {
+		cifrada = m[cfgSapApiKey]
+	}
+	if cifrada != "" {
 		if txt, err := crypto.DecryptField(cifrada); err == nil {
 			apikey = txt
 		} else {
