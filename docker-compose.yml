@@ -22,6 +22,9 @@ services:
       - DATABASE_URL_PRIVILEGIADA=postgres://fb_apu05_privilegiado:${DB_PRIVILEGIADA_PASSWORD:-changeme}@db:5432/${DB_NAME:-fb_apu05}?sslmode=disable
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-dev-key-change-me}
+      # SAP via gateway Kong (carga diária dos centros de custo; ver docs/referencia/05-API-SAP-CENTRO-DE-CUSTO.md)
+      - SAP_API_KEY=${SAP_API_KEY:-}
+      - SAP_CLIENT=${SAP_CLIENT:-}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - APP_URL=${APP_URL:-http://localhost:3000}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}

@@ -10,7 +10,8 @@ package handlers
 //   - integração SAP, lida 1x/dia (padrão 06:00, horário de Recife): credencial Basic única e, por
 //     serviço (cc = centros de custo, gl = contas contábeis), URL e liga/desliga.
 //
-// A rotina diária (RotinaSAPDiaria) lê o mesmo cadastro; hoje ela só confere o acesso e conta os
+// A rotina diária (RotinaSAPDiaria) lê o mesmo cadastro. Centros de custo (cc), em modo gateway
+// (SAP_API_KEY), são CARREGADOS em centros_custo; os demais serviços ainda só conferem o acesso e contam os
 // registros (internal/sapodata). Gravar em centros_custo/contas depende do mapeamento SAP ↔ cadastro.
 
 import (
@@ -202,7 +203,7 @@ func validarEntrada(in configuracoesEntrada, atual map[string]string) (map[strin
 		}
 		if sc.Ativo != nil {
 			if *sc.Ativo {
-				if usuarioFinal == "" || !senhaFinal {
+				if !sapodata.ModoGateway() && (usuarioFinal == "" || !senhaFinal) {
 					return nil, errors.New(sv.Nome + ": informe o usuário e a senha do SAP antes de ativar")
 				}
 				if err := sapodata.ValidarURLBase(urlFinal, sv); err != nil {
@@ -285,7 +286,7 @@ func credencialSAP(m map[string]string, sv sapodata.Servico) sapodata.Config {
 			log.Printf("[SAP] Erro ao decifrar a senha do SAP: %v", err)
 		}
 	}
-	return sapodata.Config{URLBase: m[cfgServico(sv, "url_base")], Usuario: m[cfgSapUsuario], Senha: senha}
+	return sapodata.Config{URLBase: m[cfgServico(sv, "url_base")], Usuario: m[cfgSapUsuario], Senha: senha}.DoGateway()
 }
 
 func guardarResultado(db *sql.DB, sv sapodata.Servico, res sapodata.Resultado, origem string, quando time.Time) {
@@ -337,6 +338,19 @@ func SAPTestarHandler(db *sql.DB) http.HandlerFunc {
 
 // ---- rotina diária ----
 
+// cargaCC roda a carga de centros de custo e a transforma em Resultado para a tela de Configurações.
+func cargaCC(ctx context.Context, db *sql.DB, cfg sapodata.Config, agora time.Time) sapodata.Resultado {
+	ini := time.Now()
+	r, err := carregarCentrosCustoSAP(ctx, db, cfg, agora)
+	res := sapodata.Resultado{OK: err == nil, Total: r.Lidos, DuracaoMs: time.Since(ini).Milliseconds()}
+	if err != nil {
+		res.Mensagem = "carga falhou: " + err.Error()
+	} else {
+		res.Mensagem = r.mensagem()
+	}
+	return res
+}
+
 var fusoRecife = func() *time.Location {
 	if loc, err := time.LoadLocation("America/Recife"); err == nil {
 		return loc
@@ -379,8 +393,13 @@ func RotinaSAPDiaria(db *sql.DB, agora time.Time) {
 		if m[cfgServico(sv, "ativo")] != "true" || !sapDevido(m[cfgSapHorario], m[cfgServico(sv, "ultima_execucao")], agora) {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		res := sondaSAP(ctx, sv, credencialSAP(m, sv))
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		var res sapodata.Resultado
+		if sv.Chave == sapodata.CentrosCusto.Chave && sapodata.ModoGateway() {
+			res = cargaCC(ctx, db, credencialSAP(m, sv), agora)
+		} else {
+			res = sondaSAP(ctx, sv, credencialSAP(m, sv))
+		}
 		cancel()
 		guardarResultado(db, sv, res, "agendada", agora)
 		log.Printf("[SAP] Rotina diária de %s: ok=%v total=%d (%s)", sv.Chave, res.OK, res.Total, res.Mensagem)

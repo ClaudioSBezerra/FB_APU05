@@ -65,6 +65,23 @@ type Config struct {
 	URLBase string
 	Usuario string
 	Senha   string
+	// Modo gateway (Kong): preenchido por ConfigGateway a partir de SAP_API_KEY / SAP_CLIENT.
+	// Com APIKey, a chamada vai com o header apikey (e ?sap-client=) em vez de Basic.
+	APIKey    string
+	SapClient string
+}
+
+// ModoGateway diz se o SAP é lido pelo gateway interno (Kong, header apikey) em vez de direto no
+// SAP (Basic). Liga quando a variável SAP_API_KEY está definida no servidor.
+func ModoGateway() bool { return strings.TrimSpace(os.Getenv("SAP_API_KEY")) != "" }
+
+// DoGateway completa cfg com a chave e o mandante lidos do ambiente (só em modo gateway).
+func (c Config) DoGateway() Config {
+	if ModoGateway() {
+		c.APIKey = strings.TrimSpace(os.Getenv("SAP_API_KEY"))
+		c.SapClient = strings.TrimSpace(os.Getenv("SAP_CLIENT"))
+	}
+	return c
 }
 
 // Resultado da sonda.
@@ -82,6 +99,9 @@ var sufixosPermitidos = []string{".ferreiracosta.com", ".ferreiracosta.com.br"}
 // host sob um domínio da Ferreira Costa — a URL é digitada por um administrador e o servidor a chama
 // (evita usar o sistema como ponte para outros destinos).
 func ValidarURLBase(raw string, sv Servico) error {
+	if ModoGateway() {
+		return validarURLGateway(raw)
+	}
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Host == "" {
 		return errors.New("URL inválida")
@@ -114,6 +134,65 @@ func ValidarURLBase(raw string, sv Servico) error {
 	return nil
 }
 
+// validarURLGateway aceita http(s)://host[:porta]/caminho do gateway interno: host sob um domínio da
+// Ferreira Costa OU IP de rede privada (10.x, 172.16-31.x, 192.168.x). Nunca IP público nem usuário
+// embutido, para o servidor não virar ponte para fora da rede.
+func validarURLGateway(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return errors.New("URL inválida")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errors.New("a URL precisa começar com http:// ou https://")
+	}
+	if u.User != nil {
+		return errors.New("a URL não pode conter usuário e senha")
+	}
+	host := strings.ToLower(u.Hostname())
+	if ip := net.ParseIP(host); ip != nil {
+		if !ip.IsPrivate() {
+			return errors.New("o gateway precisa estar na rede interna (IP privado)")
+		}
+	} else {
+		ok := false
+		for _, s := range sufixosPermitidos {
+			if strings.HasSuffix(host, s) {
+				ok = true
+			}
+		}
+		if !ok {
+			return errors.New("o gateway precisa ser de um domínio da Ferreira Costa (ferreiracosta.com ou ferreiracosta.com.br)")
+		}
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("a URL não pode ter parâmetros (?…) nem âncora (#…)")
+	}
+	if strings.Trim(u.Path, "/") == "" {
+		return errors.New("a URL deve incluir a rota do serviço no gateway (ex.: /sap/qas/cost-center-read)")
+	}
+	return nil
+}
+
+// montarURL monta URL da coleção com as opções OData (e sap-client no modo gateway).
+func montarURL(cfg Config, entidade string, q url.Values) string {
+	if cfg.APIKey != "" && cfg.SapClient != "" {
+		q.Set("sap-client", cfg.SapClient)
+	}
+	// %20 (não "+") entre os termos do $filter; o SAP interpreta de forma estrita
+	enc := strings.ReplaceAll(q.Encode(), "+", "%20")
+	return strings.TrimRight(strings.TrimSpace(cfg.URLBase), "/") + "/" + entidade + "?" + enc
+}
+
+// autenticar põe a credencial certa na requisição (apikey no gateway, Basic direto no SAP).
+func autenticar(req *http.Request, cfg Config) {
+	if cfg.APIKey != "" {
+		req.Header.Set("apikey", cfg.APIKey)
+	} else {
+		req.SetBasicAuth(cfg.Usuario, cfg.Senha)
+	}
+	req.Header.Set("Accept", "application/json")
+}
+
 // Pontos de troca para teste (o servidor de teste não é de um domínio da FC e usa certificado próprio).
 var (
 	validarURL  = ValidarURLBase
@@ -136,19 +215,18 @@ func Sonda(ctx context.Context, sv Servico, cfg Config) Resultado {
 	if err := validarURL(cfg.URLBase, sv); err != nil {
 		return res(false, 0, 0, err.Error())
 	}
-	if cfg.Usuario == "" || cfg.Senha == "" {
+	if cfg.APIKey == "" && (cfg.Usuario == "" || cfg.Senha == "") {
 		return res(false, 0, 0, "usuário e senha do SAP ainda não foram informados")
 	}
 
-	endpoint := strings.TrimRight(strings.TrimSpace(cfg.URLBase), "/") + "/" + sv.Entidade + "?$top=1&$inlinecount=allpages&$select=" + sv.Chaves
+	endpoint := montarURL(cfg, sv.Entidade, url.Values{"$top": {"1"}, "$inlinecount": {"allpages"}, "$select": {sv.Chaves}})
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return res(false, 0, 0, "não foi possível montar a requisição")
 	}
-	req.SetBasicAuth(cfg.Usuario, cfg.Senha)
-	req.Header.Set("Accept", "application/json")
+	autenticar(req, cfg)
 
 	resp, err := novoCliente().Do(req)
 	if err != nil {

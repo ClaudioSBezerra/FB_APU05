@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -69,7 +70,8 @@ func TestSonda_Sucesso(t *testing.T) {
 	if !r.OK || r.Total != 2731 {
 		t.Fatalf("esperava ok com 2731, veio %+v", r)
 	}
-	if !strings.Contains(path, "A_CostCenter?$top=1&$inlinecount=allpages") || accept != "application/json" || auth != "svc_orcamento:segredo-super-secreto" {
+	dec, _ := url.QueryUnescape(path)
+	if !strings.Contains(dec, "A_CostCenter?") || !strings.Contains(dec, "$top=1") || !strings.Contains(dec, "$inlinecount=allpages") || accept != "application/json" || auth != "svc_orcamento:segredo-super-secreto" {
 		t.Errorf("requisição inesperada: path=%q accept=%q auth=%q", path, accept, auth)
 	}
 }
@@ -139,7 +141,7 @@ func TestContasContabeis_ServicoEPath(t *testing.T) {
 	if !r.OK || r.Total != 8120 || !strings.Contains(r.Mensagem, "contas contábeis") {
 		t.Fatalf("esperava ok com 8120 contas: %+v", r)
 	}
-	if !strings.Contains(path, "A_GLAccountInChartOfAccounts?$top=1&$inlinecount=allpages&$select=ChartOfAccounts,GLAccount") {
+	if dec, _ := url.QueryUnescape(path); !strings.Contains(dec, "A_GLAccountInChartOfAccounts?") || !strings.Contains(dec, "$top=1") || !strings.Contains(dec, "$select=ChartOfAccounts,GLAccount") {
 		t.Errorf("entidade/seleção inesperadas: %q", path)
 	}
 }
