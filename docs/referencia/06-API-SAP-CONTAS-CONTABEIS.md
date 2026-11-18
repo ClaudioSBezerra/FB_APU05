@@ -62,6 +62,11 @@ cadastro existem só nele. A carga lê só o plano `0050` (`SAP_GL_CHART` troca,
 marcadas para eliminação nem bloqueadas para lançamento: **1.157 contas** (319 de resultado, o resto balanço).
 
 **O que roda às 06:00:** `sapodata.LerContas` (paginado, `to_Text`, nome = descrição longa em PT) e upsert em `contas`
-com `plano = 'BIFC'` (o plano das contas reais já existentes), por (plano, código), numa transação
+com `plano = '0050'` (o plano de contas do SAP; a antiga divisão BIFC/SFC acabou — migration 032), por (plano, código), numa transação
 (`handlers/contas_sap_carga.go`). Zero contas ou erro = falha, nada gravado. A carga **não apaga** nada; a limpeza
 das contas antigas (sem referência e fora do SAP) foi feita uma vez, com backup, na primeira carga.
+
+**Plano de contas (18/11/2026).** `contas.plano` passou a ser o **plano de contas do SAP** (hoje só o `0050`), e não mais
+BIFC/SFC: a trava de valores foi retirada (migration 032), as contas existentes foram convertidas (BIFC → 0050) e todo
+tipo de solicitação — inclusive "Inclusão SFC" — usa o mesmo plano (`sapodata.PlanoContas()`, trocável por `SAP_GL_CHART`).
+O formulário recebe a lista única em `contas` (antes `contas_bifc` / `contas_sfc`).

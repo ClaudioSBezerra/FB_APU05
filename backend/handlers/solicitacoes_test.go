@@ -395,7 +395,7 @@ func TestAbrirSolicitacaoHandler_ContaPlanoSFC(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaOrigem).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("SFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("ANTIGO"))
 	mock.ExpectRollback()
 
 	handler := AbrirSolicitacaoHandler(db)
@@ -406,7 +406,7 @@ func TestAbrirSolicitacaoHandler_ContaPlanoSFC(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "BIFC") {
+	if !strings.Contains(rec.Body.String(), "ANTIGO") || !strings.Contains(rec.Body.String(), "0050") {
 		t.Fatalf("corpo não cita a restrição de plano: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -432,10 +432,10 @@ func TestAbrirSolicitacaoHandler_SemAlcadaCadastrada(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaOrigem).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaDestino).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM regras_aprovacao")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM alcadas")).
@@ -488,10 +488,10 @@ func TestAbrirSolicitacaoHandler_Success(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaOrigem).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaDestino).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM regras_aprovacao")).
 		WithArgs("F1", "CC1", 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
@@ -555,10 +555,10 @@ func TestAbrirSolicitacaoHandler_ComFornecedorDescricaoEAnexo(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaOrigem).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaDestino).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM regras_aprovacao")).
 		WithArgs("F1", "CC1", 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
@@ -699,7 +699,7 @@ func TestAbrirSolicitacaoHandler_InclusaoSFC_ContaPlanoBIFC(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaSFC).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("ANTIGO"))
 	mock.ExpectRollback()
 
 	handler := AbrirSolicitacaoHandler(db)
@@ -710,7 +710,7 @@ func TestAbrirSolicitacaoHandler_InclusaoSFC_ContaPlanoBIFC(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "SFC") || !strings.Contains(rec.Body.String(), "Inclusão SFC") {
+	if !strings.Contains(rec.Body.String(), "ANTIGO") || !strings.Contains(rec.Body.String(), "Inclusão SFC") {
 		t.Fatalf("corpo não cita a restrição de plano esperada: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -735,7 +735,7 @@ func TestAbrirSolicitacaoHandler_InclusaoSFC_SemAlcadaCadastrada(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaSFC).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("SFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM regras_aprovacao")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM alcadas")).
@@ -784,7 +784,7 @@ func TestAbrirSolicitacaoHandler_InclusaoSFC_Success(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaSFC).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("SFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM regras_aprovacao")).
 		WithArgs("F1", "CC1", 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
@@ -985,7 +985,7 @@ func TestAbrirSolicitacaoHandler_Inclusao_ContaPlanoSFC(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaSFC).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("SFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("ANTIGO"))
 	mock.ExpectRollback()
 
 	handler := AbrirSolicitacaoHandler(db)
@@ -996,7 +996,7 @@ func TestAbrirSolicitacaoHandler_Inclusao_ContaPlanoSFC(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "BIFC") || !strings.Contains(rec.Body.String(), "Inclusão") {
+	if !strings.Contains(rec.Body.String(), "ANTIGO") || !strings.Contains(rec.Body.String(), "Inclusão") {
 		t.Fatalf("corpo não cita a restrição de plano esperada: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -1021,7 +1021,7 @@ func TestAbrirSolicitacaoHandler_Inclusao_AutorizadorForaDoCCOuFaixa(t *testing.
 		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaBIFC).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario")).
 		WithArgs("CC1", testSolicitacaoAutorizadorID, 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
@@ -1066,7 +1066,7 @@ func TestAbrirSolicitacaoHandler_Inclusao_Success(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 		WithArgs(testSolicitacaoContaBIFC).
-		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM autorizadores_formulario")).
 		WithArgs("CC1", testSolicitacaoAutorizadorID, 1000.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(autorizadorRegraID))

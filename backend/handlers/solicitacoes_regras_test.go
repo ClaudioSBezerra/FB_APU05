@@ -71,7 +71,7 @@ func TestTransferencia_VariasOrigensParaDestinoEmOutroCC(t *testing.T) {
 		for _, conta := range []string{testSolicitacaoContaOrigem, testSolicitacaoContaOrigem, testSolicitacaoContaOrigem, testSolicitacaoContaDestino} {
 			mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
 				WithArgs(conta).
-				WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("BIFC"))
+				WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
 		}
 		mock.ExpectQuery(regexp.QuoteMeta("FROM regras_aprovacao")).
 			WithArgs("F1", "CC1", 1000.0).

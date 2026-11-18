@@ -20,6 +20,8 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+
+	"fb_apu05/internal/sapodata"
 )
 
 type opcaoItem struct {
@@ -110,8 +112,8 @@ func centrosCustoAutorizados(db *sql.DB, usuarioID string) ([]centroCustoOpcao, 
 // OpcoesFormularioHandler — GET /api/formulario/opcoes. Agrega, numa única
 // chamada, todo cadastro mestre que um formulário de abertura de
 // solicitação (qualquer um dos 5 tipos) precisa para popular combos:
-// centros de custo autorizados do usuário logado, divisões, contas (BIFC e
-// SFC separadas — nunca misturadas, FR-7), classes de imobilizado, locais
+// centros de custo autorizados do usuário logado, divisões, contas (do plano de
+// contas do SAP), classes de imobilizado, locais
 // de obra e subgrupos de despesa.
 func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -137,16 +139,9 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		contasBifc, err := listarOpcoes(db, "SELECT id, codigo, nome FROM contas WHERE plano = 'BIFC' ORDER BY nome")
+		contas, err := listarOpcoes(db, "SELECT id, codigo, nome FROM contas WHERE plano = '"+sapodata.PlanoContas()+"' ORDER BY nome")
 		if err != nil {
-			log.Printf("[Formulario] Erro ao consultar contas BIFC: %v", err)
-			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
-			return
-		}
-
-		contasSfc, err := listarOpcoes(db, "SELECT id, codigo, nome FROM contas WHERE plano = 'SFC' ORDER BY nome")
-		if err != nil {
-			log.Printf("[Formulario] Erro ao consultar contas SFC: %v", err)
+			log.Printf("[Formulario] Erro ao consultar contas: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
@@ -186,8 +181,7 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 			"centros_custo":         centrosCusto,
 			"centros_custo_destino": centrosCustoDestino,
 			"divisoes":              divisoes,
-			"contas_bifc":           contasBifc,
-			"contas_sfc":            contasSfc,
+			"contas":                contas,
 			"classes_imobilizado":   classesImobilizado,
 			"locais_obra":           locaisObra,
 			"subgrupos_despesa":     subgruposDespesa,

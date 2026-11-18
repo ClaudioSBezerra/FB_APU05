@@ -39,11 +39,8 @@ func TestOpcoesFormularioHandler_Sucesso(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("FROM divisoes")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome"}).AddRow("div-1", "100", "Controladoria"))
 
-	mock.ExpectQuery(regexp.QuoteMeta("plano = 'BIFC'")).
+	mock.ExpectQuery(regexp.QuoteMeta("plano = '0050'")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome"}).AddRow("conta-1", "3001", "Despesas Gerais"))
-
-	mock.ExpectQuery(regexp.QuoteMeta("plano = 'SFC'")).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome"}))
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM classes_imobilizado")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome"}))
@@ -68,8 +65,7 @@ func TestOpcoesFormularioHandler_Sucesso(t *testing.T) {
 	var resp struct {
 		CentrosCusto []centroCustoOpcao `json:"centros_custo"`
 		Divisoes     []opcaoItem        `json:"divisoes"`
-		ContasBifc   []opcaoItem        `json:"contas_bifc"`
-		ContasSfc    []opcaoItem        `json:"contas_sfc"`
+		Contas       []opcaoItem        `json:"contas"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("resposta não é JSON válido: %v", err)
@@ -77,8 +73,8 @@ func TestOpcoesFormularioHandler_Sucesso(t *testing.T) {
 	if len(resp.CentrosCusto) != 1 || resp.CentrosCusto[0].Codigo != "1000" {
 		t.Fatalf("centros_custo = %+v, inesperado", resp.CentrosCusto)
 	}
-	if len(resp.ContasBifc) != 1 || len(resp.ContasSfc) != 0 {
-		t.Fatalf("contas BIFC/SFC não separadas corretamente: %+v / %+v", resp.ContasBifc, resp.ContasSfc)
+	if len(resp.Contas) != 1 || resp.Contas[0].Codigo != "3001" {
+		t.Fatalf("contas do plano de contas inesperadas: %+v", resp.Contas)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectativas não cumpridas: %v", err)

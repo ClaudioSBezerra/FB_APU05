@@ -462,12 +462,12 @@ func TestImportarCadastroHandler_Contas_Success(t *testing.T) {
 }
 
 // TestImportarCadastroHandler_Contas_PlanoInvalido cobre validarPlano
-// rejeitando um "plano" fora de {BIFC, SFC} — a única regra de validação
+// rejeitando um "plano de contas" fora do formato (1 a 10 letras/números) — a única regra de validação
 // própria de "contas" não tinha nenhum teste antes deste.
 func TestImportarCadastroHandler_Contas_PlanoInvalido(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	csv := "plano;codigo;nome\nXYZ;1000;Caixa\n"
+	csv := "plano;codigo;nome\nPLANO-INVALIDO;1000;Caixa\n"
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).

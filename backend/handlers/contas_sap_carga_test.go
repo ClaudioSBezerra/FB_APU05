@@ -28,8 +28,8 @@ func TestCarregarContasSAP(t *testing.T) {
 	}
 	defer db.Close()
 	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO contas`).WithArgs("BIFC", "4110100005", "Custo Frete Revenda").WillReturnRows(sqlmock.NewRows([]string{"x"}).AddRow(true))
-	mock.ExpectQuery(`INSERT INTO contas`).WithArgs("BIFC", "4210100010", "Mão-de-Obra - PJ").WillReturnRows(sqlmock.NewRows([]string{"x"}).AddRow(false))
+	mock.ExpectQuery(`INSERT INTO contas`).WithArgs("0050", "4110100005", "Custo Frete Revenda").WillReturnRows(sqlmock.NewRows([]string{"x"}).AddRow(true))
+	mock.ExpectQuery(`INSERT INTO contas`).WithArgs("0050", "4210100010", "Mão-de-Obra - PJ").WillReturnRows(sqlmock.NewRows([]string{"x"}).AddRow(false))
 	mock.ExpectCommit()
 
 	r, plano, err := carregarContasSAP(context.Background(), db, sapodata.Config{})

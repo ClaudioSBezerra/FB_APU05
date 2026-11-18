@@ -45,8 +45,7 @@ interface OpcoesFormulario {
   // Todos os CCs (destino de Transferência, 11/11) — centros_custo traz só os autorizados.
   centros_custo_destino?: CentroCustoOpcao[];
   divisoes: OpcaoItem[];
-  contas_bifc: OpcaoItem[];
-  contas_sfc: OpcaoItem[];
+  contas: OpcaoItem[]; // plano de contas do SAP
   classes_imobilizado: OpcaoItem[];
   locais_obra: OpcaoItem[];
   subgrupos_despesa: OpcaoItem[];
@@ -637,7 +636,7 @@ const AbrirSolicitacao = () => {
     }
   }
 
-  const contasDisponiveis = tipo === 'inclusao_sfc' ? opcoes?.contas_sfc ?? [] : opcoes?.contas_bifc ?? [];
+  const contasDisponiveis = opcoes?.contas ?? [];
   // Anexo obrigatório em todos os tipos desde 11/11 (item 5).
   const podeEnviar =
     Boolean(anexo) &&
@@ -710,7 +709,7 @@ const AbrirSolicitacao = () => {
               linha.lado !== 'origem' ? null : (
                 <div key={i} className="grid grid-cols-1 gap-3 border-t border-border pt-3 first-of-type:border-0 sm:grid-cols-[1fr_150px_150px_auto] sm:items-end">
                   <div className="grid gap-1.5">
-                    <Label>Conta (BIFC)</Label>
+                    <Label>Conta</Label>
                     <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
                   </div>
                   <div className="grid gap-1.5">
@@ -760,7 +759,7 @@ const AbrirSolicitacao = () => {
               linha.lado !== 'destino' ? null : (
                 <div key={i} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_150px_150px] sm:items-end">
                   <div className="grid gap-1.5">
-                    <Label>Conta (BIFC)</Label>
+                    <Label>Conta</Label>
                     <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
                   </div>
                   <div className="grid gap-1.5">
@@ -816,7 +815,7 @@ const AbrirSolicitacao = () => {
             ) : (
               <>
                 <div className="grid gap-1.5">
-                  <Label>Conta ({tipo === 'inclusao_sfc' ? 'SFC' : 'BIFC'})</Label>
+                  <Label>Conta</Label>
                   <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
                 </div>
                 <div className="grid gap-1.5">

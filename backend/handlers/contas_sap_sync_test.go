@@ -60,7 +60,7 @@ func TestSincronizarContasSAPHandler_CorpoVazio(t *testing.T) {
 }
 
 // TestSincronizarContasSAPHandler_CriaAtualizaEIgnora cobre: plano válido
-// (BIFC/SFC) -> criado/atualizado; plano inválido -> ignorado, sem abortar
+// (plano de contas, ex. 0050) -> criado/atualizado; plano inválido -> ignorado, sem abortar
 // a sincronização inteira (best-effort, mesmo padrão de fornecedores).
 func TestSincronizarContasSAPHandler_CriaAtualizaEIgnora(t *testing.T) {
 	db, mock := newSQLMock(t)
@@ -82,7 +82,7 @@ func TestSincronizarContasSAPHandler_CriaAtualizaEIgnora(t *testing.T) {
 	body := `{"contas":[
 		{"plano":"BIFC","codigo":"1.01.001","nome":"Caixa"},
 		{"plano":"SFC","codigo":"2.02.002","nome":"Fornecedores Atualizado"},
-		{"plano":"ERRADO","codigo":"9.99.999","nome":"Plano inválido"}
+		{"plano":"ERRADO-DEMAIS","codigo":"9.99.999","nome":"Plano inválido"}
 	]}`
 	handler(rec, newContasSyncRequest(body, "chave-certa"))
 

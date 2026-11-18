@@ -97,7 +97,7 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
     label: 'Contas',
     csvCabecalho: 'plano;codigo;nome',
     campos: [
-      { nome: 'plano', label: 'Plano (BIFC/SFC)', kind: 'texto' },
+      { nome: 'plano', label: 'Plano de contas', kind: 'texto' },
       { nome: 'codigo', label: 'Código', kind: 'texto' },
       { nome: 'nome', label: 'Nome', kind: 'texto' },
     ],

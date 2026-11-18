@@ -46,6 +46,7 @@ import (
 
 	"fb_apu05/internal/anexos"
 	"fb_apu05/internal/aprovacao"
+	"fb_apu05/internal/sapodata"
 )
 
 // stringOuNulo (20/10) converte um campo de texto livre opcional
@@ -349,21 +350,21 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Mapa plano/rótulo por tipo (Story 3.3): "inclusao_sfc" é o ÚNICO
-		// tipo que usa o plano SFC (FR-7); "inclusao" (Story 3.3) usa BIFC
-		// como "transferencia", mas com rótulo próprio na mensagem de erro.
-		// Imobilizado (Story 3.4) pula este bloco inteiramente — é classe de
+		// Plano de contas (18/11/2026): a antiga divisão BIFC/SFC acabou — todo tipo de
+		// solicitação usa o plano de contas do SAP (sapodata.PlanoContas, "0050"); só o rótulo
+		// na mensagem de erro muda por tipo. Imobilizado (Story 3.4) pula este bloco inteiramente — é classe de
 		// imobilizado, não conta contábil, então não existe plano a checar
 		// (Code Map da spec 3.4).
 		if req.TipoSolicitacao != "imobilizado" {
-			var planoEsperado, rotuloTipo string
+			planoEsperado := sapodata.PlanoContas()
+			var rotuloTipo string
 			switch req.TipoSolicitacao {
 			case "inclusao_sfc":
-				planoEsperado, rotuloTipo = "SFC", "Inclusão SFC"
+				rotuloTipo = "Inclusão SFC"
 			case "inclusao":
-				planoEsperado, rotuloTipo = "BIFC", "Inclusão"
+				rotuloTipo = "Inclusão"
 			default:
-				planoEsperado, rotuloTipo = "BIFC", "Transferência"
+				rotuloTipo = "Transferência"
 			}
 			msgErro, errServidor := validarPlanoConta(tx, lancamentos, planoEsperado, rotuloTipo)
 			if errServidor != nil {
@@ -921,10 +922,7 @@ func solicitanteAutorizadoParaCC(tx *sql.Tx, solicitanteID, centroCustoID string
 }
 
 // validarPlanoConta checa que toda conta referenciada pelas linhas pertence
-// EXATAMENTE ao plano esperado para o tipo_solicitacao em questão (nunca o
-// outro plano, mesmo quando o código numérico colide — Boundaries "Always"
-// da spec): ("BIFC", "Transferência") para transferencia, ("SFC", "Inclusão
-// SFC") para inclusao_sfc. Devolve (mensagem 400, nil) para uma violação de
+// ao plano de contas esperado (hoje um só, o do SAP — sapodata.PlanoContas). Devolve (mensagem 400, nil) para uma violação de
 // regra de negócio, ou (_, err) para um erro de infraestrutura que o
 // chamador deve traduzir como 500 — os dois nunca se confundem.
 func validarPlanoConta(tx *sql.Tx, linhas []lancamentoValidado, planoEsperado, rotuloTipo string) (string, error) {
@@ -938,7 +936,7 @@ func validarPlanoConta(tx *sql.Tx, linhas []lancamentoValidado, planoEsperado, r
 			return "", fmt.Errorf("checar plano da conta %s: %w", l.ContaID, err)
 		}
 		if plano != planoEsperado {
-			return fmt.Sprintf("linha %d: conta do plano %s não é permitida em %s (apenas %s)", i+1, plano, rotuloTipo, planoEsperado), nil
+			return fmt.Sprintf("linha %d: conta do plano %s não é permitida em %s (apenas o plano de contas %s)", i+1, plano, rotuloTipo, planoEsperado), nil
 		}
 	}
 	return "", nil

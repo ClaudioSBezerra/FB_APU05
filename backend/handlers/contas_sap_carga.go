@@ -3,9 +3,8 @@ package handlers
 // contas_sap_carga.go — carga diária (06:00) das contas contábeis lidas do SAP pelo gateway
 // (internal/sapodata.LerContas) para a tabela contas. O SAP manda: o nome é sobrescrito a cada carga.
 //
-// O plano de contas da Ferreira Costa no SAP é o "0050" (sapodata.PlanoContas); no cadastro do
-// sistema ele entra como plano "BIFC" — o mesmo das contas reais que já existiam (todas elas existem
-// só no 0050). Contas marcadas para eliminação ou bloqueadas para lançamento nem são lidas. Nada é
+// O plano de contas da Ferreira Costa no SAP é o "0050" (sapodata.PlanoContas) e é esse mesmo valor que
+// vai em contas.plano (a antiga divisão BIFC/SFC deixou de existir). Contas marcadas para eliminação ou bloqueadas para lançamento nem são lidas. Nada é
 // apagado pela carga: conta que sumiu do SAP permanece no cadastro.
 
 import (
@@ -16,9 +15,6 @@ import (
 
 	"fb_apu05/internal/sapodata"
 )
-
-// planoContasSistema é o valor de contas.plano para as contas vindas do SAP.
-const planoContasSistema = "BIFC"
 
 // trocável nos testes
 var lerContasSAP = sapodata.LerContas
@@ -69,7 +65,7 @@ func carregarContasSAP(ctx context.Context, db *sql.DB, cfg sapodata.Config) (Re
 		if err := tx.QueryRowContext(ctx, `
 			INSERT INTO contas (plano, codigo, nome) VALUES ($1, $2, $3)
 			ON CONFLICT (plano, codigo) DO UPDATE SET nome = EXCLUDED.nome, updated_at = now()
-			RETURNING (xmax = 0)`, planoContasSistema, c.Codigo, nome).Scan(&inserida); err != nil {
+			RETURNING (xmax = 0)`, plano, c.Codigo, nome).Scan(&inserida); err != nil {
 			return res, plano, fmt.Errorf("erro ao gravar a conta %s: %w", c.Codigo, err)
 		}
 		if inserida {

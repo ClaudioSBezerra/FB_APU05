@@ -1,13 +1,13 @@
 package handlers
 
-// contas_sap_sync.go — carga de contas (plano de contas BIFC/SFC) a partir
+// contas_sap_sync.go — carga de contas (plano de contas do SAP, ex.: 0050) a partir
 // do SAP S/4HANA da Ferreira Costa (pedido do Marlos, 21/10) — mesmo
 // princípio de centros_sap_sync.go (é o lado SAP/ABAP que empurra pra cá).
 // Ver docs/referencia/03-INTEGRACAO-SAP-S4HANA.md para a especificação
 // completa enviada à Duda.
 //
 // `(plano, codigo)` é a chave de negócio (UNIQUE composta, migration 003)
-// — alvo do upsert. `plano` precisa ser exatamente 'BIFC' ou 'SFC'
+// — alvo do upsert. `plano` é o plano de contas do SAP (1 a 10 letras/números)
 // (validarPlano, cadastros.go); linha com plano/codigo/nome inválido é
 // ignorada (best-effort, mesmo padrão de fornecedores_oracle_sync.go).
 //

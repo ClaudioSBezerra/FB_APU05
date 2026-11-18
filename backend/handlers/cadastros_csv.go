@@ -15,6 +15,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -162,10 +163,12 @@ func parseBoolCSV(valor string) (bool, error) {
 	}
 }
 
+var planoDeContasRegexp = regexp.MustCompile(`^[A-Za-z0-9]{1,10}$`)
+
 func validarPlano(valor string) (string, error) {
 	trimmed := strings.TrimSpace(valor)
-	if trimmed != "BIFC" && trimmed != "SFC" {
-		return "", fmt.Errorf("plano deve ser 'BIFC' ou 'SFC', recebido %q", trimmed)
+	if !planoDeContasRegexp.MatchString(trimmed) {
+		return "", fmt.Errorf("plano de contas deve ter de 1 a 10 letras/números (ex.: 0050), recebido %q", trimmed)
 	}
 	return trimmed, nil
 }
