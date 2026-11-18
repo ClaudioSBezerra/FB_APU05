@@ -642,6 +642,28 @@ func TestListarCadastroHandler_Success(t *testing.T) {
 	}
 }
 
+// TestListarCadastroHandler_Busca cobre ?busca=: filtra por código/nome com ILIKE parametrizado e
+// escapa % e _ do termo digitado.
+func TestListarCadastroHandler_Busca(t *testing.T) {
+	db, mock := newSQLMock(t)
+	agora := time.Now()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, codigo, nome, created_at, updated_at FROM divisoes WHERE (codigo ILIKE $3 ESCAPE '\' OR nome ILIKE $3 ESCAPE '\') ORDER BY created_at, id LIMIT $1 OFFSET $2`)).
+		WithArgs(20, 0, `%10\_1\%%`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome", "created_at", "updated_at"}).
+			AddRow(testCadastroID, "1001", "GARANHUNS", agora, agora))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/cadastros/divisoes?busca=10_1%25", nil)
+	req.SetPathValue("tipo", "divisoes")
+	rec := httptest.NewRecorder()
+	ListarCadastroHandler(db)(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"codigo":"1001"`) {
+		t.Fatalf("esperado 200 com o item, obtido %d (%s)", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestListarCadastroHandler_Feriados_DataFormato cobre a listagem do único
 // tipo com coluna colData ("feriados") — regressão do achado [high] da
 // primeira passada de revisão (colData escaneado como *string saía em

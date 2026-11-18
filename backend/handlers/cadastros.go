@@ -1128,12 +1128,32 @@ func ListarCadastroHandler(db *sql.DB) http.HandlerFunc {
 		pagina, tamanho := paginacaoDaQuery(r)
 
 		colunas := nomesColunas(def.Colunas)
+		args := []interface{}{tamanho, (pagina - 1) * tamanho}
+		filtro := ""
+		// ?busca= filtra por código/nome (só as colunas que o tipo tem; os nomes vêm do registry, nunca do
+		// usuário). Cadastros grandes (ex.: ~4.800 centros de custo vindos do SAP) ficam inavegáveis sem isso.
+		if busca := strings.TrimSpace(r.URL.Query().Get("busca")); busca != "" {
+			if len(busca) > 100 {
+				busca = busca[:100]
+			}
+			var conds []string
+			for _, c := range colunas {
+				if c == "codigo" || c == "nome" {
+					conds = append(conds, c+" ILIKE $3 ESCAPE '\\'")
+				}
+			}
+			if len(conds) > 0 {
+				filtro = " WHERE (" + strings.Join(conds, " OR ") + ")"
+				esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(busca)
+				args = append(args, "%"+esc+"%")
+			}
+		}
 		query := fmt.Sprintf(
-			"SELECT id, %s, created_at, updated_at FROM %s ORDER BY created_at, id LIMIT $1 OFFSET $2",
-			strings.Join(colunas, ", "), def.Tabela,
+			"SELECT id, %s, created_at, updated_at FROM %s%s ORDER BY created_at, id LIMIT $1 OFFSET $2",
+			strings.Join(colunas, ", "), def.Tabela, filtro,
 		)
 
-		rows, err := db.Query(query, tamanho, (pagina-1)*tamanho)
+		rows, err := db.Query(query, args...)
 		if err != nil {
 			log.Printf("[Cadastros] Erro ao listar %s: %v", tipo, err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")

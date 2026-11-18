@@ -499,6 +499,7 @@ const CadastrosMestres = () => {
   const queryClient = useQueryClient();
   const [tipoAtual, setTipoAtual] = useState(TIPOS_CADASTRO[0].tipo);
   const [pagina, setPagina] = useState(1);
+  const [busca, setBusca] = useState('');
   const [cargaOpen, setCargaOpen] = useState(false);
   const [arquivoCarga, setArquivoCarga] = useState<File | null>(null);
   const [editAlvo, setEditAlvo] = useState<Registro | null>(null);
@@ -511,12 +512,16 @@ const CadastrosMestres = () => {
 
   function trocarTipo(novoTipo: string) {
     setTipoAtual(novoTipo);
+    setBusca('');
     setPagina(1);
   }
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['cadastros', tipoAtual, pagina],
-    queryFn: () => fetchJSON<ListaResponse>(`/api/admin/cadastros/${tipoAtual}?pagina=${pagina}&tamanho=20`),
+    queryKey: ['cadastros', tipoAtual, pagina, busca],
+    queryFn: () =>
+      fetchJSON<ListaResponse>(
+        `/api/admin/cadastros/${tipoAtual}?pagina=${pagina}&tamanho=20${busca.trim() ? `&busca=${encodeURIComponent(busca.trim())}` : ''}`,
+      ),
   });
 
   const cargaMutation = useMutation({
@@ -684,6 +689,18 @@ const CadastrosMestres = () => {
         </Select>
       </div>
 
+      {['centros-custo', 'divisoes', 'contas', 'classes-imobilizado'].includes(tipoAtual) && (
+        <Input
+          className="max-w-sm"
+          placeholder="Buscar por código ou nome…"
+          value={busca}
+          onChange={(e) => {
+            setBusca(e.target.value);
+            setPagina(1);
+          }}
+        />
+      )}
+
       {isLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
       {error && <p className="text-sm text-destructive">{(error as Error).message}</p>}
 
@@ -691,7 +708,9 @@ const CadastrosMestres = () => {
         <>
           {data.items.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Nenhum registro ainda — use &quot;Carregar CSV inicial&quot; para popular este cadastro.
+              {busca.trim()
+                ? 'Nenhum registro encontrado para essa busca.'
+                : 'Nenhum registro ainda — use "Carregar CSV inicial" para popular este cadastro.'}
             </p>
           ) : (
             <Table>
