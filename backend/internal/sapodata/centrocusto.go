@@ -93,7 +93,7 @@ func nomeDoTexto(ts []ccTexto) string {
 // LerCentrosCusto devolve os centros de custo vigentes em `hoje`, um por código (se houver períodos
 // sobrepostos ou mais de uma área controladora, vale o de vigência iniciada mais recentemente).
 func LerCentrosCusto(ctx context.Context, cfg Config, hoje time.Time) ([]CentroCusto, error) {
-	if err := validarURL(cfg.URLBase, CentrosCusto); err != nil {
+	if err := validarURL(cfg.URLBase, CentrosCusto, cfg.APIKey != ""); err != nil {
 		return nil, err
 	}
 	if cfg.APIKey == "" && (cfg.Usuario == "" || cfg.Senha == "") {

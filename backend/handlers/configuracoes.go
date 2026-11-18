@@ -34,7 +34,13 @@ const (
 	cfgSapHorario = "sap_horario"
 	cfgSapUsuario = "sap_usuario"
 	cfgSapSenha   = "sap_senha"
+	// gateway interno (Kong): chave (criptografada) e mandante informados na tela; a variável de
+	// ambiente SAP_API_KEY/SAP_CLIENT vale quando a tela não tem a chave.
+	cfgSapApiKey = "sap_apikey"
+	cfgSapClient = "sap_client"
 )
+
+var clientRegexp = regexp.MustCompile(`^\d{1,3}$`)
 
 var horarioRegexp = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 
@@ -77,10 +83,14 @@ type servicoConfig struct {
 
 type configuracoesResposta struct {
 	SAP struct {
-		Horario       string          `json:"horario"`
-		Usuario       string          `json:"usuario"`
-		SenhaDefinida bool            `json:"senha_definida"`
-		Servicos      []servicoConfig `json:"servicos"`
+		Horario       string `json:"horario"`
+		Usuario       string `json:"usuario"`
+		SenhaDefinida bool   `json:"senha_definida"`
+		// gateway interno (Kong)
+		ApiKeyDefinida bool            `json:"apikey_definida"`
+		ApiKeyAmbiente bool            `json:"apikey_ambiente"` // a chave vem da variável de ambiente do servidor
+		SapClient      string          `json:"sap_client"`
+		Servicos       []servicoConfig `json:"servicos"`
 	} `json:"sap"`
 }
 
@@ -89,6 +99,9 @@ func montarResposta(m map[string]string) configuracoesResposta {
 	r.SAP.Horario = m[cfgSapHorario]
 	r.SAP.Usuario = m[cfgSapUsuario]
 	r.SAP.SenhaDefinida = m[cfgSapSenha] != ""
+	r.SAP.ApiKeyDefinida = m[cfgSapApiKey] != ""
+	r.SAP.ApiKeyAmbiente = sapodata.ModoGateway()
+	r.SAP.SapClient = m[cfgSapClient]
 	for _, sv := range sapodata.Todos {
 		sc := servicoConfig{
 			Chave: sv.Chave, Nome: sv.Nome,
@@ -130,17 +143,22 @@ func ConfiguracoesHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+type sapEntrada struct {
+	Horario      *string `json:"horario"`
+	Usuario      *string `json:"usuario"`
+	Senha        *string `json:"senha"`
+	LimparSenha  bool    `json:"limpar_senha"`
+	ApiKey       *string `json:"apikey"`
+	LimparApiKey bool    `json:"limpar_apikey"`
+	SapClient    *string `json:"sap_client"`
+	Servicos     map[string]struct {
+		Ativo   *bool   `json:"ativo"`
+		URLBase *string `json:"url_base"`
+	} `json:"servicos"`
+}
+
 type configuracoesEntrada struct {
-	SAP *struct {
-		Horario     *string `json:"horario"`
-		Usuario     *string `json:"usuario"`
-		Senha       *string `json:"senha"`
-		LimparSenha bool    `json:"limpar_senha"`
-		Servicos    map[string]struct {
-			Ativo   *bool   `json:"ativo"`
-			URLBase *string `json:"url_base"`
-		} `json:"servicos"`
-	} `json:"sap"`
+	SAP *sapEntrada `json:"sap"`
 }
 
 // validarEntrada transforma a entrada em pares chave→valor a gravar (a senha já cifrada), ou erro de validação.
@@ -180,7 +198,32 @@ func validarEntrada(in configuracoesEntrada, atual map[string]string) (map[strin
 		}
 		grava[cfgSapSenha] = cifrada
 	}
+	switch {
+	case s.LimparApiKey:
+		grava[cfgSapApiKey] = ""
+	case s.ApiKey != nil && *s.ApiKey != "":
+		k := strings.TrimSpace(*s.ApiKey)
+		if len(k) < 8 || len(k) > 200 || strings.ContainsAny(k, " \r\n\x00\t") {
+			return nil, errors.New("apikey inválida")
+		}
+		cifrada, err := crypto.EncryptField(k)
+		if err != nil {
+			return nil, errors.New("não foi possível proteger a apikey")
+		}
+		grava[cfgSapApiKey] = cifrada
+	}
+	if s.SapClient != nil {
+		c := strings.TrimSpace(*s.SapClient)
+		if c != "" && !clientRegexp.MatchString(c) {
+			return nil, errors.New("sap-client inválido: use só números (ex.: 300)")
+		}
+		grava[cfgSapClient] = c
+	}
 	// estado final da credencial (para exigir antes de ligar um serviço)
+	apikeyFinal := atual[cfgSapApiKey] != "" || sapodata.ModoGateway()
+	if v, ok := grava[cfgSapApiKey]; ok {
+		apikeyFinal = v != "" || sapodata.ModoGateway()
+	}
 	usuarioFinal, senhaFinal := atual[cfgSapUsuario], atual[cfgSapSenha] != ""
 	if v, ok := grava[cfgSapUsuario]; ok {
 		usuarioFinal = v
@@ -196,17 +239,17 @@ func validarEntrada(in configuracoesEntrada, atual map[string]string) (map[strin
 		urlFinal := atual[cfgServico(sv, "url_base")]
 		if sc.URLBase != nil {
 			urlFinal = strings.TrimSpace(*sc.URLBase)
-			if err := sapodata.ValidarURLBase(urlFinal, sv); err != nil {
+			if err := sapodata.ValidarURL(urlFinal, sv, apikeyFinal); err != nil {
 				return nil, errors.New(sv.Nome + ": " + err.Error())
 			}
 			grava[cfgServico(sv, "url_base")] = urlFinal
 		}
 		if sc.Ativo != nil {
 			if *sc.Ativo {
-				if !sapodata.ModoGateway() && (usuarioFinal == "" || !senhaFinal) {
-					return nil, errors.New(sv.Nome + ": informe o usuário e a senha do SAP antes de ativar")
+				if !apikeyFinal && (usuarioFinal == "" || !senhaFinal) {
+					return nil, errors.New(sv.Nome + ": informe a apikey do gateway (ou o usuário e a senha do SAP) antes de ativar")
 				}
-				if err := sapodata.ValidarURLBase(urlFinal, sv); err != nil {
+				if err := sapodata.ValidarURL(urlFinal, sv, apikeyFinal); err != nil {
 					return nil, errors.New(sv.Nome + ": " + err.Error())
 				}
 			}
@@ -286,7 +329,16 @@ func credencialSAP(m map[string]string, sv sapodata.Servico) sapodata.Config {
 			log.Printf("[SAP] Erro ao decifrar a senha do SAP: %v", err)
 		}
 	}
-	return sapodata.Config{URLBase: m[cfgServico(sv, "url_base")], Usuario: m[cfgSapUsuario], Senha: senha}.DoGateway()
+	apikey := ""
+	if cifrada := m[cfgSapApiKey]; cifrada != "" {
+		if txt, err := crypto.DecryptField(cifrada); err == nil {
+			apikey = txt
+		} else {
+			log.Printf("[SAP] Erro ao decifrar a apikey do gateway: %v", err)
+		}
+	}
+	return sapodata.Config{URLBase: m[cfgServico(sv, "url_base")], Usuario: m[cfgSapUsuario], Senha: senha,
+		APIKey: apikey, SapClient: m[cfgSapClient]}.DoGateway()
 }
 
 func guardarResultado(db *sql.DB, sv sapodata.Servico, res sapodata.Resultado, origem string, quando time.Time) {
@@ -395,8 +447,10 @@ func RotinaSAPDiaria(db *sql.DB, agora time.Time) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		var res sapodata.Resultado
-		if sv.Chave == sapodata.CentrosCusto.Chave && sapodata.ModoGateway() {
-			res = cargaCC(ctx, db, credencialSAP(m, sv), agora)
+		if cfg := credencialSAP(m, sv); sv.Chave == sapodata.CentrosCusto.Chave && cfg.APIKey != "" {
+			res = cargaCC(ctx, db, cfg, agora)
+		} else if sv.Chave == sapodata.ContasContabeis.Chave && cfg.APIKey != "" {
+			res = cargaGL(ctx, db, cfg)
 		} else {
 			res = sondaSAP(ctx, sv, credencialSAP(m, sv))
 		}

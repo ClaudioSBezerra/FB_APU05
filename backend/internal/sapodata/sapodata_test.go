@@ -46,7 +46,7 @@ func comServidor(t *testing.T, h http.HandlerFunc) Config {
 	srv := httptest.NewTLSServer(h)
 	t.Cleanup(srv.Close)
 	origV, origC := validarURL, novoCliente
-	validarURL = func(string, Servico) error { return nil }
+	validarURL = func(string, Servico, bool) error { return nil }
 	novoCliente = func() *http.Client {
 		c := srv.Client()
 		c.Timeout = 5 * time.Second

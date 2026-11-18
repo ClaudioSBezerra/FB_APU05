@@ -25,16 +25,7 @@ func ptr[T any](v T) *T { return &v }
 func TestValidarEntrada_SAP(t *testing.T) {
 	novo := func() configuracoesEntrada {
 		var in configuracoesEntrada
-		in.SAP = &struct {
-			Horario     *string `json:"horario"`
-			Usuario     *string `json:"usuario"`
-			Senha       *string `json:"senha"`
-			LimparSenha bool    `json:"limpar_senha"`
-			Servicos    map[string]struct {
-				Ativo   *bool   `json:"ativo"`
-				URLBase *string `json:"url_base"`
-			} `json:"servicos"`
-		}{}
+		in.SAP = &sapEntrada{}
 		return in
 	}
 	// horário
@@ -229,5 +220,54 @@ func TestRotinaSAPDiaria_SoRodaOQueEstaDevidoEAtivo(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestValidarEntrada_Gateway(t *testing.T) {
+	const urlGW = "http://10.131.1.80:8000/sap/qas/cost-center-read/"
+	// http de IP privado só vale com apikey (sem ela é o modo direto: https + domínio FC)
+	in := configuracoesEntrada{SAP: &sapEntrada{Servicos: map[string]struct {
+		Ativo   *bool   `json:"ativo"`
+		URLBase *string `json:"url_base"`
+	}{"cc": {URLBase: ptr(urlGW)}}}}
+	if _, err := validarEntrada(in, nil); err == nil {
+		t.Error("URL do gateway sem apikey deveria ser recusada")
+	}
+	in.SAP.ApiKey = ptr("chave-de-teste-123")
+	in.SAP.SapClient = ptr("300")
+	grava, err := validarEntrada(in, nil)
+	if err != nil {
+		t.Fatalf("com apikey a URL do gateway deveria valer: %v", err)
+	}
+	if grava[cfgSapApiKey] == "" || grava[cfgSapApiKey] == "chave-de-teste-123" {
+		t.Errorf("a apikey deve ser gravada criptografada: %q", grava[cfgSapApiKey])
+	}
+	if grava[cfgSapClient] != "300" || grava[cfgServico(sapodata.CentrosCusto, "url_base")] != urlGW {
+		t.Errorf("gravação inesperada: %v", grava)
+	}
+	// apikey já gravada (sem reenviar) também vale para a URL
+	in2 := configuracoesEntrada{SAP: &sapEntrada{Servicos: in.SAP.Servicos}}
+	if _, err := validarEntrada(in2, map[string]string{cfgSapApiKey: "cifrada"}); err != nil {
+		t.Errorf("apikey já gravada deveria bastar: %v", err)
+	}
+	// ativar exige credencial
+	ativo := configuracoesEntrada{SAP: &sapEntrada{Servicos: map[string]struct {
+		Ativo   *bool   `json:"ativo"`
+		URLBase *string `json:"url_base"`
+	}{"cc": {Ativo: ptr(true)}}}}
+	if _, err := validarEntrada(ativo, map[string]string{cfgServico(sapodata.CentrosCusto, "url_base"): urlCC}); err == nil {
+		t.Error("ativar sem credencial deveria ser recusado")
+	}
+	// apikey ruim e sap-client ruim
+	for _, bad := range []sapEntrada{{ApiKey: ptr("curta")}, {ApiKey: ptr("com espaço aqui")}, {SapClient: ptr("30x")}} {
+		b := bad
+		if _, err := validarEntrada(configuracoesEntrada{SAP: &b}, nil); err == nil {
+			t.Errorf("deveria recusar %+v", bad)
+		}
+	}
+	// limpar
+	grava, _ = validarEntrada(configuracoesEntrada{SAP: &sapEntrada{LimparApiKey: true}}, nil)
+	if v, ok := grava[cfgSapApiKey]; !ok || v != "" {
+		t.Errorf("limpar_apikey deveria zerar: %v", grava)
 	}
 }

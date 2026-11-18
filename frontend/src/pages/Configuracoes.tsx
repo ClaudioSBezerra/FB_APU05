@@ -28,7 +28,15 @@ interface ServicoSAP {
   ultimo_resultado?: ResultadoSAP;
 }
 interface Config {
-  sap: { horario: string; usuario: string; senha_definida: boolean; servicos: ServicoSAP[] };
+  sap: {
+    horario: string;
+    usuario: string;
+    senha_definida: boolean;
+    apikey_definida: boolean;
+    apikey_ambiente: boolean;
+    sap_client: string;
+    servicos: ServicoSAP[];
+  };
 }
 
 async function chamar<T>(url: string, init?: RequestInit): Promise<T> {
@@ -81,6 +89,8 @@ function Formulario({ data }: { data: Config }) {
   const [horario, setHorario] = useState(() => data.sap.horario || '06:00');
   const [usuario, setUsuario] = useState(() => data.sap.usuario);
   const [senha, setSenha] = useState('');
+  const [apikey, setApikey] = useState('');
+  const [sapClient, setSapClient] = useState(() => data.sap.sap_client);
   const [urls, setUrls] = useState<Record<string, string>>(() =>
     Object.fromEntries(data.sap.servicos.map((s) => [s.chave, s.url_base])),
   );
@@ -98,6 +108,7 @@ function Formulario({ data }: { data: Config }) {
     onSuccess: (nova) => {
       queryClient.setQueryData(['configuracoes'], nova);
       setSenha('');
+      setApikey('');
       toast.success('Configurações salvas');
     },
     onError: (err: Error) => toast.error(err.message),
@@ -120,11 +131,19 @@ function Formulario({ data }: { data: Config }) {
       servicos[s.chave] = { ativo: !!ativos[s.chave], url_base: (urls[s.chave] ?? '').trim() };
     }
     salvar.mutate({
-      sap: { horario, usuario: usuario.trim(), ...(senha ? { senha } : {}), servicos },
+      sap: {
+        horario,
+        usuario: usuario.trim(),
+        ...(senha ? { senha } : {}),
+        ...(apikey ? { apikey: apikey.trim() } : {}),
+        sap_client: sapClient.trim(),
+        servicos,
+      },
     });
   }
 
-  const temCredencial = data.sap.usuario !== '' && data.sap.senha_definida;
+  const temApikey = data.sap.apikey_definida || data.sap.apikey_ambiente;
+  const temCredencial = temApikey || (data.sap.usuario !== '' && data.sap.senha_definida);
 
   return (
     <div className="mx-auto grid max-w-3xl gap-8 p-6">
@@ -184,6 +203,61 @@ function Formulario({ data }: { data: Config }) {
           )}
         </p>
 
+        <div className="grid gap-3 rounded-md border bg-muted/30 p-4">
+          <div>
+            <h3 className="text-sm font-semibold">Gateway SAP (Kong) — apikey</h3>
+            <p className="text-xs text-muted-foreground">
+              Se a apikey estiver preenchida, o sistema lê o SAP pelo gateway interno (URL <code>http://10.131.1.80:8000/sap/…</code>) e
+              ignora o usuário e a senha acima. Sem apikey, usa o usuário e a senha direto no SAP.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-1.5 sm:col-span-2">
+              <Label htmlFor="sap-apikey">Apikey do gateway</Label>
+              <Input
+                id="sap-apikey"
+                type="password"
+                autoComplete="new-password"
+                value={apikey}
+                onChange={(e) => setApikey(e.target.value)}
+                placeholder={
+                  data.sap.apikey_definida
+                    ? '•••••••• (definida)'
+                    : data.sap.apikey_ambiente
+                      ? 'em uso a do servidor (variável de ambiente)'
+                      : 'não definida'
+                }
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="sap-client">Mandante (sap-client)</Label>
+              <Input
+                id="sap-client"
+                inputMode="numeric"
+                maxLength={3}
+                value={sapClient}
+                onChange={(e) => setSapClient(e.target.value)}
+                placeholder="300"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            A apikey é gravada criptografada e nunca é mostrada de volta. Deixe vazio para manter a atual.
+            {data.sap.apikey_definida && (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-foreground"
+                  onClick={() => salvar.mutate({ sap: { limpar_apikey: true, servicos: {} } })}
+                >
+                  Remover apikey
+                </button>
+              </>
+            )}
+          </p>
+        </div>
+
         <div className="grid gap-4">
           {data.sap.servicos.map((s) => (
             <div key={s.chave} className="grid gap-3 rounded-md border p-4">
@@ -223,7 +297,7 @@ function Formulario({ data }: { data: Config }) {
                   variant="outline"
                   onClick={() => testar.mutate(s.chave)}
                   disabled={!temCredencial || testar.isPending}
-                  title={temCredencial ? 'Faz uma leitura de 1 registro no SAP' : 'Salve o usuário e a senha antes de testar'}
+                  title={temCredencial ? 'Faz uma leitura de 1 registro no SAP' : 'Salve a apikey (ou o usuário e a senha) antes de testar'}
                 >
                   <PlugZap className="mr-1 size-3.5" />
                   {testar.isPending && testar.variables === s.chave ? 'Testando...' : 'Testar conexão'}

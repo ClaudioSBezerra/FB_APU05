@@ -48,3 +48,20 @@ O que vale para esta API e para a de centros de custo (decidido em 17/11/2026):
 
 O pedido completo de acesso ao SAP de produção (rede, DNS, usuário técnico, escopo e decisões) foi enviado ao
 Marlos, à Infra e ao Time TI SAP em 17/11/2026.
+
+## Gateway Kong e carga diária (implementado em 18/11/2026)
+
+Rota do gateway (QAS): serviço `sap-qas-gl-account-read` → `http://10.131.1.80:8000/sap/qas/gl-account-read/`
+(`?sap-client=300`, header `apikey`, GET). Mesmo mecanismo dos centros de custo (doc 05): a apikey e o mandante
+agora são informados em **Configurações → Gateway SAP** (gravados criptografados); a variável de ambiente
+`SAP_API_KEY`/`SAP_CLIENT` do servidor vale quando a tela não tem a chave.
+
+**Plano de contas.** A API devolve todos os planos do S/4HANA (QAS: 33 planos, 19.842 contas, inclusive planos-padrão
+de outros países). O da Ferreira Costa é o **`0050`** (10 dígitos): todas as 148 contas reais que já estavam no
+cadastro existem só nele. A carga lê só o plano `0050` (`SAP_GL_CHART` troca, para a virada de PRD), sem contas
+marcadas para eliminação nem bloqueadas para lançamento: **1.157 contas** (319 de resultado, o resto balanço).
+
+**O que roda às 06:00:** `sapodata.LerContas` (paginado, `to_Text`, nome = descrição longa em PT) e upsert em `contas`
+com `plano = 'BIFC'` (o plano das contas reais já existentes), por (plano, código), numa transação
+(`handlers/contas_sap_carga.go`). Zero contas ou erro = falha, nada gravado. A carga **não apaga** nada; a limpeza
+das contas antigas (sem referência e fora do SAP) foi feita uma vez, com backup, na primeira carga.

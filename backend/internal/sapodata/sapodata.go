@@ -71,14 +71,18 @@ type Config struct {
 	SapClient string
 }
 
-// ModoGateway diz se o SAP é lido pelo gateway interno (Kong, header apikey) em vez de direto no
-// SAP (Basic). Liga quando a variável SAP_API_KEY está definida no servidor.
+// ModoGateway diz se o servidor tem a chave do gateway no ambiente (SAP_API_KEY). A chave também pode
+// ser informada na tela Configurações (gravada criptografada): o que vale, em cada chamada, é
+// Config.APIKey preenchida — com ela o SAP é lido pelo gateway interno (Kong, header apikey) em vez de
+// direto no SAP (Basic).
 func ModoGateway() bool { return strings.TrimSpace(os.Getenv("SAP_API_KEY")) != "" }
 
-// DoGateway completa cfg com a chave e o mandante lidos do ambiente (só em modo gateway).
+// DoGateway completa cfg com a chave e o mandante do ambiente, mas só onde a tela não informou.
 func (c Config) DoGateway() Config {
-	if ModoGateway() {
+	if c.APIKey == "" {
 		c.APIKey = strings.TrimSpace(os.Getenv("SAP_API_KEY"))
+	}
+	if c.SapClient == "" && c.APIKey != "" {
 		c.SapClient = strings.TrimSpace(os.Getenv("SAP_CLIENT"))
 	}
 	return c
@@ -98,8 +102,12 @@ var sufixosPermitidos = []string{".ferreiracosta.com", ".ferreiracosta.com.br"}
 // ValidarURLBase aceita só https://host[:porta]/caminho, sem usuário embutido, sem IP literal e com
 // host sob um domínio da Ferreira Costa — a URL é digitada por um administrador e o servidor a chama
 // (evita usar o sistema como ponte para outros destinos).
-func ValidarURLBase(raw string, sv Servico) error {
-	if ModoGateway() {
+func ValidarURLBase(raw string, sv Servico) error { return ValidarURL(raw, sv, ModoGateway()) }
+
+// ValidarURL valida a URL conforme o modo: gateway (apikey; http ou https, só rede interna) ou direto
+// (https + Basic, só domínio da Ferreira Costa e o serviço certo).
+func ValidarURL(raw string, sv Servico, gateway bool) error {
+	if gateway {
 		return validarURLGateway(raw)
 	}
 	u, err := url.Parse(strings.TrimSpace(raw))
@@ -195,7 +203,7 @@ func autenticar(req *http.Request, cfg Config) {
 
 // Pontos de troca para teste (o servidor de teste não é de um domínio da FC e usa certificado próprio).
 var (
-	validarURL  = ValidarURLBase
+	validarURL  = ValidarURL
 	novoCliente = func() *http.Client {
 		return &http.Client{
 			Timeout:   20 * time.Second,
@@ -212,7 +220,7 @@ func Sonda(ctx context.Context, sv Servico, cfg Config) Resultado {
 	res := func(ok bool, total int, status int, msg string) Resultado {
 		return Resultado{OK: ok, Total: total, HTTPStatus: status, Mensagem: msg, DuracaoMs: time.Since(ini).Milliseconds()}
 	}
-	if err := validarURL(cfg.URLBase, sv); err != nil {
+	if err := validarURL(cfg.URLBase, sv, cfg.APIKey != ""); err != nil {
 		return res(false, 0, 0, err.Error())
 	}
 	if cfg.APIKey == "" && (cfg.Usuario == "" || cfg.Senha == "") {

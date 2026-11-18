@@ -132,3 +132,30 @@ func TestSonda_ModoGatewayUsaApikeyENaoBasic(t *testing.T) {
 		t.Fatalf("gateway: %+v basic=%v key=%q q=%s", r, basic, key, query)
 	}
 }
+
+func TestLerContas_FiltraPlanoEUsaNomePT(t *testing.T) {
+	var query string
+	cfg := comServidor(t, func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"d":{"results":[
+		 {"ChartOfAccounts":"0050","GLAccount":"4110100005","IsProfitLossAccount":true,"to_Text":{"results":[{"Language":"EN","GLAccountName":"Freight","GLAccountLongName":""},{"Language":"PT","GLAccountName":"Frete","GLAccountLongName":"Custo Frete Revenda"}]}},
+		 {"ChartOfAccounts":"0050","GLAccount":"4110100005","IsProfitLossAccount":true,"to_Text":{"results":[]}},
+		 {"ChartOfAccounts":"0050","GLAccount":" 1110100001 ","IsProfitLossAccount":false,"to_Text":{"results":[{"Language":"PT","GLAccountName":"Caixa","GLAccountLongName":""}]}}]}}`))
+	})
+	cfg.APIKey = "k"
+	cs, err := LerContas(context.Background(), cfg, "0050")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs) != 2 || cs[0].Nome != "Custo Frete Revenda" || cs[1].Codigo != "1110100001" || cs[1].Nome != "Caixa" || cs[1].ResultadoP {
+		t.Fatalf("leitura inesperada: %+v", cs)
+	}
+	for _, esperado := range []string{"ChartOfAccounts%20eq%20%270050%27", "AccountIsMarkedForDeletion%20eq%20false", "AccountIsBlockedForPosting%20eq%20false"} {
+		if !strings.Contains(query, esperado) {
+			t.Errorf("filtro sem %q: %s", esperado, query)
+		}
+	}
+	if _, err := LerContas(context.Background(), cfg, "0050' or '1'='1"); err == nil {
+		t.Error("plano com aspas deveria ser recusado")
+	}
+}
