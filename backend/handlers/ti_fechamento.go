@@ -83,6 +83,7 @@ func RotinaFechamentoTI(db *sql.DB, agora time.Time) {
 	}
 	assunto, corpo := corpoEmailFechamento(reg.Mes, lembra && !criou)
 	para := destinatariosFechamento(db)
+	log.Printf("[TI-Fechamento] Enviando %q (mês %s) para %d destinatário(s): %s", assunto, reg.Mes, len(para), strings.Join(para, ", "))
 	if err := enviarEmailTI(para, assunto, corpo); err != nil {
 		// não marca como enviado: tenta de novo na próxima rodada (só o lembrete; o 1º aviso também)
 		log.Printf("[TI-Fechamento] E-mail do fechamento de %s não enviado: %v", reg.Mes, err)

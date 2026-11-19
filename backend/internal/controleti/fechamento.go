@@ -135,6 +135,10 @@ func RodarFechamento(db *sql.DB, agora time.Time) (reg *FechamentoReg, criou, le
 		reg, err = UltimoFechamento(db)
 		return reg, true, false, err
 	}
+	// 1º aviso que não saiu (SMTP fora do ar, ou reativado à mão): tenta de novo, mesmo com o mês já fechado
+	if reg.Mes == mes && !reg.AvisoEnviado {
+		return reg, true, false, nil
+	}
 	if reg.Mes != mes || reg.Status == "fechado" {
 		return reg, false, false, nil
 	}
