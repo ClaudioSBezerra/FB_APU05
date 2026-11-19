@@ -198,11 +198,16 @@ aberto sai como Provisório. Para imprimir de dentro do iframe do painel, o sand
 (sem rede, sem formulários e sem scripts de fora continuam valendo pela CSP do nginx). Gerar e enviar o PDF automaticamente
 depois do fechamento é a fase servidor (não implementada): o envio é **manual pelo Welton**.
 
-**Enviar resumo por e-mail** (19/11/2026): na aba Painel, o ADM tem o botão *Enviar resumo por e-mail*. O PDF é gerado pelo navegador
-(Exportar resumo (PDF) → Salvar como PDF); no diálogo o ADM escolhe o destinatário, o assunto, a mensagem e **anexa o PDF salvo**.
+**Enviar resumo por e-mail** (19/11/2026): na Visão geral do painel, ao lado de *Exportar resumo (PDF)*, o ADM tem o botão
+*Enviar por e-mail* (some para o gestor). O PDF é gerado pelo navegador (Exportar resumo (PDF) → Salvar como PDF); o botão abre
+um diálogo do sistema já com o mês e o gestor escolhidos no painel (assunto e destinatário sugeridos): o ADM confere,
+escreve a mensagem e **anexa o PDF salvo**.
 `POST /api/ti/enviar-resumo` (só ADM) confere que o arquivo é um PDF (até 8 MB) e que o destinatário é do módulo (ADM ou
 gestor ativo, lista em `GET /api/ti/destinatarios`) — não é um relé de e-mail livre —, envia pelo SMTP com o PDF anexado e
 registra quem enviou, para quem e quando em `ti_envios_resumo` (o PDF não é guardado).
+
+**Atualizar o painel quando o Welton mandar uma versão nova:** `python3 -I scripts/painel_ti_adaptar.py "Painel de Despesas - TI.html"`
+refaz a adaptação (CSS/HTML/JS, camada de mensagens, botão de e-mail) em `frontend/public/painel-ti/`; depois conferir no navegador.
 
 ## Próximas fases
 

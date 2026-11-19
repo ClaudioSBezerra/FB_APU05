@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Mail, Upload } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -535,7 +535,7 @@ function ConferenciaSap({ onImportar }: { onImportar: () => void }) {
 // sistema nem chama a API) e uma CSP restrita no nginx (sem rede). Os dados chegam
 // por postMessage — o painel avisa "fcx-pronto" e recebe "fcx-modelo". Fonte da
 // verdade do código: frontend/public/painel-ti/ (ver docs/referencia/04-CONTROLE-TI.md).
-function Painel({ modelo, eu, onImportar }: { modelo: TiModelo; eu?: TiEu; onImportar: () => void }) {
+function Painel({ modelo, eu, onImportar, onEnviarResumo }: { modelo: TiModelo; eu?: TiEu; onImportar: () => void; onEnviarResumo: (c: ContextoResumo) => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
 
   // perfil para a tela do painel (esconder o que o gestor não usa); quem garante o acesso é o servidor,
@@ -553,10 +553,11 @@ function Painel({ modelo, eu, onImportar }: { modelo: TiModelo; eu?: TiEu; onImp
       if (e.source !== frame.current?.contentWindow) return;
       if (e.data?.type === 'fcx-pronto') enviar();
       if (e.data?.type === 'fcx-importar') onImportar();
+      if (e.data?.type === 'fcx-enviar-resumo' && eu?.nivel === 'adm') onEnviarResumo(e.data as ContextoResumo);
     }
     window.addEventListener('message', aoReceber);
     return () => window.removeEventListener('message', aoReceber);
-  }, [enviar, onImportar]);
+  }, [enviar, onImportar, onEnviarResumo, eu]);
 
   // dados novos (depois de importar uma planilha) com o painel já aberto
   useEffect(() => {
@@ -794,8 +795,26 @@ interface Destinatario {
   ccs: string;
 }
 
-function EnviarResumo() {
-  const [aberto, setAberto] = useState(false);
+// O botão "Enviar por e-mail" fica NO PAINEL, ao lado de "Exportar resumo (PDF)": ele avisa o sistema e este abre o diálogo
+// já com o mês e o gestor escolhidos lá.
+export interface ContextoResumo {
+  mes: string;
+  mesRotulo: string;
+  gest: string;
+  gestNome: string;
+  quem: string;
+}
+
+// gestor do painel -> começo do e-mail do usuário correspondente (para já deixar o destinatário escolhido)
+const EMAIL_DO_GESTOR: Record<string, string> = {
+  carvalho: 'andre.carvalho@',
+  marlos: 'marlos.waquim@',
+  salvio: 'salvio.viana@',
+  klayton: 'klayton.gomes@',
+};
+
+function EnviarResumo({ ctx, onFechar }: { ctx: ContextoResumo | null; onFechar: () => void }) {
+  const aberto = ctx !== null;
   const [para, setPara] = useState('');
   const [assunto, setAssunto] = useState('Resumo de despesas de TI');
   const [mensagem, setMensagem] = useState('');
@@ -805,6 +824,15 @@ function EnviarResumo() {
     queryFn: () => pedir<{ destinatarios: Destinatario[] }>('/api/ti/destinatarios'),
     enabled: aberto,
   });
+  // ao abrir: assunto com o mês/gestor e destinatário sugerido (o ADM pode trocar)
+  useEffect(() => {
+    if (!ctx) return;
+    setAssunto(`Resumo de despesas de TI · ${ctx.mesRotulo}${ctx.gestNome ? ` · ${ctx.gestNome} (${ctx.quem})` : ''}`);
+    setArquivo(null);
+    const prefixo = EMAIL_DO_GESTOR[ctx.gest];
+    const achado = prefixo ? data?.destinatarios.find((d) => d.email.toLowerCase().startsWith(prefixo)) : undefined;
+    setPara(achado?.email ?? '');
+  }, [ctx, data]);
   const enviar = useMutation({
     mutationFn: async () => {
       const corpo = new FormData();
@@ -816,7 +844,7 @@ function EnviarResumo() {
     },
     onSuccess: (r) => {
       toast.success(`Resumo enviado para ${r.destinatario}`);
-      setAberto(false);
+      onFechar();
       setArquivo(null);
       setMensagem('');
     },
@@ -827,17 +855,13 @@ function EnviarResumo() {
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setAberto(true)}>
-        <Mail />
-        Enviar resumo por e-mail
-      </Button>
-      <Dialog open={aberto} onOpenChange={setAberto}>
+      <Dialog open={aberto} onOpenChange={(o) => !o && onFechar()}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Enviar o resumo por e-mail</DialogTitle>
             <DialogDescription>
-              Primeiro gere o PDF: na Visão geral escolha o mês fechado e o gestor, clique em <strong>Exportar resumo (PDF)</strong> e salve como PDF. Depois anexe aqui o
-              arquivo salvo.
+              Resumo de <strong>{ctx?.mesRotulo}</strong> · {ctx?.gestNome ? `${ctx.gestNome} (${ctx.quem})` : ctx?.quem}. Gere o PDF antes (<strong>Exportar resumo (PDF)</strong>,
+              salvar como PDF) e anexe aqui o arquivo salvo.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3">
@@ -872,7 +896,7 @@ function EnviarResumo() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setAberto(false)}>
+            <Button variant="ghost" onClick={onFechar}>
               Cancelar
             </Button>
             <Button onClick={() => enviar.mutate()} disabled={!pronto || enviar.isPending}>
@@ -900,6 +924,7 @@ export default function ControleTI() {
     queryKey: ['ti-modelo'],
     queryFn: () => pedir<TiModelo>('/api/ti/modelo'),
   });
+  const [resumo, setResumo] = useState<ContextoResumo | null>(null);
   const gestor = eu?.nivel === 'gestor';
   const abasVisiveis = gestor ? ABAS.filter((a) => a.id === 'painel' || a.id === 'lancamentos') : ABAS;
 
@@ -915,7 +940,6 @@ export default function ControleTI() {
             {gestor && ' Você vê só os seus centros de custo (somente leitura).'}
           </p>
         </div>
-        {eu?.nivel === 'adm' && aba === 'painel' && <EnviarResumo />}
         {modelo && (
           <p className="text-xs text-fg-helper">
             Mês fechado: <span className="font-medium text-fg-secondary">{rotuloMes(modelo.meta.lastClosed)}</span> · fecha sozinho a partir do dia 6
@@ -973,10 +997,11 @@ export default function ControleTI() {
         </div>
       )}
 
-      {modelo && !vazio && aba === 'painel' && <Painel modelo={modelo} eu={eu} onImportar={() => setAba('importar')} />}
+      {modelo && !vazio && aba === 'painel' && <Painel modelo={modelo} eu={eu} onImportar={() => setAba('importar')} onEnviarResumo={setResumo} />}
       {modelo && !vazio && aba === 'lancamentos' && <Lancamentos modelo={modelo} />}
       {modelo && !vazio && !gestor && aba === 'conferencia' && <ConferenciaSap onImportar={() => setAba('importar')} />}
       {modelo && !gestor && aba === 'importar' && <Importar modelo={modelo} />}
+      {eu?.nivel === 'adm' && <EnviarResumo ctx={resumo} onFechar={() => setResumo(null)} />}
     </div>
   );
 }

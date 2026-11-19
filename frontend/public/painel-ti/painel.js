@@ -65,7 +65,7 @@ function setAcl(eu){
   else { const ccs = new Set((eu.ccs||[]).map(String)), gs = new Set((eu.empresas||[]).map(e=>GRP_EMP[String(e).toLowerCase()]||e)), dv = new Set((eu.divisoes||[]).map(String));
     ACL.perfil='gestor'; ACL.ok = r => ccs.has(String(r.cc)) || gs.has(r.grp) || dv.has(String(r.div)); }
   const g = ACL.perfil==='gestor';
-  ['#btnMain','#btnSrv','#closeBanner','#prevBanner'].forEach(q=>{ const e=$(q); if (e && g) e.style.display='none'; });
+  ['#btnMain','#btnSrv','#closeBanner','#prevBanner','#btnMail'].forEach(q=>{ const e=$(q); if (e && g) e.style.display='none'; });
   const ct = $('#tabs button[data-v="conf"]'); if (ct) ct.style.display = g ? 'none' : '';
   if (g && S.view==='conf') S.view='geral';
 }
@@ -1425,6 +1425,13 @@ function setPrev(){}
 const API = { url:'', hosted:true };
 const irImportar = ()=> window.parent.postMessage({ type:'fcx-importar' }, '*');
 ['#btnLoad','#btnMain','#btnPlan','#btnSync','#btnFbl'].forEach(q=>{ const b=$(q); if (b) b.onclick = irImportar; });
+// "Enviar por e-mail": o painel não fala com o servidor; avisa o sistema, que abre o diálogo de envio
+// já com o mês e o gestor escolhidos aqui (o PDF é anexado lá, depois de salvo).
+if ($('#btnMail')) $('#btnMail').onclick = ()=>{
+  const D = IDX.D || compute(), mes = S.mes || (D.ymY.filter(m=>m<=M.meta.lastClosed).pop() || D.ymY[0]);
+  const g = GESTORES.find(x=>x.k===S.gest);
+  window.parent.postMessage({ type:'fcx-enviar-resumo', mes, mesRotulo: ymLabel(mes), gest: S.gest||'', gestNome: g ? g.nome : '', quem: g ? g.desc : (S.cc ? 'CC '+S.cc : 'TI') }, '*');
+};
 window.addEventListener('message', e=>{
   if (e.source !== window.parent) return;
   const d = e.data; if (!d) return;
