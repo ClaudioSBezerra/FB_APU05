@@ -8,16 +8,21 @@ package services
 // SendPasswordResetEmail) foi replicado.
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"html"
 	"log"
 	"mime"
+	"net/mail"
 	"net/smtp"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // EmailConfig contém a configuração SMTP, lida do ambiente a cada chamada
@@ -114,7 +119,7 @@ func SendPasswordResetEmail(email, resetToken string) error {
 	}
 	resetLink := fmt.Sprintf("%s/reset-senha?token=%s", appURL, resetToken)
 
-	message := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: Modulo de Controladoria - Redefinicao de Senha\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"+
+	message := fmt.Sprintf("From: %s\r\nTo: %s\r\n"+cabecalhosPadrao(config.From)+"Subject: Modulo de Controladoria - Redefinicao de Senha\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"+
 		`<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
@@ -168,8 +173,8 @@ func SendHTMLEmail(to []string, subject, bodyHTML string) error {
 			return fmt.Errorf("destinatário inválido")
 		}
 	}
-	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
-		config.From, strings.Join(to, ", "), mime.QEncoding.Encode("utf-8", subject), bodyHTML)
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\n%sSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
+		config.From, strings.Join(to, ", "), cabecalhosPadrao(config.From), mime.QEncoding.Encode("utf-8", subject), bodyHTML)
 	var err error
 	if config.Port == 465 {
 		err = sendMailSSL(config, to, []byte(msg))
@@ -233,11 +238,17 @@ func nomeAnexoSeguro(nome string) string {
 
 func buildMessageWithAttachment(from string, to []string, subject, bodyHTML, filename, contentType string, data []byte) []byte {
 	var b strings.Builder
-	boundary := fmt.Sprintf("fcx-%x", sha256.Sum256(append([]byte(subject), data[:min(len(data), 64)]...)))[:36]
+	sum := sha256.Sum256(append([]byte(subject), data[:min(len(data), 64)]...))
+	boundary := fmt.Sprintf("fcx-%x", sum)[:36]
+	alt := "alt-" + boundary[4:]
 	nome := nomeAnexoSeguro(filename)
-	fmt.Fprintf(&b, "From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\n", from, strings.Join(to, ", "), mime.QEncoding.Encode("utf-8", subject))
+	fmt.Fprintf(&b, "From: %s\r\nTo: %s\r\n%sSubject: %s\r\nMIME-Version: 1.0\r\n", from, strings.Join(to, ", "), cabecalhosPadrao(from), mime.QEncoding.Encode("utf-8", subject))
 	fmt.Fprintf(&b, "Content-Type: multipart/mixed; boundary=%q\r\n\r\n", boundary)
-	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n", boundary, wrap76(base64.StdEncoding.EncodeToString([]byte(bodyHTML))))
+	// corpo: texto simples + HTML (multipart/alternative), como os clientes de e-mail enviam
+	fmt.Fprintf(&b, "--%s\r\nContent-Type: multipart/alternative; boundary=%q\r\n\r\n", boundary, alt)
+	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n", alt, wrap76(base64.StdEncoding.EncodeToString([]byte(textoSimples(bodyHTML)))))
+	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n", alt, wrap76(base64.StdEncoding.EncodeToString([]byte(bodyHTML))))
+	fmt.Fprintf(&b, "--%s--\r\n", alt)
 	fmt.Fprintf(&b, "--%s\r\nContent-Type: %s; name=%q\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=%q\r\n\r\n%s\r\n", boundary, contentType, mime.QEncoding.Encode("utf-8", nome), mime.QEncoding.Encode("utf-8", nome), wrap76(base64.StdEncoding.EncodeToString(data)))
 	fmt.Fprintf(&b, "--%s--\r\n", boundary)
 	return []byte(b.String())
@@ -252,4 +263,27 @@ func wrap76(s string) string {
 	}
 	out.WriteString(s)
 	return out.String()
+}
+
+// cabecalhosPadrao devolve Date e Message-ID (RFC 5322). Sem eles, filtros como o do Microsoft 365 pontuam a mensagem
+// como suspeita; o domínio do Message-ID é o do remetente.
+func cabecalhosPadrao(from string) string {
+	dominio := "localhost"
+	if a, err := mail.ParseAddress(from); err == nil {
+		if i := strings.LastIndex(a.Address, "@"); i >= 0 {
+			dominio = a.Address[i+1:]
+		}
+	}
+	var r [16]byte
+	_, _ = rand.Read(r[:])
+	return fmt.Sprintf("Date: %s\r\nMessage-ID: <%x@%s>\r\n", time.Now().Format(time.RFC1123Z), r, dominio)
+}
+
+// textoSimples gera a versão texto de um corpo HTML (a parte text/plain do multipart/alternative).
+var reTag = regexp.MustCompile(`(?s)<[^>]*>`)
+
+func textoSimples(h string) string {
+	h = strings.NewReplacer("</p>", "\n\n", "<br>", "\n", "<br/>", "\n", "</div>", "\n").Replace(h)
+	t := html.UnescapeString(reTag.ReplaceAllString(h, ""))
+	return strings.TrimSpace(regexp.MustCompile(`\n{3,}`).ReplaceAllString(t, "\n\n"))
 }

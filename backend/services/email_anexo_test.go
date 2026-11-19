@@ -27,8 +27,23 @@ func TestBuildMessageWithAttachment(t *testing.T) {
 	}
 	mr := multipart.NewReader(m.Body, params["boundary"])
 	p1, err := mr.NextPart()
-	if err != nil || !strings.HasPrefix(p1.Header.Get("Content-Type"), "text/html") {
-		t.Fatalf("1ª parte deve ser o corpo HTML: %v", err)
+	if err != nil || !strings.HasPrefix(p1.Header.Get("Content-Type"), "multipart/alternative") {
+		t.Fatalf("1ª parte deve ser o corpo (multipart/alternative): %v", err)
+	}
+	_, ap, _ := mime.ParseMediaType(p1.Header.Get("Content-Type"))
+	ar := multipart.NewReader(p1, ap["boundary"])
+	txt, _ := ar.NextPart()
+	if txt == nil || !strings.HasPrefix(txt.Header.Get("Content-Type"), "text/plain") {
+		t.Fatalf("o corpo deve ter a versão texto")
+	}
+	if tb, _ := io.ReadAll(base64Decoder(txt)); strings.TrimSpace(string(tb)) != "Olá" { // lê antes da próxima parte
+		t.Errorf("texto simples: %q", tb)
+	}
+	if htm, _ := ar.NextPart(); htm == nil || !strings.HasPrefix(htm.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("o corpo deve ter a versão HTML")
+	}
+	if m.Header.Get("Date") == "" || !strings.HasSuffix(strings.TrimSpace(m.Header.Get("Message-ID")), "@x.com>") {
+		t.Errorf("faltam Date/Message-ID: %q %q", m.Header.Get("Date"), m.Header.Get("Message-ID"))
 	}
 	p2, err := mr.NextPart()
 	if err != nil {
