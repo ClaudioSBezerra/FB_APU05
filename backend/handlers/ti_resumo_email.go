@@ -36,18 +36,24 @@ var enviarPDFPorEmail = services.SendHTMLEmailWithAttachment
 type destinatarioTI struct {
 	Nome  string `json:"nome"`
 	Email string `json:"email"`
-	Tipo  string `json:"tipo"` // adm | gestor
+	Tipo  string `json:"tipo"` // adm | gestor | extra (e-mail externo cadastrado em ti_destinatarios_extra)
 	CCs   string `json:"ccs"`  // escopo do gestor, p/ a tela (ex.: "6720, 6150, 6810 · RetailX")
 }
 
 func listarDestinatariosTI(db *sql.DB) ([]destinatarioTI, error) {
 	rows, err := db.Query(`
-		SELECT u.nome, u.email, u.controle_ti,
-		       COALESCE((SELECT string_agg(s.valor || CASE WHEN s.tipo = 'grupo' THEN ' (grupo)' ELSE '' END, ', ' ORDER BY s.tipo, s.valor)
-		                   FROM ti_gestor_escopo s WHERE s.usuario_id = u.id), '')
-		FROM usuarios u
-		WHERE u.ativo AND (u.controle_ti OR EXISTS (SELECT 1 FROM ti_gestor_escopo s WHERE s.usuario_id = u.id))
-		ORDER BY u.controle_ti DESC, u.nome`)
+		SELECT nome, email, tipo, ccs FROM (
+		  SELECT u.nome, u.email, CASE WHEN u.controle_ti THEN 'adm' ELSE 'gestor' END AS tipo,
+		         COALESCE((SELECT string_agg(s.valor || CASE WHEN s.tipo = 'grupo' THEN ' (grupo)' ELSE '' END, ', ' ORDER BY s.tipo, s.valor)
+		                     FROM ti_gestor_escopo s WHERE s.usuario_id = u.id), '') AS ccs,
+		         CASE WHEN u.controle_ti THEN 0 ELSE 1 END AS ord
+		    FROM usuarios u
+		   WHERE u.ativo AND (u.controle_ti OR EXISTS (SELECT 1 FROM ti_gestor_escopo s WHERE s.usuario_id = u.id))
+		  UNION ALL
+		  SELECT CASE WHEN e.nome = '' THEN e.email ELSE e.nome END, e.email, 'extra', '', 2
+		    FROM ti_destinatarios_extra e
+		   WHERE e.ativo AND NOT EXISTS (SELECT 1 FROM usuarios u WHERE lower(u.email) = e.email AND u.ativo)
+		) t ORDER BY ord, nome`)
 	if err != nil {
 		return nil, err
 	}
@@ -55,13 +61,8 @@ func listarDestinatariosTI(db *sql.DB) ([]destinatarioTI, error) {
 	out := []destinatarioTI{}
 	for rows.Next() {
 		var d destinatarioTI
-		var adm bool
-		if err := rows.Scan(&d.Nome, &d.Email, &adm, &d.CCs); err != nil {
+		if err := rows.Scan(&d.Nome, &d.Email, &d.Tipo, &d.CCs); err != nil {
 			return nil, err
-		}
-		d.Tipo = "gestor"
-		if adm {
-			d.Tipo = "adm"
 		}
 		out = append(out, d)
 	}

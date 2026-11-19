@@ -32,9 +32,10 @@ func formResumo(t *testing.T, campos map[string]string, nome, conteudo string) (
 }
 
 func esperaDestinatarios(mock sqlmock.Sqlmock) {
-	mock.ExpectQuery(regexp.QuoteMeta(sqlDestinatariosTI)).WillReturnRows(sqlmock.NewRows([]string{"nome", "email", "controle_ti", "ccs"}).
-		AddRow("Claudio", "claudio.bezerra@ferreiracosta.com.br", true, "").
-		AddRow("Marlos", "marlos.waquim@ferreiracosta.com.br", false, "6710"))
+	mock.ExpectQuery(regexp.QuoteMeta(sqlDestinatariosTI)).WillReturnRows(sqlmock.NewRows([]string{"nome", "email", "tipo", "ccs"}).
+		AddRow("Claudio", "claudio.bezerra@ferreiracosta.com.br", "adm", "").
+		AddRow("Marlos", "marlos.waquim@ferreiracosta.com.br", "gestor", "6710").
+		AddRow("claudiosousadebezerra@gmail.com", "claudiosousadebezerra@gmail.com", "extra", ""))
 }
 
 func TestEnviarResumo_Sucesso(t *testing.T) {
@@ -67,6 +68,23 @@ func TestEnviarResumo_Sucesso(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestEnviarResumo_DestinatarioExtraPodeReceber(t *testing.T) {
+	db, mock := newSQLMock(t)
+	orig := enviarPDFPorEmail
+	t.Cleanup(func() { enviarPDFPorEmail = orig })
+	var para []string
+	enviarPDFPorEmail = func(to []string, _, _, _, _ string, _ []byte) error { para = to; return nil }
+	esperaPermissaoTI(mock, true)
+	esperaDestinatarios(mock)
+	mock.ExpectExec("INSERT INTO ti_envios_resumo").WillReturnResult(sqlmock.NewResult(1, 1))
+	corp, ct := formResumo(t, map[string]string{"destinatario": "claudiosousadebezerra@gmail.com"}, "r.pdf", "%PDF-1.4\nxxxx")
+	rec := httptest.NewRecorder()
+	TIEnviarResumoHandler(db)(rec, reqTI(http.MethodPost, "/api/ti/enviar-resumo", corp, ct))
+	if rec.Code != http.StatusOK || len(para) != 1 || para[0] != "claudiosousadebezerra@gmail.com" {
+		t.Fatalf("status=%d para=%v corpo=%s", rec.Code, para, rec.Body.String())
 	}
 }
 

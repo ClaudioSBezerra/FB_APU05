@@ -792,7 +792,7 @@ function Importar({ modelo }: { modelo: TiModelo }) {
 interface Destinatario {
   nome: string;
   email: string;
-  tipo: 'adm' | 'gestor';
+  tipo: 'adm' | 'gestor' | 'extra';
   ccs: string;
 }
 
@@ -893,7 +893,7 @@ function EnviarResumo({ ctx, onFechar }: { ctx: ContextoResumo | null; onFechar:
                   {(data?.destinatarios ?? []).map((d) => (
                     <SelectItem key={d.email} value={d.email}>
                       {d.nome} · {d.email}
-                      {d.tipo === 'gestor' && d.ccs ? ` (${d.ccs})` : d.tipo === 'adm' ? ' (ADM)' : ''}
+                      {d.tipo === 'gestor' && d.ccs ? ` (${d.ccs})` : d.tipo === 'adm' ? ' (ADM)' : d.tipo === 'extra' ? ' (externo)' : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>

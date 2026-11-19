@@ -205,7 +205,7 @@ renderizado num iframe sem scripts) → o diálogo já abre com o PDF anexado, o
 escolhido) → escolher quem recebe e **Enviar**. O PDF sai como imagem das páginas A4 (sem texto selecionável; ~1 MB),
 quebrando a página sem cortar tabela nem deixar título/cabeçalho sozinho. Para um PDF vetorial, use o *Exportar resumo (PDF)*.
 `POST /api/ti/enviar-resumo` (só ADM) confere que o arquivo é um PDF (até 8 MB) e que o destinatário é do módulo (ADM ou
-gestor ativo, lista em `GET /api/ti/destinatarios`) — não é um relé de e-mail livre —, envia pelo SMTP com o PDF anexado e
+gestor ativo, ou um e-mail cadastrado em `ti_destinatarios_extra`; lista em `GET /api/ti/destinatarios`) — não é um relé de e-mail livre —, envia pelo SMTP com o PDF anexado e
 registra quem enviou, para quem e quando em `ti_envios_resumo` (o PDF não é guardado).
 
 **Atualizar o painel quando o Welton mandar uma versão nova:** `python3 -I scripts/painel_ti_adaptar.py "Painel de Despesas - TI.html"`
