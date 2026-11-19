@@ -144,6 +144,7 @@ func initSAPRotinaAsync() {
 		for range ticker.C {
 			if database := getDBApp(); database != nil {
 				handlers.RotinaSAPDiaria(database, time.Now())
+				handlers.RotinaFechamentoTI(database, time.Now())
 			}
 		}
 	}()
@@ -475,6 +476,7 @@ func main() {
 	http.HandleFunc("PUT /api/admin/configuracoes", handlers.RequireAuth(withDB(handlers.ConfiguracoesHandler), "administrador"))
 	http.HandleFunc("POST /api/admin/configuracoes/sap/{servico}/testar", handlers.RequireAuth(withDB(handlers.SAPTestarHandler), "administrador"))
 	http.HandleFunc("GET /api/ti/modelo", handlers.RequireAuth(withDB(handlers.TIModeloHandler), ""))
+	http.HandleFunc("GET /api/ti/eu", handlers.RequireAuth(withDB(handlers.TIEuHandler), ""))
 	http.HandleFunc("POST /api/ti/importar", handlers.RequireAuth(withDB(handlers.TIImportarHandler), ""))
 	http.HandleFunc("GET /api/ti/conferencia", handlers.RequireAuth(withDB(handlers.TIConferenciaHandler), ""))
 

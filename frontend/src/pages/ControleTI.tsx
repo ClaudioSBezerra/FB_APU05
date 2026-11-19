@@ -51,7 +51,7 @@ interface ResumoSap {
   ultimo_mes: string;
 }
 
-type TipoArquivo = 'forecast' | 'ksb1' | 'ksb2' | 'fbl1n';
+type TipoArquivo = 'forecast' | 'despesas' | 'orcamento' | 'ksb1' | 'ksb2' | 'fbl1n';
 
 interface ResultadoArquivo {
   arquivo: string;
@@ -65,6 +65,8 @@ interface ResultadoArquivo {
 
 const ROTULO_TIPO: Record<TipoArquivo, string> = {
   forecast: 'Planilha Forecast',
+  despesas: 'Despesas TI',
+  orcamento: 'Orçamento TI',
   ksb1: 'KSB1 · realizado',
   ksb2: 'KSB2 · compromissado',
   fbl1n: 'FBL1N · pagamentos',
@@ -532,12 +534,17 @@ function ConferenciaSap({ onImportar }: { onImportar: () => void }) {
 // sistema nem chama a API) e uma CSP restrita no nginx (sem rede). Os dados chegam
 // por postMessage — o painel avisa "fcx-pronto" e recebe "fcx-modelo". Fonte da
 // verdade do código: frontend/public/painel-ti/ (ver docs/referencia/04-CONTROLE-TI.md).
-function Painel({ modelo, onImportar }: { modelo: TiModelo; onImportar: () => void }) {
+function Painel({ modelo, eu, onImportar }: { modelo: TiModelo; eu?: TiEu; onImportar: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
 
+  // perfil para a tela do painel (esconder o que o gestor não usa); quem garante o acesso é o servidor,
+  // que já devolve o modelo filtrado pelos CCs do gestor
   const enviar = useCallback(() => {
-    frame.current?.contentWindow?.postMessage({ type: 'fcx-modelo', modelo }, '*');
-  }, [modelo]);
+    const alvo = frame.current?.contentWindow;
+    const perfil = eu?.nivel === 'gestor' ? { perfil: 'gestor', ccs: eu.ccs, empresas: eu.grupos } : { perfil: 'adm' };
+    alvo?.postMessage({ type: 'fcx-eu', eu: perfil }, '*');
+    alvo?.postMessage({ type: 'fcx-modelo', modelo }, '*');
+  }, [modelo, eu]);
 
   useEffect(() => {
     function aoReceber(e: MessageEvent) {
@@ -614,7 +621,14 @@ function Importar({ modelo }: { modelo: TiModelo }) {
         </p>
         <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-sm text-fg-secondary">
           <li>
-            <strong>Planilha Forecast</strong> (FC FY27 Forecast, completa, de janeiro ao mês atual) — <strong>substitui</strong> parâmetros, orçamento e
+            <strong>Despesas TI AAAA</strong> (abas Lançamentos e Parâmetros, com BP e CNPJ/CPF) — <strong>substitui</strong> os parâmetros e os lançamentos <strong>daquele ano</strong>:
+            2026 fica como histórico quando entra 2027.
+          </li>
+          <li>
+            <strong>Orçamento TI AAAA</strong> (colunas de mês MM.AAAA) — substitui o orçado do ano. Enquanto o de 2027 não sai, o orçado de 2027 continua o da FC FY27 Forecast.
+          </li>
+          <li>
+            <strong>Planilha Forecast</strong> (formato antigo, FC FY27 Forecast, completa, de janeiro ao mês atual) — <strong>substitui</strong> parâmetros, orçamento e
             lançamentos que vieram de planilha. Lançamentos digitados no sistema ou recebidos do SAP não são alterados.
           </li>
           <li>
@@ -739,7 +753,7 @@ function Importar({ modelo }: { modelo: TiModelo }) {
           <DialogHeader>
             <DialogTitle>Importar {arquivos.length === 1 ? 'o arquivo' : `os ${arquivos.length} arquivos`}?</DialogTitle>
             <DialogDescription>
-              A planilha Forecast, se estiver entre eles, <strong>substitui</strong> os dados que vieram de planilha. A KSB1 substitui os meses que cobre, e a
+              A Despesas TI e o Orçamento TI <strong>substituem só o ano</strong> que trazem (a planilha Forecast antiga substitui os dados de planilha). A KSB1 substitui os meses que cobre, e a
               KSB2 e a FBL1N substituem as anteriores. Se um arquivo falhar, nada é alterado por ele, e os outros seguem.
             </DialogDescription>
           </DialogHeader>
@@ -769,12 +783,23 @@ function Importar({ modelo }: { modelo: TiModelo }) {
   );
 }
 
+interface TiEu {
+  nome: string;
+  nivel: 'adm' | 'gestor';
+  editor: boolean;
+  ccs: string[];
+  grupos: string[];
+}
+
 export default function ControleTI() {
   const [aba, setAba] = useState<Aba>('painel');
+  const { data: eu } = useQuery({ queryKey: ['ti-eu'], queryFn: () => pedir<TiEu>('/api/ti/eu') });
   const { data: modelo, error, isLoading } = useQuery({
     queryKey: ['ti-modelo'],
     queryFn: () => pedir<TiModelo>('/api/ti/modelo'),
   });
+  const gestor = eu?.nivel === 'gestor';
+  const abasVisiveis = gestor ? ABAS.filter((a) => a.id === 'painel' || a.id === 'lancamentos') : ABAS;
 
   const vazio = modelo && modelo.budget.length === 0 && modelo.lanc.length === 0;
 
@@ -783,7 +808,10 @@ export default function ControleTI() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold text-foreground">Controle TI</h1>
-          <p className="text-xs text-fg-helper">Despesas de TI: orçado, realizado, a lançar e projeção.</p>
+          <p className="text-xs text-fg-helper">
+            Despesas de TI: orçado, realizado, a lançar e projeção.
+            {gestor && ' Você vê só os seus centros de custo (somente leitura).'}
+          </p>
         </div>
         {modelo && (
           <p className="text-xs text-fg-helper">
@@ -806,7 +834,7 @@ export default function ControleTI() {
       )}
 
       <div role="tablist" aria-label="Seções do Controle TI" className="flex flex-wrap gap-2">
-        {ABAS.map((a) => (
+        {abasVisiveis.map((a) => (
           <button
             key={a.id}
             role="tab"
@@ -834,7 +862,7 @@ export default function ControleTI() {
 
       {modelo && vazio && aba !== 'importar' && (
         <div className="flex flex-col items-start gap-3 rounded-lg border border-border bg-card p-6">
-          <p className="text-sm text-fg-secondary">Ainda não há dados. Importe a planilha FC FY27 Forecast para começar.</p>
+          <p className="text-sm text-fg-secondary">Ainda não há dados. Importe a planilha Despesas TI (e o Orçamento TI) para começar.</p>
           <Button onClick={() => setAba('importar')}>
             <Upload />
             Importar planilha
@@ -842,10 +870,10 @@ export default function ControleTI() {
         </div>
       )}
 
-      {modelo && !vazio && aba === 'painel' && <Painel modelo={modelo} onImportar={() => setAba('importar')} />}
+      {modelo && !vazio && aba === 'painel' && <Painel modelo={modelo} eu={eu} onImportar={() => setAba('importar')} />}
       {modelo && !vazio && aba === 'lancamentos' && <Lancamentos modelo={modelo} />}
-      {modelo && !vazio && aba === 'conferencia' && <ConferenciaSap onImportar={() => setAba('importar')} />}
-      {modelo && aba === 'importar' && <Importar modelo={modelo} />}
+      {modelo && !vazio && !gestor && aba === 'conferencia' && <ConferenciaSap onImportar={() => setAba('importar')} />}
+      {modelo && !gestor && aba === 'importar' && <Importar modelo={modelo} />}
     </div>
   );
 }

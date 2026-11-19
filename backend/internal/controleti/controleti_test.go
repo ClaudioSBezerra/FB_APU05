@@ -291,3 +291,30 @@ func TestGrupoDaDivisao(t *testing.T) {
 		}
 	}
 }
+
+func TestFiltrarModelo_GestorSoVeOProprioCC(t *testing.T) {
+	m := &Modelo{
+		Meta:   Meta{Ignorado: map[string]float64{"6000": 1}, TotSap: 9},
+		Budget: []BudgetRow{{CC: "6710", Grp: "FC"}, {CC: "6000", Grp: "FC"}, {CC: "6000", Grp: "RX"}},
+		CF:     []CFRow{{CC: "6710", Grp: "FC"}, {CC: "6720", Grp: "FC"}},
+		Lanc: []LancRow{
+			{ID: "a", CC: "6710", Grp: "FC", BP: "123", BPs: []string{"1"}, CNPJ: "11.222.333/0001-44"},
+			{ID: "b", CC: "6000", Grp: "FC"},
+			{ID: "c", CC: "6000", Grp: "RX"}, // RetailX inteiro
+		},
+		Pag: &PagModelo{Orphans: []Orfa{{Forn: "X"}}},
+	}
+	f := FiltrarModelo(m, Escopo{CCs: map[string]bool{"6710": true}, Grupos: map[string]bool{"RX": true}})
+	if len(f.Budget) != 2 || len(f.CF) != 1 || len(f.Lanc) != 2 {
+		t.Fatalf("filtro: budget=%d cf=%d lanc=%d", len(f.Budget), len(f.CF), len(f.Lanc))
+	}
+	if f.Lanc[0].BP != "" || f.Lanc[0].CNPJ != "" || f.Lanc[0].BPs != nil {
+		t.Error("gestor não pode receber BP/CNPJ")
+	}
+	if len(f.Pag.Orphans) != 0 || len(f.Meta.Ignorado) != 0 || f.Meta.TotSap != 0 {
+		t.Error("gestor não recebe órfãs da FBL1N nem totais de outras áreas")
+	}
+	if m.Lanc[0].BP == "" {
+		t.Error("o filtro não pode alterar o modelo original")
+	}
+}

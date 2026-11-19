@@ -19,7 +19,7 @@ func planilhaL(ref, pedido, ccSap, comp string, valor float64, status string) La
 func realizadoPorMes(m *Modelo) map[string]float64 {
 	r := map[string]float64{}
 	for _, l := range m.Lanc {
-		if l.Classif == "Realizado" && l.Comp != nil {
+		if l.Classif == "Realizado" && l.Comp != nil && l.Kind != "X" {
 			r[*l.Comp] += l.Valor
 		}
 	}
@@ -41,7 +41,7 @@ func TestSAPOficial_SubstituiSoOQueDeve(t *testing.T) {
 		sap("P1", "10026600", "2027-01-12", 99, "FORN SAP"), // CC 6600: fora
 		sap("P1", ccA, "2026-12-15", 999, "FORN SAP"),       // dezembro/2026: antes do `Desde`, não vira oficial
 	}
-	m := Montar(Entrada{Params: paramsStatus(), Lancamentos: lancs, KSB1: ksb, LastClosed: "2027-02"})
+	m := Montar(Entrada{Params: paramsStatus(), Lancamentos: lancs, KSB1: ksb, LastClosed: "2027-02", SapDesde: "2027-01"})
 
 	// a KSB1 só cobre jan e dez/2026; fev/2027 é fechado sem KSB1
 	r := realizadoPorMes(m)
@@ -58,22 +58,22 @@ func TestSAPOficial_SubstituiSoOQueDeve(t *testing.T) {
 	var achouSAP, achouP9, achouSubstituida bool
 	for _, l := range m.Lanc {
 		switch {
-		case l.Origem == "SAP (KSB1)" && l.Pedido == "P1" && l.Valor == 110 && l.Forn == "FORN SAP":
+		case l.Origem == "SAP (KSB1)" && l.Pedido == "P1" && l.Valor == 110 && l.Forn == "F1":
 			achouSAP = true
 		case l.Pedido == "P9":
 			achouP9 = true
-		case l.ID == "1":
+		case l.ID == "1" && l.Kind == "X":
 			achouSubstituida = true
 		}
 	}
 	if !achouSAP {
-		t.Error("faltou a linha do SAP para P1 (110, fornecedor do SAP)")
+		t.Error("faltou a linha do SAP para P1 (110, fornecedor da planilha)")
 	}
 	if achouP9 {
 		t.Error("pedido fora da planilha não entra no realizado")
 	}
-	if achouSubstituida {
-		t.Error("a linha da planilha que o SAP substituiu continuou no modelo")
+	if !achouSubstituida {
+		t.Error("a linha da planilha que o SAP substituiu deve ficar na lista, marcada como kind X (não soma)")
 	}
 	var aLancar bool
 	for _, l := range m.Lanc {
@@ -95,7 +95,7 @@ func TestSAPOficial_SubstituiSoOQueDeve(t *testing.T) {
 
 func TestSAPOficial_SemKSB1_MesFechadoDe2027EhProvisorio(t *testing.T) {
 	lancs := []Lanc{planilhaL("1", "P1", ccA, "2027-01", 100, "LANÇADO"), planilhaL("2", "P2", ccA, "2027-02", 10, "LANÇADO")}
-	m := Montar(Entrada{Params: paramsStatus(), Lancamentos: lancs, LastClosed: "2027-02"})
+	m := Montar(Entrada{Params: paramsStatus(), Lancamentos: lancs, LastClosed: "2027-02", SapDesde: "2027-01"})
 	if fmt.Sprint(m.Meta.Sap.Provisorios) != "[2027-01 2027-02]" || len(m.Meta.Sap.Oficiais) != 0 {
 		t.Errorf("sem KSB1 os meses fechados de 2027 ficam provisórios: %+v", m.Meta.Sap)
 	}
@@ -104,10 +104,10 @@ func TestSAPOficial_SemKSB1_MesFechadoDe2027EhProvisorio(t *testing.T) {
 	}
 }
 
-func TestSAPOficial_2026NaoMuda(t *testing.T) {
-	// com a KSB1 carregada e o `Desde` padrão, o realizado de 2026 é o da planilha (a KSB1 só confere)
+func TestSAPOficial_DesdeAntesDoSAP_PlanilhaVale(t *testing.T) {
+	// antes do `Desde` o realizado é o da planilha (a KSB1 só confere)
 	lancs := []Lanc{planilhaL("1", "P1", ccA, "2026-05", 100, "LANÇADO")}
-	m := Montar(Entrada{Params: paramsStatus(), Lancamentos: lancs, KSB1: []KSB1Linha{sap("P1", ccA, "2026-05-10", 777, "X")}, LastClosed: "2026-10"})
+	m := Montar(Entrada{Params: paramsStatus(), Lancamentos: lancs, SapDesde: "2027-01", KSB1: []KSB1Linha{sap("P1", ccA, "2026-05-10", 777, "X")}, LastClosed: "2026-10"})
 	if realizadoPorMes(m)["2026-05"] != 100 {
 		t.Errorf("2026 não pode mudar: %.2f", realizadoPorMes(m)["2026-05"])
 	}
@@ -144,5 +144,56 @@ func TestMontar_SaldoDaKSB2NosItensALancar(t *testing.T) {
 				t.Errorf("linha %s não deveria ter saldo: %v", l.ID, *l.SaldoSap)
 			}
 		}
+	}
+}
+
+func TestMesEfetivo_JanelaDoDia6(t *testing.T) {
+	casos := []struct {
+		lanc, entrada, quer string
+	}{
+		{"2026-10-20", "", "2026-10"},           // sem data de entrada: vale a data de lançamento
+		{"2026-10-20", "2026-10-21", "2026-10"}, // entrou no mês
+		{"2026-10-20", "2026-11-03", "2026-10"}, // retroativo entrado de 1 a 5: fica no mês que fecha
+		{"2026-10-20", "2026-11-06", "2026-11"}, // entrou do dia 6 em diante: conta no mês atual (tardio)
+		{"2026-11-02", "2026-11-03", "2026-11"}, // data do mês atual entrada de 1 a 5: é do mês atual
+		{"2026-12-30", "2027-01-08", "2026-12"}, // virada de ano, lançamento de dezembro entrado no dia 8: mês da janela (jan) < ... maior = jan
+	}
+	casos[5].quer = "2027-01"
+	for _, c := range casos {
+		if got := MesEfetivo(KSB1Linha{DataLanc: c.lanc, DataEntrada: c.entrada}); got != c.quer {
+			t.Errorf("lanç %s entrada %q: mês %s, esperava %s", c.lanc, c.entrada, got, c.quer)
+		}
+	}
+}
+
+func TestSAPOficial_Tardios(t *testing.T) {
+	lancs := []Lanc{planilhaL("1", "P1", ccA, "2026-10", 100, "LANÇADO")}
+	ksb := []KSB1Linha{
+		{Pedido: "P0", CCSap: ccA, DataLanc: "2026-10-05", DataEntrada: "2026-10-06", Valor: 10, Fornecedor: "X"}, // dá cobertura a out/26
+		{Pedido: "P1", CCSap: ccA, DataLanc: "2026-10-28", DataEntrada: "2026-11-09", Valor: 100, Fornecedor: "SAP"},
+	}
+	lancs = append(lancs, planilhaL("2", "P0", ccA, "2026-10", 10, "LANÇADO"))
+	m := Montar(Entrada{Params: paramsStatus(), Lancamentos: lancs, KSB1: ksb, LastClosed: "2026-10", SapDesde: "2026-01"})
+	if m.Meta.Tardios.N != 1 || m.Meta.Tardios.Valor != 100 || m.Meta.Tardios.Mes != "2026-11" {
+		t.Errorf("tardios: %+v", m.Meta.Tardios)
+	}
+	if m.Meta.Sap.K1Modo != "data de entrada" {
+		t.Errorf("modo: %s", m.Meta.Sap.K1Modo)
+	}
+	var tard bool
+	for _, l := range m.Lanc {
+		if l.Tardio && l.Comp != nil && *l.Comp == "2026-11" && l.Valor == 100 {
+			tard = true
+		}
+		if l.ID == "1" && l.Kind != "X" {
+			t.Error("a linha da planilha casada com o tardio deveria virar kind X")
+		}
+	}
+	if !tard {
+		t.Error("faltou a linha do SAP no mês da janela (nov/26)")
+	}
+	r := realizadoPorMes(m)
+	if r["2026-10"] != 10 || r["2026-11"] != 100 {
+		t.Errorf("out/26 deveria ficar só com o item que entrou no corte e nov/26 com o tardio: %v", r)
 	}
 }

@@ -1,3 +1,4 @@
+
 (function(){
 'use strict';
 const $ = s => document.querySelector(s);
@@ -54,31 +55,66 @@ let IDX = { divDesc0:{} };
 /* Adaptador: modelo do motor (Despesas TI + Orçamento TI + KSB1/KSB2/FBL1N) -> modelo deste painel.
    RAW é o que é gravado no HTML publicado. Linhas da planilha substituídas pela KSB1 (kind X) ficam fora das contas,
    mas continuam na aba Lançamentos. Os anos seguintes da projeção vêm de RAW.plur (FC FY27 Forecast). */
+/* Perfil do usuário (rota GET /eu do servidor). Sem servidor = ADM. O filtro aqui é de tela;
+   quem garante o acesso é o servidor, que só devolve os CCs do gestor em /modelo. */
+const ACL = { perfil:'adm', ok:null, eu:null };
+const GRP_EMP = { 'retailx':'RX', 'ferreira costa':'FC', 'importadoras':'IMP' };
+function setAcl(eu){
+  ACL.eu = eu || null;
+  if (!eu || /^(adm|admin|editor)$/i.test(eu.perfil||'')){ ACL.perfil='adm'; ACL.ok=null; }
+  else { const ccs = new Set((eu.ccs||[]).map(String)), gs = new Set((eu.empresas||[]).map(e=>GRP_EMP[String(e).toLowerCase()]||e)), dv = new Set((eu.divisoes||[]).map(String));
+    ACL.perfil='gestor'; ACL.ok = r => ccs.has(String(r.cc)) || gs.has(r.grp) || dv.has(String(r.div)); }
+  const g = ACL.perfil==='gestor';
+  ['#btnMain','#btnSrv','#closeBanner','#prevBanner'].forEach(q=>{ const e=$(q); if (e && g) e.style.display='none'; });
+  const ct = $('#tabs button[data-v="conf"]'); if (ct) ct.style.display = g ? 'none' : '';
+  if (g && S.view==='conf') S.view='geral';
+}
+const maskDoc = d => (ACL.perfil==='gestor' && String(d||'').replace(/\D/g,'').length===11) ? '***.***.***-**' : d;
 let RAW = null;
+/* Ano fechado guardado dentro do painel (relatório histórico). */
+const trimYear = m => ({ meta: { year:m.meta.year, months:m.meta.months, lastClosed:m.meta.lastClosed, sapMonths:m.meta.sapMonths||[], monthSrc:m.meta.monthSrc||{},
+  sources:m.meta.sources||{}, parsedAt:m.meta.parsedAt, k1modo:m.meta.k1modo, orcFonte:m.meta.orcFonte, ignorado:m.meta.ignorado||{} },
+  budget:m.budget||[], cf:m.cf||[], lanc:m.lanc||[], conf:m.conf||[], pag:m.pag||null });
+function withHistory(m, prev){
+  m.hist = Object.assign({}, (prev && prev.hist) || {}, m.hist || {});
+  if (prev && prev.meta && prev.meta.year && m.meta.year && prev.meta.year < m.meta.year && !m.hist[prev.meta.year]) m.hist[prev.meta.year] = trimYear(prev);
+  Object.keys(m.hist).forEach(y=>{ if (!m.meta.year || y >= m.meta.year) delete m.hist[y]; });
+  if (!m.plur && prev && prev.plur) m.plur = prev.plur;
+  return m;
+}
 function loadModel(m){
-  if (!m || !m.meta){ showErr('Painel sem dados. Clique em Publicar planilha e sincronizar SAP e escolha a pasta 1 - DESPESAS - ADM.'); return; }
-  if (!m.plur && RAW && RAW.plur) m.plur = RAW.plur;
-  RAW = m;
-  const cp = r => Object.assign({}, r);
-  const lanc = (m.lanc||[]).map(cp), plan = lanc.filter(l=>l.src!=='SAP');
-  window.FCX_PAG = m.pag ? { meta:m.pag.meta, orphans:(m.pag.orphans||[]).filter(x=>(x.dtLanc||'').startsWith(m.meta.year||'')), byId:{} } : null;
-  if (window.FCX_PAG) plan.forEach(l=>{ if (l.pag) window.FCX_PAG.byId[l.id] = l.pag; });
-  let months = m.meta.months.slice(), budget = (m.budget||[]).map(cp), cf = (m.cf||[]).map(cp);
+  if (!m || !m.meta){ if (API.url){ showOk('Carregando a versão publicada do servidor…'); return; } showErr('Painel sem dados. Clique em Importar planilha e escolha a pasta 1 - DESPESAS - ADM.'); return; }
+  withHistory(m, RAW); RAW = m;
+  const parts = Object.keys(m.hist||{}).sort().map(y=>m.hist[y]).concat([m]);
+  let months = [...new Set(parts.flatMap(p=>p.meta.months||[]))].sort();
   const P = m.plur, last = months[months.length-1];
-  if (P && P.months){
-    const ix = P.months.map((ym,i)=>ym>last?i:-1).filter(i=>i>=0);
-    if (ix.length){
-      const fut = ix.map(i=>P.months[i]), z = months.map(()=>0), zf = fut.map(()=>0);
-      budget.forEach(r=>{ r.m = r.m.concat(zf); }); cf.forEach(r=>{ r.m = r.m.concat(zf); });
-      P.budget.forEach(r=>budget.push(Object.assign({}, r, { origem:(r.origem||'')+' (plurianual)', m: z.concat(ix.map(i=>r.m[i])) })));
-      P.cf.forEach(r=>cf.push(Object.assign({}, r, { m: z.concat(ix.map(i=>r.m[i])) })));
-      months = months.concat(fut);
-    }
-  }
+  const fut = (P && P.months) ? P.months.filter(ym=>ym>last) : [];
+  const nBase = months.length; months = months.concat(fut);
+  const pos = {}; months.forEach((ym,i)=>{ pos[ym]=i; });
+  const widen = (r, ms) => { const a = months.map(()=>0); ms.forEach((ym,i)=>{ if (pos[ym]!=null) a[pos[ym]] += (r.m&&r.m[i])||0; }); return Object.assign({}, r, { m:a }); };
+  let budget=[], cf=[], lanc=[], conf=[], orphans=[];
+  parts.forEach(p=>{ const pre = p===m ? '' : p.meta.year+'-';
+    budget = budget.concat((p.budget||[]).map(r=>widen(r, p.meta.months)));
+    cf = cf.concat((p.cf||[]).map(r=>widen(r, p.meta.months)));
+    lanc = lanc.concat((p.lanc||[]).map(l=>Object.assign({}, l, { id: pre + l.id })));
+    conf = conf.concat((p.conf||[]).map(c=>Object.assign({}, c)));
+    if (p.pag) orphans = orphans.concat((p.pag.orphans||[]).filter(x=>(x.dtLanc||'').startsWith(p.meta.year||'')));
+  });
+  if (fut.length){ const ix = fut.map(ym=>P.months.indexOf(ym));
+    const add = r => Object.assign({}, r, { m: months.map((ym,i)=> i < nBase ? 0 : ((r.m||[])[ix[i-nBase]]||0)) });
+    (P.budget||[]).forEach(r=>budget.push(Object.assign(add(r), { origem:'Forecast' })));
+    (P.cf||[]).forEach(r=>cf.push(add(r))); }
+  const plan = lanc.filter(l=>l.src!=='SAP');
+  const pm = parts.map(p=>p.pag).filter(Boolean).pop();
+  window.FCX_PAG = pm ? { meta: pm.meta, orphans, byId:{} } : null;
+  if (window.FCX_PAG) plan.forEach(l=>{ if (l.pag) window.FCX_PAG.byId[l.id] = l.pag; });
+  const sapMonths = [...new Set(parts.flatMap(p=>p.meta.sapMonths||[]))].sort();
+  const monthSrc = Object.assign({}, ...parts.map(p=>p.meta.monthSrc||{}));
   const lc = m.meta.lastClosed, ed = lc ? new Date(+lc.slice(0,4), +lc.slice(5,7), 0) : null;
   const fs = m.meta.sources || {};
-  loadFY({ meta: Object.assign({}, m.meta, { months, fileName: fs.main ? fs.main.name : (m.meta.fileName||'Despesas TI'), refDate: ed ? ed.getFullYear()+'-'+String(ed.getMonth()+1).padStart(2,'0')+'-'+String(ed.getDate()).padStart(2,'0') : null }),
-    budget, cf, lanc: lanc.filter(l=>l.kind!=='X'), lancPlan: plan, conf: m.conf||[], pag: m.pag||null });
+  loadFY({ meta: Object.assign({}, m.meta, { months, sapMonths, monthSrc, anos: parts.map(p=>p.meta.year), fileName: fs.main ? fs.main.name : (m.meta.fileName||'Despesas TI'),
+      refDate: ed ? ed.getFullYear()+'-'+String(ed.getMonth()+1).padStart(2,'0')+'-'+String(ed.getDate()).padStart(2,'0') : null }),
+    budget, cf, lanc: lanc.filter(l=>l.kind!=='X'), lancPlan: plan, conf, pag: m.pag||null });
 }
 function loadFY(model){
   M = model;
@@ -89,6 +125,8 @@ function loadFY(model){
   const bad = v => !v || v==='Verificar' || /verificar/i.test(v);
   all.forEach(r=>{ if (bad(r.ccDesc) && CC_DESC[r.cc]) r.ccDesc = CC_DESC[r.cc]; if (bad(r.divDesc) && DIV_DESC[r.div]) r.divDesc = DIV_DESC[r.div]; if (r.tipo==='Imobilizado (CAPEX)') r.tipo='Imobilizado'; r.grp = r.cc==='IMOB' ? 'FC' : grpOf(r.div); });
   (M.conf||[]).forEach(r=>{ r.grp = r.cc==='IMOB' ? 'FC' : grpOf(r.div); });
+  (M.lancPlan||[]).forEach(r=>{ if (!r.grp) r.grp = r.cc==='IMOB' ? 'FC' : grpOf(r.div); });
+  if (ACL.ok) ['budget','cf','lanc','lancPlan','conf'].forEach(k=>{ M[k] = (M[k]||[]).filter(ACL.ok); });
   IDX.years = [...new Set(M.meta.months.map(m=>m.slice(0,4)))];
   IDX.closedYear = M.meta.lastClosed.slice(0,4);
   { const d = new Date(); IDX.curYM = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); if (IDX.curYM <= M.meta.lastClosed) IDX.curYM = monthAdd(M.meta.lastClosed, 1); }
@@ -216,9 +254,9 @@ function render(){
   $('#footnote').innerHTML = `Filtros ativos: ${f.length?esc(f.join(' · ')):'nenhum'}. CC 6600 (Lei do Bem) fica fora do painel.<br>
   Arquivos lidos: ${fn(fs.main)} · ${fn(fs.orc)} · KSB1: ${(fs.ksb1||[]).map(fn).join(', ')||'—'} · KSB2: ${fn(fs.ksb2)} · FBL1N: ${fn(fs.fbl1n)}${RAW&&RAW.plur?` · anos seguintes da projeção: ${esc(RAW.plur.fonte||'FC FY27 Forecast')}`:''}.<br>
   Grupos: Ferreira Costa = divisões 91 a 1009 + imobilizado (IMOB) · RetailX = 4016 · Importadoras = divisões cuja descrição começa com “IMPORTADORA”. Descrições de CC, filial e conta vêm da aba Parâmetros.<br>
-  Orçado = planilha Orçamento TI. Realizado: mês fechado com KSB1 = SAP (pedidos que estão na planilha) + imobilizado e itens sem pedido da planilha; mês sem KSB1 = planilha (status LANÇADO), provisório. A lançar = demais status da planilha.
+  Orçado = planilha Orçamento TI${M.meta.orcFonte==='forecast'?` (${esc(M.meta.year)}: FC FY27 Forecast até o orçamento oficial ser divulgado)`:''}. Anos no painel: ${esc((M.meta.anos||[]).join(', '))}. Realizado: mês fechado com KSB1 = SAP (pedidos que estão na planilha) + imobilizado e itens sem pedido da planilha; mês sem KSB1 = planilha (status LANÇADO), provisório. A lançar = demais status da planilha.
   Projeção: mês fechado = realizado; mês em aberto = o maior valor entre orçado e (lançado + a lançar), por filial + CC + conta. Sobra = Orçado − Projeção.<br>
-  Fechamento: todo dia 6 o mês anterior fecha automaticamente. O que estava no SAP até o dia 5 fica no mês fechado; o que entrar no SAP do dia 6 em diante conta no mês atual. Para atualizar, importe a planilha e os exports (Forecast, KSB1, KSB2, FBL1N) na aba “Importar planilha” do Controle TI (botão no topo do painel).`;
+  Fechamento: todo dia 6 o mês anterior fecha automaticamente. Fica no mês fechado o lançamento com data do mês anterior que entrou no SAP até o dia 5 (retroativo); lançamento com data do mês atual é sempre do mês atual, mesmo entrando do dia 1 ao 5; o que entrar do dia 6 em diante conta no mês atual. Para atualizar, clique em “Importar planilha”.`;
 }
 
 function kpi(label, val, foot, extra='', title=''){
@@ -951,11 +989,12 @@ function renderLanc(){
   rows.slice(0,S.lancLimit).forEach(l=>{
     const late = l.classif!=='Realizado' && ((l.comp && l.comp<=lc) || (l.venc && l.venc<today));
     const pill = l.classif==='Realizado' ? `<span class="pill ok" title="${l.kind==='X'?'Conferido pelo SAP: o realizado oficial deste mês vem da KSB1':''}">${esc(l.status)}${l.kind==='X'?' ✓SAP':''}</span>` : `<span class="pill ${late?'late':'pend'}">${esc(l.status)}</span>`;
-    h += `<tr><td>${ymLabel(l.comp)}</td><td>${pill}</td><td>${esc(l.forn)}${l.cnpj?`<div class="small muted">${esc(l.cnpj)}</div>`:''}</td><td class="muted">${esc(l.bp||'')}</td><td class="muted">${esc(l.desc)}</td><td>${esc(l.cc)}</td><td>${esc(l.divDesc)}</td><td class="muted">${esc(l.nf)}</td><td class="muted">${esc(l.pedido)}</td><td>${dBR(l.venc)}</td><td class="n">${brl(l.valor)}</td>${S.lv==='lanc'?`<td>${pagPill(l)}</td><td>${l.dtComp?dBR(l.dtComp):''}</td>`:''}</tr>`;
+    h += `<tr><td>${ymLabel(l.comp)}</td><td>${pill}</td><td>${esc(l.forn)}${l.cnpj?`<div class="small muted">${esc(maskDoc(l.cnpj))}</div>`:''}</td><td class="muted">${esc(l.bp||'')}</td><td class="muted">${esc(l.desc)}</td><td>${esc(l.cc)}</td><td>${esc(l.divDesc)}</td><td class="muted">${esc(l.nf)}</td><td class="muted">${esc(l.pedido)}</td><td>${dBR(l.venc)}</td><td class="n">${brl(l.valor)}</td>${S.lv==='lanc'?`<td>${pagPill(l)}${l._pg&&l._pg.compDif?` <span class="pill pend" title="Na FBL1N a nota entrou no SAP em ${ymLabel(l._pg.ymSap)} (regra do dia 6). Ajuste a competência da linha na planilha.">SAP: ${ymLabel(l._pg.ymSap)}</span>`:''}</td><td>${l.dtComp?dBR(l.dtComp):''}</td>`:''}</tr>`;
   });
   $('#tbLanc').innerHTML = h + '</tbody></table>';
   $$('#tbLanc th').forEach(th=>th.onclick=()=>{ const c=th.dataset.k; S.lancSort = {k:c, d: S.lancSort.k===c? -S.lancSort.d : (c==='valor'||c==='comp'?-1:1)}; renderLanc(); });
-  $('#lancInfo').innerHTML = `${rows.length} item(ns) em ${Y} · total ${brl(sum(rows.map(r=>r.valor)))}` + (rows.length>S.lancLimit?` · mostrando ${S.lancLimit} <button id="more">mostrar mais</button>`:'') + (S.status||S.q||S.pag?` · <button id="clrL">limpar busca/status</button>`:'') + (window.FCX_PAG?` · pagamento: ${esc(window.FCX_PAG.meta.fonte)}, extraída em ${dBR(window.FCX_PAG.meta.extraido)} (empresas ${esc(window.FCX_PAG.meta.empresas.join(', '))})`:'');
+  const nDif = rows.filter(l=>l._pg&&l._pg.compDif).length;
+  $('#lancInfo').innerHTML = `${rows.length} item(ns) em ${Y} · total ${brl(sum(rows.map(r=>r.valor)))}` + (nDif?` · <span class="pill pend">${nDif} com competência diferente da FBL1N</span>`:'') + (rows.length>S.lancLimit?` · mostrando ${S.lancLimit} <button id="more">mostrar mais</button>`:'') + (S.status||S.q||S.pag?` · <button id="clrL">limpar busca/status</button>`:'') + (window.FCX_PAG?` · pagamento: ${esc(window.FCX_PAG.meta.fonte)}, extraída em ${dBR(window.FCX_PAG.meta.extraido)} (empresas ${esc(window.FCX_PAG.meta.empresas.join(', '))})`:'');
   const mb = $('#more'); if (mb) mb.onclick = ()=>{ S.lancLimit += 300; renderLanc(); };
   const cb = $('#clrL'); if (cb) cb.onclick = ()=>{ S.status=''; S.q=''; S.pag=''; $('#q').value=''; buildFilters(); renderLanc(); };
   renderOrf(q);
@@ -973,7 +1012,7 @@ function renderPag(rows){
   $$('#l-pag button').forEach(b=>b.onclick=()=>{ S.pag = S.pag===b.dataset.p ? '' : b.dataset.p; S.lancLimit=200; renderLanc(); });
 }
 function renderOrf(q){
-  const P = window.FCX_PAG; const card = $('#l-orfCard'); if (!P || S.lv!=='lanc'){ card.style.display='none'; return; } card.style.display='';
+  const P = window.FCX_PAG; const card = $('#l-orfCard'); if (!P || S.lv!=='lanc' || ACL.ok){ card.style.display='none'; return; } card.style.display='';
   let o = P.orphans.slice();
   if (S.lf.fk) o = o.filter(x=>fornKey(x.forn)===S.lf.fk);
   if (S.lf.mes) o = o.filter(x=>(x.dtLanc||'').slice(0,7)===S.lf.mes);
@@ -1224,31 +1263,24 @@ let rT; window.addEventListener('resize', ()=>{ clearTimeout(rT); rT=setTimeout(
 
 function showErr(msg){ const e=$('#err'); e.textContent = msg; e.style.display = msg?'block':'none'; if (msg) showOk(''); }
 function showOk(msg){ const e=$('#okmsg'); if (!e) return; e.innerHTML = msg; e.style.display = msg?'block':'none'; }
-const API = { url:'' };   // modo servidor do protótipo não se aplica: o sistema é o servidor
+const nrm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
 function setPrev(){}
 
-
 // ---- Integração com o sistema (FB_APU05) ----------------------------------
-// O painel roda num iframe isolado (sandbox, sem acesso à sessão do sistema).
-// Os dados chegam por mensagem do sistema — o painel não lê arquivo nem chama
-// API. "Importar planilha" pede ao sistema para abrir a aba de importação.
+// O painel roda num iframe isolado (sandbox, sem acesso à sessão do sistema): não lê arquivo nem
+// chama API. O sistema (servidor) manda o modelo JÁ FILTRADO pelo perfil (o gestor só recebe os
+// próprios CCs) e o perfil por mensagem; "Importar planilha" pede ao sistema para abrir a aba de importação.
+const API = { url:'', hosted:true };
 const irImportar = ()=> window.parent.postMessage({ type:'fcx-importar' }, '*');
-$('#btnLoad').onclick = irImportar;
-if ($('#btnMain')) $('#btnMain').onclick = irImportar;
-if ($('#btnFbl')) $('#btnFbl').onclick = irImportar;
-if ($('#btnSync')) $('#btnSync').onclick = irImportar;
-if ($('#btnPlan')) $('#btnPlan').onclick = irImportar;
+['#btnLoad','#btnMain','#btnPlan','#btnSync','#btnFbl'].forEach(q=>{ const b=$(q); if (b) b.onclick = irImportar; });
 window.addEventListener('message', e=>{
   if (e.source !== window.parent) return;
-  const d = e.data;
-  if (!d || d.type !== 'fcx-modelo' || !d.modelo) return;
+  const d = e.data; if (!d) return;
+  if (d.type === 'fcx-eu'){ setAcl(d.eu); if (M) render(); return; }
+  if (d.type !== 'fcx-modelo' || !d.modelo) return;
   try{ showErr(''); loadModel(d.modelo); }
   catch(err){ console.error(err); showErr('Não consegui montar o painel: '+err.message); }
 });
-window.parent.postMessage({ type:'fcx-pronto' }, '*');
-
-const nrm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
-
 /* ---------- fechamento automático do dia 6 ---------- */
 function renderCloseBanner(){
   const el = $('#closeBanner'); if (!M || !M.meta){ el.style.display='none'; return; }
@@ -1260,7 +1292,7 @@ function renderCloseBanner(){
   const planTxt = f && f.planilha_enviada_em ? 'planilha enviada em '+new Date(f.planilha_enviada_em).toLocaleString('pt-BR') : (plan.mtime ? 'planilha de '+new Date(plan.mtime).toLocaleString('pt-BR') : 'última planilha');
   let cls = '', html = '';
   if (d < 6){
-    cls = 'due'; html = `<b>Fechamento de ${ymLabel(prev)}: dia 6, automático.</b> Publique a planilha atualizada até o dia 5; o que entrar no SAP do dia 6 em diante conta em ${ymLabel(cur)}.`;
+    cls = 'due'; html = `<b>Fechamento de ${ymLabel(prev)}: dia 6, automático.</b> Até o dia 5 confira as MIROs e publique a planilha: retroativos (data de ${ymLabel(prev)}) lançados até o dia 5 ficam em ${ymLabel(prev)}; lançamentos com data de ${ymLabel(cur)} e tudo que entrar no SAP do dia 6 em diante contam em ${ymLabel(cur)}. No dia 6 o e-mail de fechamento vai para Welton e Wanessa.`;
   } else if (f && f.mes === prev && f.status === 'aguardando_planilha'){
     cls = 'due'; html = `<b>${ymLabel(prev)}: SAP fechado em ${new Date(f.em).toLocaleString('pt-BR')}.</b> Falta a planilha atualizada para concluir o fechamento. Se não for publicada até 23:59 do dia 6, o mês fecha com a ${planTxt}.`;
   } else if (f && f.mes === prev){
@@ -1272,9 +1304,10 @@ function renderCloseBanner(){
   }
   const need = cls === 'due';
   el.className = 'banner-close ' + cls; el.style.display = 'flex';
-  el.innerHTML = `<span>${html}</span>${need?'<button class="btn primary" id="cbGo">Publicar planilha e sincronizar</button>':''}`;
-  if (need) $('#cbGo').onclick = ()=>$('#btnMain').click();
+  el.innerHTML = `<span>${html}</span>${need?'<button class="btn primary" id="cbGo">Importar planilha</button>':''}`;
+  if (need && $('#cbGo')) $('#cbGo').onclick = irImportar;
 }
 
 
+window.parent.postMessage({ type:'fcx-pronto' }, '*');
 })();

@@ -43,7 +43,8 @@ type Params struct {
 	Conta      map[string]ParamConta
 	Status     map[string]string // status -> classificação
 	Divisao    map[string]ParamDivisao
-	Fornecedor map[string]string // fornecedor -> pasta
+	Fornecedor map[string]string   // fornecedor -> pasta
+	FornBP     map[string][]string // CNPJ/CPF (só dígitos) -> BPs (T_FornBP)
 }
 
 // OrcLinha é uma linha da aba Orçamento Forecast; Valores acompanha
@@ -65,6 +66,10 @@ type Lanc struct {
 	// ForcaRealizado marca as linhas criadas a partir da KSB1 (realizado oficial do
 	// SAP, fase 3): contam como realizado qualquer que seja o status.
 	ForcaRealizado bool
+	// Subst: linha da planilha que a KSB1 substitui (continua na lista, mas não soma). Tardio/MesLanc:
+	// lançamento do SAP que entrou depois do corte do fechamento (conta no mês da janela).
+	Subst, Tardio bool
+	MesLanc       string
 }
 
 // Planilha é o conteúdo lido do .xlsx, ainda sem campos derivados.
@@ -343,7 +348,7 @@ func lerLancamentos(pl *Planilha, rows [][]string) error {
 func lerParametros(rows [][]string) (Params, error) {
 	p := Params{
 		CC: map[string]ParamCC{}, Conta: map[string]ParamConta{}, Status: map[string]string{},
-		Divisao: map[string]ParamDivisao{}, Fornecedor: map[string]string{},
+		Divisao: map[string]ParamDivisao{}, Fornecedor: map[string]string{}, FornBP: map[string][]string{},
 	}
 	pHead := -1
 	for i, r := range rows {
@@ -418,6 +423,32 @@ func lerParametros(rows [][]string) (Params, error) {
 	}
 	for k, v := range tabela("Fornecedor", "Pasta") {
 		p.Fornecedor[k] = v[0]
+	}
+
+	// T_FornBP: coluna "BP" logo depois de "CNPJ/CPF"
+	if jb := func() int {
+		for j := 1; j < len(h); j++ {
+			if normaliza(h[j]) == "bp" && normaliza(h[j-1]) == "cnpj/cpf" {
+				return j
+			}
+		}
+		return -1
+	}(); jb > 0 {
+		for r := pHead + 1; r < len(rows); r++ {
+			d, b := somenteDigitos(textoCelula(rows[r], jb-1)), somenteDigitos(textoCelula(rows[r], jb))
+			if d == "" || b == "" {
+				continue
+			}
+			ja := false
+			for _, x := range p.FornBP[d] {
+				if x == b {
+					ja = true
+				}
+			}
+			if !ja {
+				p.FornBP[d] = append(p.FornBP[d], b)
+			}
+		}
 	}
 
 	if len(p.Conta) == 0 {

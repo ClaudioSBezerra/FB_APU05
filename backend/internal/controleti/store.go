@@ -87,55 +87,10 @@ func Importar(db *sql.DB, p *Planilha, usuarioID, arquivo string) (Resumo, error
 	defer func() { _ = tx.Rollback() }()
 
 	// --- parâmetros
-	for _, t := range []string{"ti_param_cc", "ti_param_conta", "ti_param_status", "ti_param_divisao", "ti_param_fornecedor"} {
-		if _, err := tx.Exec("DELETE FROM " + t); err != nil {
-			return res, fmt.Errorf("limpar %s: %w", t, err)
-		}
+	var err2 error
+	if res.Parametros, err2 = gravarParametros(tx, p.Params); err2 != nil {
+		return res, err2
 	}
-	res.Parametros = map[string]int{}
-
-	cc := chavesOrdenadas(p.Params.CC)
-	if err := insereEmLotes(tx, "ti_param_cc", []string{"cc", "descricao", "responsavel", "pasta"}, len(cc), func(i int) []any {
-		v := p.Params.CC[cc[i]]
-		return []any{cc[i], v.Descricao, v.Responsavel, v.Pasta}
-	}); err != nil {
-		return res, err
-	}
-	res.Parametros["centros_custo"] = len(cc)
-
-	contas := chavesOrdenadas(p.Params.Conta)
-	if err := insereEmLotes(tx, "ti_param_conta", []string{"conta", "descricao", "tipo"}, len(contas), func(i int) []any {
-		v := p.Params.Conta[contas[i]]
-		return []any{contas[i], v.Descricao, v.Tipo}
-	}); err != nil {
-		return res, err
-	}
-	res.Parametros["contas"] = len(contas)
-
-	status := chavesOrdenadas(p.Params.Status)
-	if err := insereEmLotes(tx, "ti_param_status", []string{"status", "classificacao"}, len(status), func(i int) []any {
-		return []any{status[i], p.Params.Status[status[i]]}
-	}); err != nil {
-		return res, err
-	}
-	res.Parametros["status"] = len(status)
-
-	divs := chavesOrdenadas(p.Params.Divisao)
-	if err := insereEmLotes(tx, "ti_param_divisao", []string{"divisao", "descricao", "empresa", "pasta"}, len(divs), func(i int) []any {
-		v := p.Params.Divisao[divs[i]]
-		return []any{divs[i], v.Descricao, v.Empresa, v.Pasta}
-	}); err != nil {
-		return res, err
-	}
-	res.Parametros["divisoes"] = len(divs)
-
-	forns := chavesOrdenadas(p.Params.Fornecedor)
-	if err := insereEmLotes(tx, "ti_param_fornecedor", []string{"fornecedor", "pasta"}, len(forns), func(i int) []any {
-		return []any{forns[i], p.Params.Fornecedor[forns[i]]}
-	}); err != nil {
-		return res, err
-	}
-	res.Parametros["fornecedores"] = len(forns)
 
 	// --- orçamento (valores apagados em cascata)
 	if _, err := tx.Exec(`DELETE FROM ti_orcamento_linhas WHERE fonte = $1`, FonteForecast); err != nil {
@@ -189,6 +144,9 @@ func Importar(db *sql.DB, p *Planilha, usuarioID, arquivo string) (Resumo, error
 		return res, err
 	}
 	res.Lancamentos = len(p.Lancamentos)
+	if _, err := tx.Exec(`UPDATE ti_lancamentos SET ano = COALESCE(EXTRACT(YEAR FROM competencia), 2026)::smallint WHERE ano IS NULL`); err != nil {
+		return res, fmt.Errorf("gravar ano dos lançamentos: %w", err)
+	}
 
 	resumoJSON, _ := json.Marshal(res)
 	var uid any
@@ -221,7 +179,7 @@ func carregarEntrada(db *sql.DB, agora time.Time) (Entrada, error) {
 	in := Entrada{Agora: agora}
 	in.Params = Params{
 		CC: map[string]ParamCC{}, Conta: map[string]ParamConta{}, Status: map[string]string{},
-		Divisao: map[string]ParamDivisao{}, Fornecedor: map[string]string{},
+		Divisao: map[string]ParamDivisao{}, Fornecedor: map[string]string{}, FornBP: map[string][]string{},
 	}
 
 	rows, err := db.Query(`SELECT cc, descricao, responsavel, pasta FROM ti_param_cc`)
@@ -280,6 +238,20 @@ func carregarEntrada(db *sql.DB, agora time.Time) (Entrada, error) {
 			return Entrada{}, err
 		}
 		in.Params.Divisao[k] = v
+	}
+	rows.Close()
+
+	rows, err = db.Query(`SELECT cnpj, bp FROM ti_param_fornbp ORDER BY cnpj, bp`)
+	if err != nil {
+		return Entrada{}, fmt.Errorf("ler ti_param_fornbp: %w", err)
+	}
+	for rows.Next() {
+		var c, b string
+		if err := rows.Scan(&c, &b); err != nil {
+			rows.Close()
+			return Entrada{}, err
+		}
+		in.Params.FornBP[c] = append(in.Params.FornBP[c], b)
 	}
 	rows.Close()
 
@@ -364,7 +336,11 @@ func Carregar(db *sql.DB, agora time.Time) (*Modelo, error) {
 	if err := carregarSAP(db, &in); err != nil {
 		return nil, err
 	}
-	return Montar(in), nil
+	m := Montar(in)
+	if f, err := UltimoFechamento(db); err == nil {
+		m.Meta.Fechamento = f.ParaMeta()
+	}
+	return m, nil
 }
 
 // Conferencia compara a planilha PURA com a KSB1. Não usa o modelo do painel: a partir
@@ -381,4 +357,180 @@ func Conferencia(db *sql.DB, agora time.Time) (*ConfResultado, error) {
 	m := Montar(in)
 	r := Conferir(m.Lanc, ksb1)
 	return &r, nil
+}
+
+// gravarParametros substitui por inteiro as tabelas ti_param_*; devolve a contagem de cada uma.
+func gravarParametros(tx *sql.Tx, params Params) (map[string]int, error) {
+	for _, t := range []string{"ti_param_cc", "ti_param_conta", "ti_param_status", "ti_param_divisao", "ti_param_fornecedor", "ti_param_fornbp"} {
+		if _, err := tx.Exec("DELETE FROM " + t); err != nil {
+			return nil, fmt.Errorf("limpar %s: %w", t, err)
+		}
+	}
+	out := map[string]int{}
+
+	cc := chavesOrdenadas(params.CC)
+	if err := insereEmLotes(tx, "ti_param_cc", []string{"cc", "descricao", "responsavel", "pasta"}, len(cc), func(i int) []any {
+		v := params.CC[cc[i]]
+		return []any{cc[i], v.Descricao, v.Responsavel, v.Pasta}
+	}); err != nil {
+		return nil, err
+	}
+	out["centros_custo"] = len(cc)
+
+	contas := chavesOrdenadas(params.Conta)
+	if err := insereEmLotes(tx, "ti_param_conta", []string{"conta", "descricao", "tipo"}, len(contas), func(i int) []any {
+		v := params.Conta[contas[i]]
+		return []any{contas[i], v.Descricao, v.Tipo}
+	}); err != nil {
+		return nil, err
+	}
+	out["contas"] = len(contas)
+
+	status := chavesOrdenadas(params.Status)
+	if err := insereEmLotes(tx, "ti_param_status", []string{"status", "classificacao"}, len(status), func(i int) []any {
+		return []any{status[i], params.Status[status[i]]}
+	}); err != nil {
+		return nil, err
+	}
+	out["status"] = len(status)
+
+	divs := chavesOrdenadas(params.Divisao)
+	if err := insereEmLotes(tx, "ti_param_divisao", []string{"divisao", "descricao", "empresa", "pasta"}, len(divs), func(i int) []any {
+		v := params.Divisao[divs[i]]
+		return []any{divs[i], v.Descricao, v.Empresa, v.Pasta}
+	}); err != nil {
+		return nil, err
+	}
+	out["divisoes"] = len(divs)
+
+	forns := chavesOrdenadas(params.Fornecedor)
+	if err := insereEmLotes(tx, "ti_param_fornecedor", []string{"fornecedor", "pasta"}, len(forns), func(i int) []any {
+		return []any{forns[i], params.Fornecedor[forns[i]]}
+	}); err != nil {
+		return nil, err
+	}
+	out["fornecedores"] = len(forns)
+
+	var fbp [][2]string
+	for _, c := range chavesOrdenadas(params.FornBP) {
+		for _, b := range params.FornBP[c] {
+			fbp = append(fbp, [2]string{c, b})
+		}
+	}
+	if err := insereEmLotes(tx, "ti_param_fornbp", []string{"cnpj", "bp"}, len(fbp), func(i int) []any {
+		return []any{cortar(fbp[i][0], 20), cortar(fbp[i][1], 20)}
+	}); err != nil {
+		return nil, err
+	}
+	out["fornecedor_bp"] = len(fbp)
+
+	return out, nil
+}
+
+// FonteOrcamentoTI identifica as linhas da Orçamento TI AAAA.xlsx.
+const FonteOrcamentoTI = "orcamento_ti"
+
+func registrarImportacao(tx *sql.Tx, usuarioID, arquivo string, res Resumo) error {
+	resumoJSON, _ := json.Marshal(res)
+	var uid any
+	if usuarioID != "" {
+		uid = usuarioID
+	}
+	if _, err := tx.Exec(`INSERT INTO ti_importacoes (usuario_id, arquivo, resumo) VALUES ($1, $2, $3)`, uid, arquivo, string(resumoJSON)); err != nil {
+		return fmt.Errorf("registrar importação: %w", err)
+	}
+	return nil
+}
+
+// ImportarDespesas grava a Despesas TI AAAA.xlsx: parâmetros substituídos por inteiro e os
+// lançamentos (fonte 'planilha') SÓ do ano do arquivo — os outros anos ficam como histórico.
+func ImportarDespesas(db *sql.DB, d *Despesas, usuarioID, arquivo string) (Resumo, error) {
+	var res Resumo
+	tx, err := db.Begin()
+	if err != nil {
+		return res, fmt.Errorf("iniciar transação: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if res.Parametros, err = gravarParametros(tx, d.Params); err != nil {
+		return res, err
+	}
+	if _, err := tx.Exec(`DELETE FROM ti_lancamentos WHERE fonte = $1 AND ano = $2`, FontePlanilha, d.Ano); err != nil {
+		return res, fmt.Errorf("limpar lançamentos: %w", err)
+	}
+	if err := insereEmLotes(tx, "ti_lancamentos",
+		[]string{"fonte", "ref", "origem", "status", "pedido", "folha", "miro", "nf", "competencia", "vencimento", "valor", "fornecedor", "descricao", "cc_sap", "conta", "bp", "cnpj", "ano"},
+		len(d.Lancamentos), func(i int) []any {
+			l := d.Lancamentos[i]
+			return []any{FontePlanilha, l.Ref, l.Origem, l.Status, l.Pedido, l.Folha, l.Miro, l.NF,
+				nuloSeVazio(l.Competencia), nuloSeVazio(l.Vencimento), l.Valor, l.Fornecedor, l.Descricao, l.CCSap, l.Conta,
+				cortar(l.BP, 20), cortar(l.CNPJ, 30), d.Ano}
+		}); err != nil {
+		return res, err
+	}
+	res.Lancamentos = len(d.Lancamentos)
+	if err := RegistrarPlanilha(tx); err != nil {
+		return res, fmt.Errorf("registrar planilha no fechamento: %w", err)
+	}
+	if err := registrarImportacao(tx, usuarioID, arquivo, res); err != nil {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("confirmar importação: %w", err)
+	}
+	return res, nil
+}
+
+// ImportarOrcamentoTI grava a Orçamento TI AAAA.xlsx. Substitui o orçamento DO ANO (as linhas
+// dessa fonte e os valores do mesmo ano que tenham vindo da Forecast antiga, para não somar duas vezes).
+func ImportarOrcamentoTI(db *sql.DB, o *OrcamentoTI, usuarioID, arquivo string) (Resumo, error) {
+	var res Resumo
+	tx, err := db.Begin()
+	if err != nil {
+		return res, fmt.Errorf("iniciar transação: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM ti_orcamento_linhas WHERE fonte = $1 AND ano = $2`, FonteOrcamentoTI, o.Ano); err != nil {
+		return res, fmt.Errorf("limpar orçamento: %w", err)
+	}
+	ini, fim := fmt.Sprintf("%d-01-01", o.Ano), fmt.Sprintf("%d-12-01", o.Ano)
+	if _, err := tx.Exec(`DELETE FROM ti_orcamento_valores WHERE mes BETWEEN $1 AND $2
+		AND linha_id IN (SELECT id FROM ti_orcamento_linhas WHERE fonte = $3)`, ini, fim, FonteForecast); err != nil {
+		return res, fmt.Errorf("limpar orçamento da Forecast: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM ti_orcamento_linhas l WHERE l.fonte = $1
+		AND NOT EXISTS (SELECT 1 FROM ti_orcamento_valores v WHERE v.linha_id = l.id)`, FonteForecast); err != nil {
+		return res, fmt.Errorf("limpar linhas vazias: %w", err)
+	}
+	type valor struct {
+		linha int64
+		mes   string
+		v     float64
+	}
+	var valores []valor
+	for _, l := range o.Linhas {
+		var id int64
+		if err := tx.QueryRow(`
+			INSERT INTO ti_orcamento_linhas (fonte, ref, origem, divisao, cc, conta, fornecedor, descricao, ano)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id
+		`, FonteOrcamentoTI, l.Ref, cortar(l.Origem, 50), cortar(l.Divisao, 20), cortar(l.CC, 20), cortar(l.Conta, 20), cortar(l.Fornecedor, 255), l.Descricao, o.Ano).Scan(&id); err != nil {
+			return res, fmt.Errorf("inserir linha de orçamento %s: %w", l.Ref, err)
+		}
+		for j, ym := range o.Meses {
+			valores = append(valores, valor{linha: id, mes: ym + "-01", v: l.Valores[j]})
+		}
+	}
+	if err := insereEmLotes(tx, "ti_orcamento_valores", []string{"linha_id", "mes", "valor"}, len(valores), func(i int) []any {
+		return []any{valores[i].linha, valores[i].mes, valores[i].v}
+	}); err != nil {
+		return res, err
+	}
+	res.OrcamentoLinhas, res.Meses = len(o.Linhas), len(o.Meses)
+	res.PrimeiroMes, res.UltimoMes = o.Meses[0], o.Meses[len(o.Meses)-1]
+	if err := registrarImportacao(tx, usuarioID, arquivo, res); err != nil {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("confirmar importação: %w", err)
+	}
+	return res, nil
 }

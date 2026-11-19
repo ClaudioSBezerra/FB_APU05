@@ -31,6 +31,7 @@ type oraculoPag struct {
 type oraculoLanc struct {
 	ID      string      `json:"id"`
 	BP      string      `json:"bp"`
+	BPs     []string    `json:"bps"`
 	NF      string      `json:"nf"`
 	Miro    string      `json:"miro"`
 	Comp    *string     `json:"comp"`
@@ -91,12 +92,9 @@ func TestFBL1N_Oraculo(t *testing.T) {
 
 	rows := make([]LancRow, len(d.Lanc))
 	for i, l := range d.Lanc {
-		rows[i] = LancRow{ID: l.ID, BP: l.BP, NF: l.NF, Miro: l.Miro, Comp: l.Comp, Valor: l.Valor, Forn: l.Forn, Classif: l.Classif, daSAP: l.Src == "SAP"}
+		rows[i] = LancRow{ID: l.ID, BP: l.BP, BPs: l.BPs, NF: l.NF, Miro: l.Miro, Comp: l.Comp, Valor: l.Valor, Forn: l.Forn, Classif: l.Classif, daSAP: l.Src == "SAP"}
 	}
-	antes := bpPorNomeNaFBL1N
-	bpPorNomeNaFBL1N = false // o gabarito não tem o último recurso por nome
-	t.Cleanup(func() { bpPorNomeNaFBL1N = antes })
-	pm := CruzarPagamentos(rows, partidas, "FBL1N", "2026-11-18", "2026-11-18")
+	pm := CruzarPagamentos(rows, partidas, "FBL1N", "2026-11-18", "2026-11-19")
 
 	difs, comPag := 0, 0
 	for i, l := range d.Lanc {
@@ -161,7 +159,7 @@ func TestFBL1N_SemBP_Cobertura(t *testing.T) {
 	for i, l := range d.Lanc {
 		rows[i] = LancRow{ID: l.ID, NF: l.NF, Miro: l.Miro, Comp: l.Comp, Valor: l.Valor, Forn: l.Forn, Classif: l.Classif, daSAP: l.Src == "SAP"} // sem BP
 	}
-	CruzarPagamentos(rows, partidas, "FBL1N", "2026-11-18", "2026-11-18")
+	CruzarPagamentos(rows, partidas, "FBL1N", "2026-11-18", "2026-11-19")
 	iguais, total, achadas, gabAchadas := 0, 0, 0, 0
 	for i, l := range d.Lanc {
 		if l.Pag == nil {

@@ -43,6 +43,22 @@ func esperaPermissaoTI(mock sqlmock.Sqlmock, liberado bool) {
 		WillReturnRows(sqlmock.NewRows([]string{"?column?"}).AddRow(liberado))
 }
 
+// esperaPermissaoTILeitura: rotas de leitura (permissões, modelo) conferem também se é gestor.
+func esperaPermissaoTILeitura(mock sqlmock.Sqlmock, liberado bool) {
+	esperaPermissaoTI(mock, liberado)
+	if !liberado {
+		esperaEscopoTI(mock)
+	}
+}
+
+func esperaEscopoTI(mock sqlmock.Sqlmock, linhas ...[2]string) {
+	rows := sqlmock.NewRows([]string{"tipo", "valor"})
+	for _, l := range linhas {
+		rows.AddRow(l[0], l[1])
+	}
+	mock.ExpectQuery(regexp.QuoteMeta("FROM ti_gestor_escopo")).WithArgs(testTIUsuarioID).WillReturnRows(rows)
+}
+
 func multipartComArquivo(t *testing.T, campo, nome, conteudo string) (*bytes.Buffer, string) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -69,7 +85,7 @@ func TestPermissoesHandler(t *testing.T) {
 	} {
 		t.Run(c.nome, func(t *testing.T) {
 			db, mock := newSQLMock(t)
-			esperaPermissaoTI(mock, c.liberado)
+			esperaPermissaoTILeitura(mock, c.liberado)
 			rec := httptest.NewRecorder()
 			PermissoesHandler(db)(rec, reqTI(http.MethodGet, "/api/me/permissoes", nil, ""))
 			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), c.esperado) {
@@ -85,6 +101,7 @@ func TestPermissoesHandler(t *testing.T) {
 func TestPermissoesHandler_UsuarioInexistenteNaoLibera(t *testing.T) {
 	db, mock := newSQLMock(t)
 	mock.ExpectQuery(regexp.QuoteMeta(sqlPermissaoTI)).WithArgs(testTIUsuarioID).WillReturnError(sql.ErrNoRows)
+	esperaEscopoTI(mock)
 	rec := httptest.NewRecorder()
 	PermissoesHandler(db)(rec, reqTI(http.MethodGet, "/api/me/permissoes", nil, ""))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"controle_ti":false`) {
@@ -107,7 +124,11 @@ func TestRotasTI_SemInterruptor_403_ENaoLeNada(t *testing.T) {
 	} {
 		t.Run(c.nome, func(t *testing.T) {
 			db, mock := newSQLMock(t)
-			esperaPermissaoTI(mock, false)
+			if c.nome == "modelo" {
+				esperaPermissaoTILeitura(mock, false)
+			} else {
+				esperaPermissaoTI(mock, false)
+			}
 			rec := httptest.NewRecorder()
 			c.h(db)(rec, c.req)
 			if rec.Code != http.StatusForbidden {
@@ -326,5 +347,28 @@ func TestTIConferencia_SemInterruptor_403(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("a conferência leu dados sem permissão: %v", err)
+	}
+}
+
+func TestPermissoesHandler_Gestor(t *testing.T) {
+	db, mock := newSQLMock(t)
+	mock.ExpectQuery(regexp.QuoteMeta(sqlPermissaoTI)).WithArgs(testTIUsuarioID).WillReturnRows(sqlmock.NewRows([]string{"x"}).AddRow(false))
+	esperaEscopoTI(mock, [2]string{"cc", "6710"})
+	rec := httptest.NewRecorder()
+	PermissoesHandler(db)(rec, reqTI(http.MethodGet, "/api/me/permissoes", nil, ""))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"controle_ti":true`) || !strings.Contains(rec.Body.String(), `"controle_ti_nivel":"gestor"`) {
+		t.Fatalf("status=%d corpo=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// O gestor não importa nem confere: só o ADM (interruptor controle_ti) passa nessas rotas.
+func TestTIImportar_Gestor_403(t *testing.T) {
+	db, mock := newSQLMock(t)
+	mock.ExpectQuery(regexp.QuoteMeta(sqlPermissaoTI)).WithArgs(testTIUsuarioID).WillReturnRows(sqlmock.NewRows([]string{"x"}).AddRow(false))
+	corpo, ct := multipartComArquivo(t, "arquivo", "x.xlsx", "PK")
+	rec := httptest.NewRecorder()
+	TIImportarHandler(db)(rec, reqTI(http.MethodPost, "/api/ti/importar", corpo, ct))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("esperado 403, obtido %d", rec.Code)
 	}
 }

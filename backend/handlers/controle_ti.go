@@ -44,6 +44,43 @@ func temControleTI(db *sql.DB, userID string) (bool, error) {
 	return liberado, err
 }
 
+// nivelTI devolve "adm" (usuarios.controle_ti), "gestor" (tem escopo em ti_gestor_escopo) ou "".
+// O ADM vale mais que o escopo de gestor. Lido do banco a cada chamada.
+func nivelTI(db *sql.DB, userID string) (string, error) {
+	adm, err := temControleTI(db, userID)
+	if err != nil || adm {
+		if adm {
+			return controleti.NivelADM, nil
+		}
+		return "", err
+	}
+	e, err := controleti.CarregarEscopo(db, userID)
+	if err != nil {
+		return "", err
+	}
+	if e.Vazio() {
+		return "", nil
+	}
+	return controleti.NivelGestor, nil
+}
+
+// comTILeitura libera ADM e gestor (rotas só de leitura); o handler decide o que cada um recebe.
+func comTILeitura(db *sql.DB, next func(w http.ResponseWriter, r *http.Request, nivel string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		nivel, err := nivelTI(db, GetUserIDFromContext(r))
+		if err != nil {
+			log.Printf("[ControleTI] Erro ao checar permissão: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		if nivel == "" {
+			jsonErr(w, http.StatusForbidden, msgSemControleTI)
+			return
+		}
+		next(w, r, nivel)
+	}
+}
+
 // comControleTI barra com 403 quem não tem o interruptor ligado. Vai por
 // dentro de RequireAuth (que já garantiu usuário autenticado).
 func comControleTI(db *sql.DB, next http.HandlerFunc) http.HandlerFunc {
@@ -70,7 +107,7 @@ func PermissoesHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		liberado, err := temControleTI(db, GetUserIDFromContext(r))
+		nivel, err := nivelTI(db, GetUserIDFromContext(r))
 		if err != nil {
 			log.Printf("[ControleTI] Erro ao ler permissões: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -78,13 +115,13 @@ func PermissoesHandler(db *sql.DB) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]bool{"controle_ti": liberado})
+		_ = json.NewEncoder(w).Encode(map[string]any{"controle_ti": nivel != "", "controle_ti_nivel": nivel})
 	}
 }
 
 // TIModeloHandler — GET /api/ti/modelo.
 func TIModeloHandler(db *sql.DB) http.HandlerFunc {
-	return comControleTI(db, func(w http.ResponseWriter, r *http.Request) {
+	return comTILeitura(db, func(w http.ResponseWriter, r *http.Request, nivel string) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -96,6 +133,15 @@ func TIModeloHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
+		if nivel == controleti.NivelGestor { // gestor: só os próprios CCs, filtrado AQUI no servidor
+			esc, err := controleti.CarregarEscopo(db, GetUserIDFromContext(r))
+			if err != nil {
+				log.Printf("[ControleTI] Erro ao ler o escopo do gestor: %v", err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+			modelo = controleti.FiltrarModelo(modelo, esc)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(modelo)
@@ -105,7 +151,7 @@ func TIModeloHandler(db *sql.DB) http.HandlerFunc {
 // resultadoArquivo é o desfecho de cada arquivo da importação.
 type resultadoArquivo struct {
 	Arquivo  string                       `json:"arquivo"`
-	Tipo     string                       `json:"tipo,omitempty"` // forecast | ksb1 | ksb2 | fbl1n
+	Tipo     string                       `json:"tipo,omitempty"` // forecast | despesas | orcamento | ksb1 | ksb2 | fbl1n
 	Ok       bool                         `json:"ok"`
 	Erro     string                       `json:"erro,omitempty"`
 	Forecast *controleti.Resumo           `json:"forecast,omitempty"`
@@ -114,7 +160,7 @@ type resultadoArquivo struct {
 }
 
 const (
-	limiteArquivosImportacao = 6
+	limiteArquivosImportacao = 10
 	limiteTotalImportacao    = 60 << 20 // 3 planilhas de até 25 MB não cabem juntas; 60 MB cobre o uso real
 )
 
@@ -188,7 +234,7 @@ func TIImportarHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Forecast primeiro, depois KSB1, KSB2 e FBL1N
-		ordem := map[string]int{controleti.TipoForecast: 0, controleti.TipoKSB1: 1, controleti.TipoKSB2: 2, controleti.TipoFBL1N: 3}
+		ordem := map[string]int{controleti.TipoForecast: 0, controleti.TipoDespesas: 0, controleti.TipoOrcamento: 1, controleti.TipoKSB1: 2, controleti.TipoKSB2: 3, controleti.TipoFBL1N: 4}
 		sort.SliceStable(arquivos, func(i, j int) bool { return ordem[arquivos[i].tipo] < ordem[arquivos[j].tipo] })
 
 		userID := GetUserIDFromContext(r)
@@ -200,6 +246,22 @@ func TIImportarHandler(db *sql.DB) http.HandlerFunc {
 				if planilha, err = controleti.LerPlanilha(a.dados); err == nil {
 					var resumo controleti.Resumo
 					if resumo, err = controleti.Importar(db, planilha, userID, a.nome); err == nil {
+						a.res.Forecast = &resumo
+					}
+				}
+			case controleti.TipoDespesas:
+				var d *controleti.Despesas
+				if d, err = controleti.LerDespesas(a.dados); err == nil {
+					var resumo controleti.Resumo
+					if resumo, err = controleti.ImportarDespesas(db, d, userID, a.nome); err == nil {
+						a.res.Forecast = &resumo
+					}
+				}
+			case controleti.TipoOrcamento:
+				var o *controleti.OrcamentoTI
+				if o, err = controleti.LerOrcamentoTI(a.dados); err == nil {
+					var resumo controleti.Resumo
+					if resumo, err = controleti.ImportarOrcamentoTI(db, o, userID, a.nome); err == nil {
 						a.res.Forecast = &resumo
 					}
 				}
@@ -285,5 +347,32 @@ func TIConferenciaHandler(db *sql.DB) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"resumo": res.Resumo, "linhas": res.Linhas, "situacoes": controleti.Situacoes,
 		})
+	})
+}
+
+// TIEuHandler — GET /api/ti/eu: quem sou eu no Controle TI (nível e escopo). Alimenta a tela:
+// o gestor não vê importação nem conferência.
+func TIEuHandler(db *sql.DB) http.HandlerFunc {
+	return comTILeitura(db, func(w http.ResponseWriter, r *http.Request, nivel string) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		uid := GetUserIDFromContext(r)
+		var nome string
+		_ = db.QueryRow(`SELECT nome FROM usuarios WHERE id = $1`, uid).Scan(&nome)
+		resp := map[string]any{"nome": nome, "nivel": nivel, "editor": nivel == controleti.NivelADM, "ccs": []string{}, "grupos": []string{}}
+		if nivel == controleti.NivelGestor {
+			esc, err := controleti.CarregarEscopo(db, uid)
+			if err != nil {
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+			resp["ccs"], resp["grupos"] = esc.Lista()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 }

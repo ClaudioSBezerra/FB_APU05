@@ -29,6 +29,24 @@ type Meta struct {
 	Year      string            `json:"year"`
 	MonthSrc  map[string]string `json:"monthSrc"`
 	SapMonths []string          `json:"sapMonths"`
+	// Espelho do que o painel lê no topo de meta.
+	Tardios    TardiosSAP         `json:"tardios"`
+	K1Modo     string             `json:"k1modo"`
+	Ignorado   map[string]float64 `json:"ignorado"`
+	TotSap     float64            `json:"totSap"`
+	TotNosso   float64            `json:"totNosso"`
+	Warn       []string           `json:"warn"`
+	Fechamento *Fechamento        `json:"fechamento,omitempty"`
+	// Sources: arquivos que alimentam o painel (nome e data), no formato que o painel mostra.
+	Sources map[string]any `json:"sources,omitempty"`
+}
+
+// Fechamento descreve o fechamento do último mês (dia 6) para o aviso do painel.
+type Fechamento struct {
+	Mes               string `json:"mes"`
+	Em                string `json:"em"`
+	Status            string `json:"status"` // aguardando_planilha | fechado
+	PlanilhaEnviadaEm string `json:"planilha_enviada_em,omitempty"`
 }
 
 // MetaSAP: a regra de 2027 do documento do Welton — nos meses fechados cobertos pela KSB1
@@ -42,6 +60,20 @@ type MetaSAP struct {
 	Desde       string   `json:"desde"`  // primeiro mês em que o SAP é o oficial
 	Oficiais    []string `json:"oficiais"`
 	Provisorios []string `json:"provisorios"`
+	SapMonths   []string `json:"-"`
+	// K1Modo: como o mês de cada lançamento da KSB1 foi decidido ("data de entrada" | "data de lançamento").
+	K1Modo   string             `json:"k1modo"`
+	Tardios  TardiosSAP         `json:"tardios"`
+	Ignorado map[string]float64 `json:"ignorado"` // KSB1 de pedidos/fornecedores de outras áreas, por CC
+	TotSap   float64            `json:"totSap"`
+	TotNosso float64            `json:"totNosso"`
+}
+
+// TardiosSAP resume os lançamentos que entraram no SAP depois do corte do fechamento.
+type TardiosSAP struct {
+	N     int     `json:"n"`
+	Valor float64 `json:"valor"`
+	Mes   string  `json:"mes"`
 }
 
 type BudgetRow struct {
@@ -86,8 +118,13 @@ type LancRow struct {
 	// SaldoSap: saldo em aberto do pedido na KSB2, ao lado dos itens a lançar.
 	SaldoSap *float64 `json:"saldoSap"`
 	// BP e CNPJ vêm das colunas novas da planilha Despesas TI 2027 (opcionais).
-	BP   string `json:"bp"`
-	CNPJ string `json:"cnpj"`
+	BP   string   `json:"bp"`
+	BPs  []string `json:"bps,omitempty"` // vários BPs para o mesmo CNPJ (T_FornBP)
+	CNPJ string   `json:"cnpj"`
+	// Kind: "R" realizado, "C" comprometido, "X" substituída pela KSB1 (não soma nas contas).
+	Kind    string `json:"kind"`
+	Tardio  bool   `json:"tardio,omitempty"`
+	MesLanc string `json:"ymLanc,omitempty"`
 	// Src: "SAP" para as linhas do realizado oficial vindas da KSB1, "Planilha" para as demais.
 	Src string `json:"src"`
 	// Pag: status de pagamento cruzado com a FBL1N (só linhas realizadas da planilha).
@@ -148,7 +185,7 @@ type Entrada struct {
 }
 
 // DesdePadraoSAP: a partir de janeiro/2027 o SAP é o realizado oficial (documento do Welton).
-const DesdePadraoSAP = "2027-01"
+const DesdePadraoSAP = "2026-01"
 
 // MesFechado devolve o último mês fechado (AAAA-MM). A regra de 2027: do dia
 // 6 em diante o mês anterior está fechado (o SAP aceita lançamento retroativo
@@ -225,6 +262,9 @@ func Montar(in Entrada) *Modelo {
 	grp := func(d string) string { v := p.Divisao[d]; return GrupoDaDivisao(d, v.Descricao, v.Empresa) }
 
 	for _, o := range in.Orcamento {
+		if o.CC == "6600" { // Lei do Bem: fora do painel
+			continue
+		}
 		vals := make([]float64, len(meses))
 		for ym, v := range o.Valores {
 			if i, ok := idxMes[ym]; ok {
@@ -242,9 +282,18 @@ func Montar(in Entrada) *Modelo {
 	metaSap.Ksb2Em = in.KSB2Em
 	m.Meta.Sap = metaSap
 	m.Meta.Year, m.Meta.MonthSrc, m.Meta.SapMonths = fontesPorMes(meses, in.LastClosed, metaSap)
+	m.Meta.Tardios, m.Meta.K1Modo, m.Meta.Ignorado = metaSap.Tardios, metaSap.K1Modo, metaSap.Ignorado
+	m.Meta.TotSap, m.Meta.TotNosso = metaSap.TotSap, metaSap.TotNosso
+	m.Meta.Warn = []string{}
+	if len(in.KSB1) > 0 && metaSap.K1Modo == "data de lançamento" {
+		m.Meta.Warn = append(m.Meta.Warn, "KSB1 sem a coluna \"Data de entrada\": lançamentos feitos depois do dia 6 com data do mês fechado ficam no mês fechado. Inclua \"Data de entrada\" no layout da KSB1.")
+	}
 
 	for _, l := range lancamentos {
 		div, cc := DivCCDoSap(l.CCSap)
+		if cc == "6600" { // Lei do Bem: fora do painel
+			continue
+		}
 		classif := "Comprometido"
 		if c, ok := p.Status[l.Status]; ok {
 			classif = c
@@ -262,6 +311,23 @@ func Montar(in Entrada) *Modelo {
 		}
 		if l.ForcaRealizado {
 			r.Src = "SAP"
+		}
+		r.Kind = "C"
+		if classif == "Realizado" {
+			r.Kind = "R"
+		}
+		if l.Subst {
+			r.Kind = "X"
+		}
+		r.Tardio, r.MesLanc = l.Tardio, l.MesLanc
+		// T_FornBP: CNPJ -> BP(s); só preenche o BP se a linha não tiver um válido
+		if bs := p.FornBP[somenteDigitos(l.CNPJ)]; len(bs) > 0 && somenteDigitos(l.CNPJ) != "" {
+			if !reBPValido.MatchString(strings.TrimSpace(r.BP)) {
+				r.BP = bs[0]
+			}
+			if len(bs) > 1 {
+				r.BPs = bs
+			}
 		}
 		if len(l.Competencia) >= 7 {
 			c := l.Competencia[:7]
@@ -388,7 +454,7 @@ func projecao(budget []BudgetRow, lanc []LancRow, meses []string, idxMes map[str
 		}
 	}
 	for _, l := range lanc {
-		if l.Comp == nil {
+		if l.Comp == nil || l.Kind == "X" {
 			continue
 		}
 		i, ok := idxMes[*l.Comp]
@@ -477,13 +543,17 @@ func fontesPorMes(meses []string, lastClosed string, sap MetaSAP) (string, map[s
 	if len(lastClosed) >= 4 {
 		ano = lastClosed[:4]
 	}
+	eSap := map[string]bool{}
+	for _, m := range sap.SapMonths {
+		eSap[m] = true
+	}
 	fonte := make(map[string]string, len(meses))
 	sapMeses := []string{}
 	for _, ym := range meses {
 		switch {
 		case ym > lastClosed:
 			fonte[ym] = "aberto"
-		case sap.Ksb1De != "" && ym >= sap.Ksb1De && ym <= sap.Ksb1Ate:
+		case eSap[ym]:
 			fonte[ym] = "SAP"
 			sapMeses = append(sapMeses, ym)
 		default:

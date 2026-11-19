@@ -158,6 +158,34 @@ mantendo as adaptações do sistema (dados por `postMessage`, "Importar planilha
 Welton): fechamento automático do dia 6 às 00:30 com foto travada e aviso por e-mail, linhas da planilha
 substituídas pela KSB1 mantidas na aba Lançamentos (`kind X`), conectores por API.
 
+## Estrutura de 2027, gestores e fechamento do dia 6 (migration 033, 19/11/2026)
+
+Respostas do Welton (seção 15 da `Especificacao_Integracao_SAP`) implementadas:
+
+- **Planilhas por ano.** `Despesas TI AAAA.xlsx` (abas Lançamentos e Parâmetros, com BP, CNPJ/CPF e a tabela T_FornBP)
+  e `Orçamento TI AAAA.xlsx` (colunas `MM.AAAA`) entram na importação (tipos `despesas` e `orcamento`, detectados pelo
+  conteúdo). Reimportar um ano substitui **só aquele ano** (`ti_lancamentos.ano`, `ti_orcamento_linhas.ano`): 2026 fica como
+  histórico quando entra 2027. O orçado de 2027 continua o da FC FY27 Forecast até o Orçamento TI 2027 sair.
+- **T_FornBP** (`ti_param_fornbp`): CNPJ/CPF → BP(s). Um CNPJ pode ter mais de um BP; o cruzamento com a FBL1N tenta todos.
+- **Validado com os arquivos do Welton** (`validacao_2026_test.go`): Despesas TI 2026 = 1.595 lançamentos; out/26 = 147
+  lançadas (R$ 4.887.114,77); realizado oficial de out/26 = **R$ 4.920.941,56**; pagamentos **1.250 pagas / 41 em aberto /
+  10 vencidas / 124 não localizadas** — idêntico ao painel dele, linha a linha.
+- **Realizado do SAP (KSB1)** reescrito como port do painel novo: a linha da planilha que a KSB1 substitui **fica na lista**
+  (`kind X`, não soma); `meta.tardios`, `meta.ignorado`, `k1modo`. Mês efetivo de cada lançamento da KSB1 = o maior entre o
+  mês da data de lançamento e a **janela da data de entrada** (entrada do dia 6 em diante = mês da entrada; do dia 1 ao 5 =
+  mês anterior). Lançamento com data do mês atual entrado de 1 a 5 é do mês atual; só o retroativo fica no mês que fecha.
+  **A KSB1 de hoje não traz a data de entrada**: o leitor aceita a coluna `Data de entrada` (ou `Entrado em`/`Data de
+  criação`); sem ela vale a data de lançamento e o painel avisa. Pedir ao SAP para incluir a coluna no layout.
+- **Fechamento automático do dia 6** (`fechamento.go`, `ti_fechamentos`): o job roda às 00:30 do dia 6 (Recife), grava a
+  foto do mês anterior (`aguardando_planilha`) e envia **e-mail** (só e-mail, sem Teams) aos ADM (usuários com o
+  interruptor Controle TI) pedindo a sincronização; lembrete às 09:00. Importar a Despesas TI depois da foto conclui o
+  fechamento; sem planilha, às 23:59 do dia 6 fecha com a última. Se o SMTP estiver fora, tenta de novo.
+- **Perfis.** ADM = Welton e Wanessa (interruptor Controle TI; veem tudo e importam). **Gestor** = escopo em
+  `ti_gestor_escopo` (CCs e/ou grupos de empresa, ex.: RetailX): só **lê** e só vê os próprios CCs. O filtro é feito **no
+  servidor** (`FiltrarModelo`): o gestor nunca recebe as linhas dos outros, nem BP/CNPJ, nem as partidas órfãs da FBL1N.
+  `GET /api/ti/eu` devolve nível e escopo; importar e conferência respondem 403 ao gestor. O painel só tem os dados
+  embutidos para o ADM (agora nem isso: ele recebe tudo por mensagem do sistema).
+
 ## Próximas fases
 
 2. **Lançamentos no sistema** (digitar nota, status CRIAR PEDIDO → LANÇADO, anexo da NF), com atualização

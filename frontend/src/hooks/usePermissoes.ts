@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 
 export interface Permissoes {
   controle_ti: boolean;
+  controle_ti_nivel?: 'adm' | 'gestor' | '';
 }
 
 // Permissões lidas do servidor (não do token): ligar/desligar um interruptor em

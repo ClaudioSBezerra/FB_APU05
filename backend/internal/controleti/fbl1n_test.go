@@ -79,15 +79,15 @@ func TestCruzarPagamentos(t *testing.T) {
 }
 
 func TestCruzarPagamentos_BPPeloNomeNaFBL1N(t *testing.T) {
+	bpPorNomeNaFBL1N = true
+	defer func() { bpPorNomeNaFBL1N = false }()
 	rows := []LancRow{{ID: "a", NF: "100", Comp: mes("2026-03"), Valor: 500, Forn: "Acme Serviços de TI Ltda", Classif: "Realizado"}}
 	partidas := []PartidaFBL1N{{Empresa: "FC01", BP: "2000111222", Fornecedor: "ACME SERVICOS DE TI LTDA", Tipo: "RE", Ref: "100", Valor: 500, Venc: "2026-04-10", DtComp: "2026-04-11"}}
 	pm := CruzarPagamentos(rows, partidas, "f", "2026-11-18", "2026-11-18")
 	if rows[0].Pag.St != "Paga" || len(pm.Orphans) != 0 {
 		t.Fatalf("deveria achar o BP pelo nome (sem acento/caixa): %+v", rows[0].Pag)
 	}
-	antes := bpPorNomeNaFBL1N
 	bpPorNomeNaFBL1N = false
-	defer func() { bpPorNomeNaFBL1N = antes }()
 	rows[0].Pag = nil
 	CruzarPagamentos(rows, partidas, "f", "2026-11-18", "2026-11-18")
 	if rows[0].Pag.St != "Não localizada" {

@@ -199,9 +199,8 @@ type PagModelo struct {
 }
 
 // bpPorNomeNaFBL1N liga o último recurso para achar o BP de um lançamento sem BP: o BP que a própria
-// FBL1N traz para um fornecedor de mesmo nome (extensão em relação ao dashboard do Welton, que só
-// usa a coluna BP da planilha; o teste de gabarito desliga isto para comparar campo a campo).
-var bpPorNomeNaFBL1N = true
+// FBL1N traz para um fornecedor de mesmo nome (extensão nossa, DESLIGADA: o painel do Welton deixa "não localizada" o reembolso de pessoa sem CPF).
+var bpPorNomeNaFBL1N = false
 
 var (
 	rePrefixoNF  = regexp.MustCompile(`^(NFS-?E|NFE|NFS|NF|FAT|FATURA|INVOICE)[^0-9]*`)
@@ -323,6 +322,18 @@ func CruzarPagamentos(rows []LancRow, partidas []PartidaFBL1N, fonte, extraido, 
 		return maisVotado(votosFBL, ordemFBL, k)
 	}
 
+	bpsDe := func(l LancRow) []string {
+		var out []string
+		visto := map[string]bool{}
+		for _, b := range append([]string{bpDe(l)}, l.BPs...) {
+			if b != "" && !visto[b] {
+				visto[b] = true
+				out = append(out, b)
+			}
+		}
+		return out
+	}
+
 	// linhas candidatas e agrupamento por BP + NF
 	var real []int
 	for i, l := range rows {
@@ -415,6 +426,13 @@ func CruzarPagamentos(rows []LancRow, partidas []PartidaFBL1N, fonte, extraido, 
 		}
 		return out
 	}
+	livresDe := func(ls []int) []partida {
+		var out []partida
+		for _, b := range bpsDe(rows[ls[0]]) {
+			out = append(out, free(b)...)
+		}
+		return out
+	}
 	totalDe := func(ls []int) float64 {
 		var t float64
 		for _, i := range ls {
@@ -429,7 +447,7 @@ func CruzarPagamentos(rows []LancRow, partidas []PartidaFBL1N, fonte, extraido, 
 			continue
 		}
 		var fr []partida
-		for _, x := range free(g.bp) {
+		for _, x := range livresDe(g.ls) {
 			if nfNumero(x.Ref) == g.nf {
 				fr = append(fr, x)
 			}
@@ -445,7 +463,7 @@ func CruzarPagamentos(rows []LancRow, partidas []PartidaFBL1N, fonte, extraido, 
 		}
 		t := totalDe(g.ls)
 		var fr []partida
-		for _, x := range free(g.bp) {
+		for _, x := range livresDe(g.ls) {
 			r := nfNumero(x.Ref)
 			if len(r) >= 3 && (strings.HasSuffix(r, g.nf) || strings.HasSuffix(g.nf, r)) && x.Valor >= 0.75*t && x.Valor <= 1.01*t {
 				fr = append(fr, x)
@@ -464,7 +482,7 @@ func CruzarPagamentos(rows []LancRow, partidas []PartidaFBL1N, fonte, extraido, 
 		c = c[:7]
 		janela := map[string]bool{mesSoma(c, -1): true, c: true, mesSoma(c, 1): true}
 		var fr []partida
-		for _, x := range free(g.bp) {
+		for _, x := range livresDe(g.ls) {
 			if janela[mesDaData(x.DtLanc)] && x.Valor >= 0.75*t && x.Valor <= 1.001*t {
 				fr = append(fr, x)
 			}
@@ -492,7 +510,6 @@ func CruzarPagamentos(rows []LancRow, partidas []PartidaFBL1N, fonte, extraido, 
 	}
 	for _, k := range mgOrdem {
 		ls := mg[k]
-		bp := strings.SplitN(k, "|", 2)[0]
 		t := totalDe(ls)
 		janela := map[string]bool{}
 		for _, i := range ls {
@@ -502,7 +519,7 @@ func CruzarPagamentos(rows []LancRow, partidas []PartidaFBL1N, fonte, extraido, 
 			}
 		}
 		var fr []partida
-		for _, x := range free(bp) {
+		for _, x := range livresDe(ls) {
 			if janela[mesDaData(x.DtLanc)] && x.Valor >= 0.75*t && x.Valor <= 1.001*t {
 				fr = append(fr, x)
 			}
@@ -520,8 +537,14 @@ func CruzarPagamentos(rows []LancRow, partidas []PartidaFBL1N, fonte, extraido, 
 			how := "NF/valor não encontrados no BP"
 			if b == "" {
 				how = "sem BP (preencha CNPJ/CPF na planilha)"
-			} else if !bps[b] {
-				how = "BP não está na extração da FBL1N"
+			} else {
+				achou := false
+				for _, x := range bpsDe(rows[i]) {
+					achou = achou || bps[x]
+				}
+				if !achou {
+					how = "BP não está na extração da FBL1N"
+				}
 			}
 			p = &Pag{St: "Não localizada", How: how}
 		} else if p.St == "Em aberto" && p.VencSap != "" && p.VencSap < hoje {

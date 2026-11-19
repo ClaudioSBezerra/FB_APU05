@@ -49,11 +49,11 @@ func ImportarKSB1(db *sql.DB, linhas []KSB1Linha, leitura ResumoLeituraSAP, usua
 		return 0, fmt.Errorf("limpar período da KSB1: %w", err)
 	}
 	if err := insereEmLotes(tx, "ti_ksb1",
-		[]string{"carga_id", "pedido", "cc_sap", "conta", "fornecedor", "cnpj", "texto", "valor", "data_lancamento", "doc_ref", "estornado", "doc_estorno", "ref_estorno"},
+		[]string{"carga_id", "pedido", "cc_sap", "conta", "fornecedor", "cnpj", "texto", "valor", "data_lancamento", "doc_ref", "estornado", "doc_estorno", "ref_estorno", "data_entrada"},
 		len(linhas), func(i int) []any {
 			l := linhas[i]
 			return []any{cargaID, cortar(l.Pedido, 30), cortar(l.CCSap, 20), cortar(l.Conta, 20), cortar(l.Fornecedor, 255), cortar(l.CNPJ, 20),
-				l.Texto, l.Valor, l.DataLanc, cortar(l.DocRef, 30), l.Estornado, cortar(l.DocEstorno, 30), cortar(l.RefEstorno, 30)}
+				l.Texto, l.Valor, l.DataLanc, cortar(l.DocRef, 30), l.Estornado, cortar(l.DocEstorno, 30), cortar(l.RefEstorno, 30), nuloSeVazio(l.DataEntrada)}
 		}); err != nil {
 		return 0, err
 	}
@@ -100,7 +100,8 @@ func ImportarKSB2(db *sql.DB, linhas []KSB2Linha, leitura ResumoLeituraSAP, usua
 func CarregarKSB1(db *sql.DB) ([]KSB1Linha, error) {
 	rows, err := db.Query(`
 		SELECT pedido, cc_sap, conta, fornecedor, cnpj, texto, valor::float8,
-		       to_char(data_lancamento, 'YYYY-MM-DD'), doc_ref, estornado, doc_estorno, ref_estorno
+		       to_char(data_lancamento, 'YYYY-MM-DD'), doc_ref, estornado, doc_estorno, ref_estorno,
+		       COALESCE(to_char(data_entrada, 'YYYY-MM-DD'), '')
 		FROM ti_ksb1 ORDER BY id
 	`)
 	if err != nil {
@@ -110,7 +111,7 @@ func CarregarKSB1(db *sql.DB) ([]KSB1Linha, error) {
 	var out []KSB1Linha
 	for rows.Next() {
 		var l KSB1Linha
-		if err := rows.Scan(&l.Pedido, &l.CCSap, &l.Conta, &l.Fornecedor, &l.CNPJ, &l.Texto, &l.Valor, &l.DataLanc, &l.DocRef, &l.Estornado, &l.DocEstorno, &l.RefEstorno); err != nil {
+		if err := rows.Scan(&l.Pedido, &l.CCSap, &l.Conta, &l.Fornecedor, &l.CNPJ, &l.Texto, &l.Valor, &l.DataLanc, &l.DocRef, &l.Estornado, &l.DocEstorno, &l.RefEstorno, &l.DataEntrada); err != nil {
 			return nil, err
 		}
 		out = append(out, l)

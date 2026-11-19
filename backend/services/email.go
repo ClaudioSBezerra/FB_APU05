@@ -11,9 +11,11 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"mime"
 	"net/smtp"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // EmailConfig contém a configuração SMTP, lida do ambiente a cada chamada
@@ -149,5 +151,34 @@ func SendPasswordResetEmail(email, resetToken string) error {
 		return fmt.Errorf("falha ao enviar e-mail: %w", err)
 	}
 	log.Printf("[Email] Redefinição de senha enviada com sucesso para %s", email)
+	return nil
+}
+
+// SendHTMLEmail envia um e-mail HTML simples (assunto com acento é codificado, RFC 2047).
+// Sem SMTP configurado devolve erro (quem chama decide se repete depois).
+func SendHTMLEmail(to []string, subject, bodyHTML string) error {
+	config := GetEmailConfig()
+	if config.Password == "" || len(to) == 0 {
+		return fmt.Errorf("serviço de e-mail não configurado ou sem destinatários")
+	}
+	for _, t := range to {
+		if strings.ContainsAny(t, "\r\n,;<>") {
+			return fmt.Errorf("destinatário inválido")
+		}
+	}
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
+		config.From, strings.Join(to, ", "), mime.QEncoding.Encode("utf-8", subject), bodyHTML)
+	var err error
+	if config.Port == 465 {
+		err = sendMailSSL(config, to, []byte(msg))
+	} else {
+		addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+		err = smtp.SendMail(addr, smtp.PlainAuth("", config.Username, config.Password, config.Host), config.Username, to, []byte(msg))
+	}
+	if err != nil {
+		log.Printf("[Email] Falha ao enviar %q: %v", subject, err)
+		return fmt.Errorf("falha ao enviar e-mail: %w", err)
+	}
+	log.Printf("[Email] %q enviado para %d destinatário(s)", subject, len(to))
 	return nil
 }
