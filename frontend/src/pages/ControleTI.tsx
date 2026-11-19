@@ -530,7 +530,7 @@ function ConferenciaSap({ onImportar }: { onImportar: () => void }) {
 // Projeção), levados para dentro do sistema SEM reescrever o cálculo: é o mesmo
 // código do painel original, o que garante o mesmo visual e os mesmos números.
 //
-// Roda num <iframe sandbox="allow-scripts"> (origem opaca: não enxerga a sessão do
+// Roda num <iframe sandbox="allow-scripts allow-modals" (allow-modals só para "Exportar resumo (PDF)" = imprimir)> (origem opaca: não enxerga a sessão do
 // sistema nem chama a API) e uma CSP restrita no nginx (sem rede). Os dados chegam
 // por postMessage — o painel avisa "fcx-pronto" e recebe "fcx-modelo". Fonte da
 // verdade do código: frontend/public/painel-ti/ (ver docs/referencia/04-CONTROLE-TI.md).
@@ -567,7 +567,7 @@ function Painel({ modelo, eu, onImportar }: { modelo: TiModelo; eu?: TiEu; onImp
       ref={frame}
       src="/painel-ti/index.html"
       title="Painel de despesas de TI"
-      sandbox="allow-scripts"
+      sandbox="allow-scripts allow-modals"
       className="block w-full rounded-lg border border-border bg-card"
       style={{ height: 'calc(100vh - 10.5rem)', minHeight: 560 }}
     />

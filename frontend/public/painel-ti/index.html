@@ -24,7 +24,7 @@
       <div class="sub" id="subline"></div>
     </div>
     <div class="actions">
-      <button class="btn primary" id="btnMain" title="Abre a aba Importar planilha do Controle TI (Despesas TI, Orçamento TI, KSB1, KSB2 e FBL1N)">⟳ Importar planilha</button>
+      <button class="btn primary" id="btnMain" title="Abre a aba Importar planilha do Controle de Despesas (Despesas TI, Orçamento TI, KSB1, KSB2 e FBL1N)">⟳ Importar planilha</button>
       <span hidden><button id="btnPlan">Enviar planilha</button><button id="btnSap">Sincronizar com SAP</button><button id="btnSync">Sincronizar e publicar</button><button id="btnLoad">Abrir pasta…</button><button id="btnSave">Baixar HTML</button><button id="btnFbl">Carregar FBL1N</button></span>
       <button id="btnTheme" class="ico" title="Alternar tema claro/escuro" aria-label="Alternar tema">◐</button>
     </div>
@@ -71,6 +71,14 @@
 
   <!-- ================= VISÃO GERAL ================= -->
   <div class="view" data-view="geral">
+    <section class="card rbar" id="g-rbar">
+      <span class="flab">Período</span><select id="gMes" aria-label="Período"></select>
+      <span class="flab" id="gGestL">Gestor</span><select id="gGest" aria-label="Gestor"></select>
+      <span class="flab">CC</span><select id="gCC" aria-label="Centro de custo"></select>
+      <span class="spacer"></span>
+      <button class="btn primary" id="btnPdf" title="Gera o resumo do período para enviar ao gestor (na janela de impressão, escolha Salvar como PDF)">Exportar resumo (PDF)</button>
+    </section>
+    <section class="sec" id="g-mes" style="display:none"></section>
     <section class="grid kpis" id="g-kpis"></section>
     <section class="card sec kpiwide" id="g-prior" role="button" tabindex="0"></section>
     <section class="grid two sec">
@@ -277,6 +285,7 @@
   <div class="brandfoot"><i style="background:var(--brand-red)"></i><i style="background:var(--brand-green)"></i><i style="background:var(--brand-graphite)"></i><span>FCx Labs · Administrativo · Controle de despesas de TI</span></div>
 </div>
 <div class="tt" id="tt"></div>
+<div id="rel"></div>
 <div class="modal" id="modal" aria-hidden="true"><div class="mbox" role="dialog" aria-modal="true" aria-labelledby="mtitle">
   <div class="mhead"><div><h2 id="mtitle"></h2><div class="small muted" id="msub"></div></div><button id="mclose" title="Fechar (Esc)">✕ Fechar</button></div>
   <div id="mbody"></div>

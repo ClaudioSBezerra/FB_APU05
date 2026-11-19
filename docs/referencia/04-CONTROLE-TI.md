@@ -185,6 +185,19 @@ Respostas do Welton (seção 15 da `Especificacao_Integracao_SAP`) implementadas
   `GET /api/ti/eu` devolve nível e escopo; importar e conferência respondem 403 ao gestor. O painel só tem os dados
   embutidos para o ADM (agora nem isso: ele recebe tudo por mensagem do sistema).
 
+## Visão geral: resumo do mês por gestor e PDF (19/11/2026, seção 13a da especificação)
+
+O painel ganhou, na Visão geral, a barra **Período** (ano até hoje ou um mês) + **Gestor** + **CC** e o botão **Exportar resumo
+(PDF)**. Com um mês escolhido aparece o bloco "Resumo do mês" (No mês / No ano); o resto da Visão geral segue sendo do ano.
+O PDF (uma página por gestor: resumo em frases, no mês, no ano com despesas de anos anteriores, previsão do ano, mês a mês,
+por CC, maiores fornecedores, 15 maiores notas com pagamento, pendências e "como ler") sai pela impressão do navegador
+("Salvar como PDF", sem cabeçalhos e rodapés). Fica de fora: Conferência SAP, notas fora do painel e CPF.
+Gestores do relatório (lista fixa em `GESTORES` no painel): Carvalho = 6720 + 6150 + 6810 · Marlos = 6710 · Salvio = 6730 ·
+Klayton = RetailX + 6620 (o 6810 no relatório fica com o Carvalho; no acesso é compartilhado). Use mês **fechado**; mês em
+aberto sai como Provisório. Para imprimir de dentro do iframe do painel, o sandbox passou a ser `allow-scripts allow-modals`
+(sem rede, sem formulários e sem scripts de fora continuam valendo pela CSP do nginx). Gerar e enviar o PDF automaticamente
+depois do fechamento é a fase servidor (não implementada).
+
 ## Próximas fases
 
 2. **Lançamentos no sistema** (digitar nota, status CRIAR PEDIDO → LANÇADO, anexo da NF), com atualização
