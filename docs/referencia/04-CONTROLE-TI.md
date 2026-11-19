@@ -199,9 +199,11 @@ aberto sai como Provisório. Para imprimir de dentro do iframe do painel, o sand
 depois do fechamento é a fase servidor (não implementada): o envio é **manual pelo Welton**.
 
 **Enviar resumo por e-mail** (19/11/2026): na Visão geral do painel, ao lado de *Exportar resumo (PDF)*, o ADM tem o botão
-*Enviar por e-mail* (some para o gestor). O PDF é gerado pelo navegador (Exportar resumo (PDF) → Salvar como PDF); o botão abre
-um diálogo do sistema já com o mês e o gestor escolhidos no painel (assunto e destinatário sugeridos): o ADM confere,
-escreve a mensagem e **anexa o PDF salvo**.
+*Enviar por e-mail* (some para o gestor). Fluxo: escolher o filtro (mês e gestor/CC) → *Enviar por e-mail* → o painel monta o
+mesmo relatório e o sistema **gera o PDF por trás** (`src/lib/resumoPdf.ts`: html2canvas + jsPDF, no navegador; o HTML é
+renderizado num iframe sem scripts) → o diálogo já abre com o PDF anexado, o assunto e o destinatário sugeridos (o gestor
+escolhido) → escolher quem recebe e **Enviar**. O PDF sai como imagem das páginas A4 (sem texto selecionável; ~1 MB),
+quebrando a página sem cortar tabela nem deixar título/cabeçalho sozinho. Para um PDF vetorial, use o *Exportar resumo (PDF)*.
 `POST /api/ti/enviar-resumo` (só ADM) confere que o arquivo é um PDF (até 8 MB) e que o destinatário é do módulo (ADM ou
 gestor ativo, lista em `GET /api/ti/destinatarios`) — não é um relé de e-mail livre —, envia pelo SMTP com o PDF anexado e
 registra quem enviou, para quem e quando em `ti_envios_resumo` (o PDF não é guardado).

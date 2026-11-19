@@ -33,12 +33,15 @@ open(os.path.join(P, "painel.css"), "w", encoding="utf-8").write("\n".join(ours[
 # ---- HTML
 h = re.sub(r"<style[^>]*>.*?</style>", '<link rel="stylesheet" href="painel.css">', body, flags=re.S)
 h = h.replace('<meta name="fcx-api" content="">\n', "")
+h = re.sub(r'<link rel="preconnect"[^>]*>', "", h)                      # sem Google Fonts: a Manrope vai embutida no painel.css
+h = re.sub(r'<link href="https://fonts.googleapis.com[^>]*>\n?', "", h)
 h = re.sub(r'<div class="drop" id="drop">.*?</div>\n', "", h, flags=re.S)
 h = re.sub(r'\s*<input type="file"[^>]*>', "", h)
 h = h.replace('<button class="btn primary" id="btnMain" title="Publica a planilha de despesas e sincroniza com o SAP">⟳ Publicar planilha e sincronizar SAP</button>',
               '<button class="btn primary" id="btnMain" title="Abre a aba Importar planilha do Controle de Despesas (Despesas TI, Orçamento TI, KSB1, KSB2 e FBL1N)">⟳ Importar planilha</button>')
 h = re.sub(r'<button id="btnSrv"[^>]*>.*?</button>\s*', "", h, flags=re.S)
-h = re.sub(r"(<!--SCRIPT-->\s*)+(<!--FCXDATA--><!--SCRIPT--><!--/FCXDATA-->\s*)?(<!--SCRIPT-->\s*)*", '<script src="painel.js"></script>\n', h)
+h = re.sub(r"(<!--SCRIPT-->\s*)+(<!--FCXDATA--><!--SCRIPT--><!--/FCXDATA-->\s*)?(<!--SCRIPT-->\s*)*",
+           '<script src="painel.js"></script>\n', h)
 i = h.index('<button class="btn primary" id="btnPdf"'); j = h.index("</button>", i) + len("</button>")
 h = h[:j] + '\n<button class="btn" id="btnMail" title="Envia o PDF do resumo por e-mail (gere e salve o PDF antes, depois anexe o arquivo)">Enviar por e-mail</button>' + h[j:]
 
@@ -62,12 +65,19 @@ function setPrev(){}
 const API = { url:'', hosted:true };
 const irImportar = ()=> window.parent.postMessage({ type:'fcx-importar' }, '*');
 ['#btnLoad','#btnMain','#btnPlan','#btnSync','#btnFbl'].forEach(q=>{ const b=$(q); if (b) b.onclick = irImportar; });
-// "Enviar por e-mail": o painel não fala com o servidor; avisa o sistema, que abre o diálogo de envio
-// já com o mês e o gestor escolhidos aqui (o PDF é anexado lá, depois de salvo).
+// "Enviar por e-mail": o painel não fala com o servidor nem desenha o PDF (o iframe é isolado e o html2canvas
+// precisa de um frame da mesma origem). Ele só MONTA o mesmo relatório do "Exportar resumo (PDF)"
+// (exportResumo(true) preenche o #rel) e entrega o HTML ao sistema, que gera o PDF e abre o diálogo de envio.
 if ($('#btnMail')) $('#btnMail').onclick = ()=>{
-  const D = IDX.D || compute(), mes = S.mes || (D.ymY.filter(m=>m<=M.meta.lastClosed).pop() || D.ymY[0]);
-  const g = GESTORES.find(x=>x.k===S.gest);
-  window.parent.postMessage({ type:'fcx-enviar-resumo', mes, mesRotulo: ymLabel(mes), gest: S.gest||'', gestNome: g ? g.nome : '', quem: g ? g.desc : (S.cc ? 'CC '+S.cc : 'TI') }, '*');
+  try{
+    showErr('');
+    const D = IDX.D || compute(), mes = S.mes || (D.ymY.filter(m=>m<=M.meta.lastClosed).pop() || D.ymY[0]);
+    const g = GESTORES.find(x=>x.k===S.gest), info = exportResumo(true);
+    if (!info) throw new Error('não foi possível montar o resumo');
+    const rel = $('#rel'); const relHtml = rel.innerHTML; rel.innerHTML = '';
+    window.parent.postMessage({ type:'fcx-enviar-resumo', mes, mesRotulo: ymLabel(mes), gest: S.gest||'', gestNome: g ? g.nome : '', quem: info.quem,
+      arquivo: ('Resumo TI - ' + info.quem + ' - ' + info.L).replace(/[\\/:*?"<>|·]/g,' ').replace(/\s+/g,' ').trim().replace('/','-') + '.pdf', relHtml }, '*');
+  }catch(err){ console.error(err); showErr('Não consegui montar o resumo: '+(err.message||err)); }
 };
 window.addEventListener('message', e=>{
   if (e.source !== window.parent) return;
@@ -79,6 +89,12 @@ window.addEventListener('message', e=>{
 });
 '''
 js = head + adapter + close + "\nwindow.parent.postMessage({ type:'fcx-pronto' }, '*');\n})();\n"
+for a, b in (("function exportResumo(){", "function exportResumo(soMontar){"),
+             ("const rel = $('#rel'); rel.innerHTML = h;", "const rel = $('#rel'); rel.innerHTML = h;\n  if (soMontar === true) return { quem, L };  // só monta o relatório (usado para gerar o PDF por trás)"),
+             ("$('#btnPdf').onclick = exportResumo;", "$('#btnPdf').onclick = ()=>exportResumo();")):
+    if a not in js:
+        sys.exit("trecho do painel mudou, ajuste o script: " + a)
+    js = js.replace(a, b, 1)
 for a, b in (("Publicar planilha e sincronizar SAP", "Importar planilha"), ("Publicar planilha e sincronizar", "Importar planilha")):
     js = js.replace(a, b); h = h.replace(a, b)
 js = re.sub(r"clique em “Publicar planilha[^”]*”", "use “Importar planilha” (botão no topo do painel)", js)

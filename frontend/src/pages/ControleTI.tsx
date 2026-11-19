@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import { gerarPdfDoResumo } from '@/lib/resumoPdf';
 import { brl, curto, dataBR, rotuloMes, type TiLanc, type TiModelo } from '@/lib/controleTi';
 
 // Controle TI — orçado × realizado × a lançar × projeção das despesas de TI
@@ -803,6 +804,8 @@ export interface ContextoResumo {
   gest: string;
   gestNome: string;
   quem: string;
+  arquivo: string; // nome sugerido do PDF
+  relHtml: string; // o relatório montado pelo painel (o PDF é gerado aqui, por trás)
 }
 
 // gestor do painel -> começo do e-mail do usuário correspondente (para já deixar o destinatário escolhido)
@@ -818,7 +821,9 @@ function EnviarResumo({ ctx, onFechar }: { ctx: ContextoResumo | null; onFechar:
   const [para, setPara] = useState('');
   const [assunto, setAssunto] = useState('Resumo de despesas de TI');
   const [mensagem, setMensagem] = useState('');
-  const [arquivo, setArquivo] = useState<File | null>(null);
+  // o PDF é gerado por trás, assim que o diálogo abre (o mesmo relatório do "Exportar resumo (PDF)")
+  const [pdf, setPdf] = useState<{ arquivo: File; paginas: number } | null>(null);
+  const [erroPdf, setErroPdf] = useState('');
   const { data } = useQuery({
     queryKey: ['ti-destinatarios'],
     queryFn: () => pedir<{ destinatarios: Destinatario[] }>('/api/ti/destinatarios'),
@@ -828,30 +833,43 @@ function EnviarResumo({ ctx, onFechar }: { ctx: ContextoResumo | null; onFechar:
   useEffect(() => {
     if (!ctx) return;
     setAssunto(`Resumo de despesas de TI · ${ctx.mesRotulo}${ctx.gestNome ? ` · ${ctx.gestNome} (${ctx.quem})` : ''}`);
-    setArquivo(null);
     const prefixo = EMAIL_DO_GESTOR[ctx.gest];
     const achado = prefixo ? data?.destinatarios.find((d) => d.email.toLowerCase().startsWith(prefixo)) : undefined;
     setPara(achado?.email ?? '');
   }, [ctx, data]);
+  useEffect(() => {
+    if (!ctx) return;
+    let cancelado = false;
+    setPdf(null);
+    setErroPdf('');
+    gerarPdfDoResumo(ctx.relHtml)
+      .then((r) => {
+        if (!cancelado) setPdf({ arquivo: new File([r.blob], `Resumo TI - ${(ctx.gestNome ? `${ctx.gestNome} ${ctx.quem}` : ctx.quem).replace(/[\\/:*?"<>|·]/g, ' ')} - ${ctx.mesRotulo.replace('/', '-')}.pdf`.replace(/\s+/g, ' '), { type: 'application/pdf' }), paginas: r.paginas });
+      })
+      .catch((err: Error) => {
+        if (!cancelado) setErroPdf(err.message || 'falha ao gerar o PDF');
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [ctx]);
   const enviar = useMutation({
     mutationFn: async () => {
       const corpo = new FormData();
       corpo.append('destinatario', para);
       corpo.append('assunto', assunto);
       corpo.append('mensagem', mensagem);
-      if (arquivo) corpo.append('arquivo', arquivo);
+      if (pdf) corpo.append('arquivo', pdf.arquivo, pdf.arquivo.name);
       return pedir<{ ok: boolean; destinatario: string }>('/api/ti/enviar-resumo', { method: 'POST', body: corpo });
     },
     onSuccess: (r) => {
       toast.success(`Resumo enviado para ${r.destinatario}`);
       onFechar();
-      setArquivo(null);
       setMensagem('');
     },
     onError: (err: Error) => toast.error(err.message),
   });
-  const pdfOk = !arquivo || /\.pdf$/i.test(arquivo.name);
-  const pronto = Boolean(para && arquivo && pdfOk && assunto.trim());
+  const pronto = Boolean(para && pdf && assunto.trim());
 
   return (
     <>
@@ -860,8 +878,8 @@ function EnviarResumo({ ctx, onFechar }: { ctx: ContextoResumo | null; onFechar:
           <DialogHeader>
             <DialogTitle>Enviar o resumo por e-mail</DialogTitle>
             <DialogDescription>
-              Resumo de <strong>{ctx?.mesRotulo}</strong> · {ctx?.gestNome ? `${ctx.gestNome} (${ctx.quem})` : ctx?.quem}. Gere o PDF antes (<strong>Exportar resumo (PDF)</strong>,
-              salvar como PDF) e anexe aqui o arquivo salvo.
+              Resumo de <strong>{ctx?.mesRotulo}</strong> · {ctx?.gestNome ? `${ctx.gestNome} (${ctx.quem})` : ctx?.quem}. O PDF é gerado automaticamente com o
+              filtro que você escolheu no painel: é só escolher quem recebe.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3">
@@ -890,9 +908,18 @@ function EnviarResumo({ ctx, onFechar }: { ctx: ContextoResumo | null; onFechar:
               <Textarea id="ti-mail-msg" rows={3} maxLength={2000} value={mensagem} onChange={(e) => setMensagem(e.target.value)} />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="ti-mail-pdf">PDF do resumo</Label>
-              <Input id="ti-mail-pdf" type="file" accept="application/pdf,.pdf" onChange={(e) => setArquivo(e.target.files?.[0] ?? null)} />
-              {!pdfOk && <p className="text-xs text-danger-text">O arquivo precisa ser um PDF.</p>}
+              <Label>Anexo</Label>
+              <p className="rounded-md border border-input bg-card px-3 py-2 text-sm" role="status">
+                {erroPdf ? (
+                  <span className="text-danger-text">Não foi possível gerar o PDF: {erroPdf}</span>
+                ) : pdf ? (
+                  <>
+                    📎 {pdf.arquivo.name} <span className="text-fg-helper">· {pdf.paginas} página(s) · {Math.max(1, Math.round(pdf.arquivo.size / 1024))} KB</span>
+                  </>
+                ) : (
+                  <span className="text-fg-helper">Gerando o PDF…</span>
+                )}
+              </p>
             </div>
           </div>
           <DialogFooter>

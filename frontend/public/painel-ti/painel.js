@@ -313,7 +313,7 @@ function relChart(D){
   g += `<polyline fill="none" stroke="#d7262c" stroke-width="1.6" stroke-dasharray="4 3" points="${D.mB.map((b,i)=>(pl+i*bw+bw/2)+','+y(b)).join(' ')}"/>`;
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-height:62mm">${g}</svg>`;
 }
-function exportResumo(){
+function exportResumo(soMontar){
   if (!M) return;
   const D = IDX.D || compute(), mes = S.mes || (D.ymY.filter(m=>m<=M.meta.lastClosed).pop() || D.ymY[0]);
   const x = mesData(D, mes), L = ymLabel(mes), y0 = ymLabel(D.Y+'-01'), sl = selLabel(), prevY = +D.Y - 1;
@@ -367,6 +367,7 @@ function exportResumo(){
     <div><b>Fechamento:</b> o mês fecha no dia 6 do mês seguinte. Lançamentos retroativos feitos até o dia 5 entram no mês que fecha; depois disso, contam no mês atual.</div></div>
     <div class="ft">Uso interno · ${esc(sl)} · gerado em ${new Date().toLocaleString('pt-BR')} · Painel de Despesas - TI (FCx Labs · Administrativo)</div>`;
   const rel = $('#rel'); rel.innerHTML = h;
+  if (soMontar === true) return { quem, L };  // só monta o relatório (usado para gerar o PDF por trás)
   const t0 = document.title; document.title = `Resumo TI - ${quem.replace(/[\\/:*?"<>|·]/g,' ').replace(/\s+/g,' ').trim()} - ${L.replace('/','-')}`;
   document.body.classList.add('rel-print');
   const done = ()=>{ document.body.classList.remove('rel-print'); document.title = t0; window.removeEventListener('afterprint', done); };
@@ -1406,7 +1407,7 @@ $('#btnClear').onclick = ()=>{ Object.assign(S,{grps:[],cc:'',div:'',tipo:'',con
 $('#gMes').onchange = e=>{ S.mes = e.target.value; render(); };
 $('#gGest').onchange = e=>{ S.gest = e.target.value; S.cc = ''; buildFilters(); render(); };
 $('#gCC').onchange = e=>{ S.cc = e.target.value; buildFilters(); render(); };
-$('#btnPdf').onclick = exportResumo;
+$('#btnPdf').onclick = ()=>exportResumo();
 $('#btnTheme').onclick = ()=>{ const r=document.documentElement; const dark = r.dataset.theme ? r.dataset.theme==='dark' : matchMedia('(prefers-color-scheme: dark)').matches; r.dataset.theme = dark?'light':'dark'; store.set('fcxDash.theme', r.dataset.theme); render(); };
 try{ localStorage.removeItem('fcxDash.snaps'); }catch(e){}
 const th = store.get('fcxDash.theme'); if (th) document.documentElement.dataset.theme = th;
@@ -1425,12 +1426,19 @@ function setPrev(){}
 const API = { url:'', hosted:true };
 const irImportar = ()=> window.parent.postMessage({ type:'fcx-importar' }, '*');
 ['#btnLoad','#btnMain','#btnPlan','#btnSync','#btnFbl'].forEach(q=>{ const b=$(q); if (b) b.onclick = irImportar; });
-// "Enviar por e-mail": o painel não fala com o servidor; avisa o sistema, que abre o diálogo de envio
-// já com o mês e o gestor escolhidos aqui (o PDF é anexado lá, depois de salvo).
+// "Enviar por e-mail": o painel não fala com o servidor nem desenha o PDF (o iframe é isolado e o html2canvas
+// precisa de um frame da mesma origem). Ele só MONTA o mesmo relatório do "Exportar resumo (PDF)"
+// (exportResumo(true) preenche o #rel) e entrega o HTML ao sistema, que gera o PDF e abre o diálogo de envio.
 if ($('#btnMail')) $('#btnMail').onclick = ()=>{
-  const D = IDX.D || compute(), mes = S.mes || (D.ymY.filter(m=>m<=M.meta.lastClosed).pop() || D.ymY[0]);
-  const g = GESTORES.find(x=>x.k===S.gest);
-  window.parent.postMessage({ type:'fcx-enviar-resumo', mes, mesRotulo: ymLabel(mes), gest: S.gest||'', gestNome: g ? g.nome : '', quem: g ? g.desc : (S.cc ? 'CC '+S.cc : 'TI') }, '*');
+  try{
+    showErr('');
+    const D = IDX.D || compute(), mes = S.mes || (D.ymY.filter(m=>m<=M.meta.lastClosed).pop() || D.ymY[0]);
+    const g = GESTORES.find(x=>x.k===S.gest), info = exportResumo(true);
+    if (!info) throw new Error('não foi possível montar o resumo');
+    const rel = $('#rel'); const relHtml = rel.innerHTML; rel.innerHTML = '';
+    window.parent.postMessage({ type:'fcx-enviar-resumo', mes, mesRotulo: ymLabel(mes), gest: S.gest||'', gestNome: g ? g.nome : '', quem: info.quem,
+      arquivo: ('Resumo TI - ' + info.quem + ' - ' + info.L).replace(/[\\/:*?"<>|·]/g,' ').replace(/\s+/g,' ').trim().replace('/','-') + '.pdf', relHtml }, '*');
+  }catch(err){ console.error(err); showErr('Não consegui montar o resumo: '+(err.message||err)); }
 };
 window.addEventListener('message', e=>{
   if (e.source !== window.parent) return;
