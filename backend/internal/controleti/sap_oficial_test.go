@@ -147,53 +147,23 @@ func TestMontar_SaldoDaKSB2NosItensALancar(t *testing.T) {
 	}
 }
 
-func TestMesEfetivo_JanelaDoDia6(t *testing.T) {
-	casos := []struct {
-		lanc, entrada, quer string
-	}{
-		{"2026-10-20", "", "2026-10"},           // sem data de entrada: vale a data de lançamento
-		{"2026-10-20", "2026-10-21", "2026-10"}, // entrou no mês
-		{"2026-10-20", "2026-11-03", "2026-10"}, // retroativo entrado de 1 a 5: fica no mês que fecha
-		{"2026-10-20", "2026-11-06", "2026-11"}, // entrou do dia 6 em diante: conta no mês atual (tardio)
-		{"2026-11-02", "2026-11-03", "2026-11"}, // data do mês atual entrada de 1 a 5: é do mês atual
-		{"2026-12-30", "2027-01-08", "2026-12"}, // virada de ano, lançamento de dezembro entrado no dia 8: mês da janela (jan) < ... maior = jan
-	}
-	casos[5].quer = "2027-01"
-	for _, c := range casos {
-		if got := MesEfetivo(KSB1Linha{DataLanc: c.lanc, DataEntrada: c.entrada}); got != c.quer {
-			t.Errorf("lanç %s entrada %q: mês %s, esperava %s", c.lanc, c.entrada, got, c.quer)
+func TestMesEfetivo_EhADataDeLancamento(t *testing.T) {
+	// decisão de 19/11/2026: a KSB1 não tem data de entrada; vale o mês da data de lançamento
+	for lanc, quer := range map[string]string{"2026-10-20": "2026-10", "2026-11-02": "2026-11", "2026-12-31": "2026-12", "": ""} {
+		if got := MesEfetivo(KSB1Linha{DataLanc: lanc}); got != quer {
+			t.Errorf("lançamento %q: mês %q, esperava %q", lanc, got, quer)
 		}
 	}
 }
 
-func TestSAPOficial_Tardios(t *testing.T) {
+func TestSAPOficial_SemTardios(t *testing.T) {
 	lancs := []Lanc{planilhaL("1", "P1", ccA, "2026-10", 100, "LANÇADO")}
-	ksb := []KSB1Linha{
-		{Pedido: "P0", CCSap: ccA, DataLanc: "2026-10-05", DataEntrada: "2026-10-06", Valor: 10, Fornecedor: "X"}, // dá cobertura a out/26
-		{Pedido: "P1", CCSap: ccA, DataLanc: "2026-10-28", DataEntrada: "2026-11-09", Valor: 100, Fornecedor: "SAP"},
-	}
-	lancs = append(lancs, planilhaL("2", "P0", ccA, "2026-10", 10, "LANÇADO"))
+	ksb := []KSB1Linha{sap("P1", ccA, "2026-10-28", 100, "SAP")}
 	m := Montar(Entrada{Params: paramsStatus(), Lancamentos: lancs, KSB1: ksb, LastClosed: "2026-10", SapDesde: "2026-01"})
-	if m.Meta.Tardios.N != 1 || m.Meta.Tardios.Valor != 100 || m.Meta.Tardios.Mes != "2026-11" {
-		t.Errorf("tardios: %+v", m.Meta.Tardios)
+	if m.Meta.Tardios.N != 0 || m.Meta.Sap.K1Modo != "data de lançamento" || len(m.Meta.Warn) != 0 {
+		t.Errorf("sem data de entrada não há tardios nem aviso: %+v modo=%s warn=%v", m.Meta.Tardios, m.Meta.Sap.K1Modo, m.Meta.Warn)
 	}
-	if m.Meta.Sap.K1Modo != "data de entrada" {
-		t.Errorf("modo: %s", m.Meta.Sap.K1Modo)
-	}
-	var tard bool
-	for _, l := range m.Lanc {
-		if l.Tardio && l.Comp != nil && *l.Comp == "2026-11" && l.Valor == 100 {
-			tard = true
-		}
-		if l.ID == "1" && l.Kind != "X" {
-			t.Error("a linha da planilha casada com o tardio deveria virar kind X")
-		}
-	}
-	if !tard {
-		t.Error("faltou a linha do SAP no mês da janela (nov/26)")
-	}
-	r := realizadoPorMes(m)
-	if r["2026-10"] != 10 || r["2026-11"] != 100 {
-		t.Errorf("out/26 deveria ficar só com o item que entrou no corte e nov/26 com o tardio: %v", r)
+	if realizadoPorMes(m)["2026-10"] != 100 {
+		t.Errorf("out/26 = %.2f, esperava 100 (o valor da KSB1 substitui o da planilha)", realizadoPorMes(m)["2026-10"])
 	}
 }

@@ -41,12 +41,10 @@ type KSB1Linha struct {
 	Texto      string
 	Valor      float64
 	DataLanc   string // AAAA-MM-DD
-	// DataEntrada: data de entrada (criação) do documento no SAP; vazia quando o layout da KSB1 ainda não a traz.
-	DataEntrada string
-	DocRef      string
-	Estornado   bool
-	DocEstorno  string
-	RefEstorno  string
+	DocRef     string
+	Estornado  bool
+	DocEstorno string
+	RefEstorno string
 }
 
 // KSB2Linha é uma linha de detalhe da KSB2 (saldo em aberto). As linhas de
@@ -231,10 +229,9 @@ func LerKSB1(dados []byte) ([]KSB1Linha, ResumoLeituraSAP, error) {
 			Pedido: pedido, CCSap: cc, Conta: celulaSAP(row, col, "Classe de custo"),
 			Fornecedor: celulaSAP(row, col, "Razão Social Fornecedor"), CNPJ: somenteDigitos(celulaSAP(row, col, "CNPJ")),
 			Texto: celulaSAP(row, col, "Texto do pedido"), Valor: r2(numero(valorTxt)), DataLanc: data,
-			DataEntrada: dataSAP(primeiraCelula(row, col, colunasEntrada...)),
-			DocRef:      celulaSAP(row, col, "Nº doc.de referência"),
-			Estornado:   strings.EqualFold(celulaSAP(row, col, "estornado"), "X"),
-			DocEstorno:  celulaSAP(row, col, "Documento de estorno"), RefEstorno: celulaSAP(row, col, "Nº ref.estorno"),
+			DocRef:     celulaSAP(row, col, "Nº doc.de referência"),
+			Estornado:  strings.EqualFold(celulaSAP(row, col, "estornado"), "X"),
+			DocEstorno: celulaSAP(row, col, "Documento de estorno"), RefEstorno: celulaSAP(row, col, "Nº ref.estorno"),
 		})
 		m := data[:7]
 		if res.PrimeiroMes == "" || m < res.PrimeiroMes {
@@ -301,18 +298,6 @@ func LerKSB2(dados []byte) ([]KSB2Linha, ResumoLeituraSAP, error) {
 		return nil, res, errors.New("a KSB2 não tem nenhuma linha de detalhe")
 	}
 	return out, res, nil
-}
-
-// colunasEntrada: nomes aceitos para a data de entrada do documento no SAP (KSB1 e FBL1N).
-var colunasEntrada = []string{"Data de entrada", "Entrado em", "Data entrada", "Data de criação", "Criado em"}
-
-func primeiraCelula(row []string, col map[string]int, nomes ...string) string {
-	for _, n := range nomes {
-		if _, ok := col[normaliza(n)]; ok {
-			return celulaSAP(row, col, n)
-		}
-	}
-	return ""
 }
 
 func somenteDigitos(s string) string {

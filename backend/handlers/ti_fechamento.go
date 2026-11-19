@@ -63,10 +63,10 @@ func corpoEmailFechamento(mes string, lembrete bool) (assunto, corpo string) {
 	}
 	assunto = fmt.Sprintf("%sControle TI - fechamento de %s: sincronize a planilha com o SAP", pre, rotuloMesBR(mes))
 	corpo = fmt.Sprintf(`<div style="font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:620px">
-<p>O mês de <b>%s</b> acabou de ser fechado automaticamente (foto do SAP até 23:59 do dia 5).</p>
+<p>O mês de <b>%s</b> foi fechado automaticamente (corte do dia 5; o mês de cada lançamento é o da data de lançamento no SAP).</p>
 <p>Falta a planilha atualizada: importe a <b>Despesas TI</b> no Controle TI (Importar planilha), junto com a KSB1 e a FBL1N,
 para concluir o fechamento. Se nenhuma planilha for importada até o fim do dia 6, o mês fecha com a última planilha importada.</p>
-<p style="font-size:13px;color:#666">Lançamento com data do mês atual feito de 1 a 5 conta no mês atual; só o retroativo fica no mês que fecha.</p>
+<p style="font-size:13px;color:#666">O SAP só aceita lançamento retroativo até o dia 5; do dia 6 em diante o mês anterior não recebe mais lançamentos.</p>
 %s</div>`, html.EscapeString(rotuloMesBR(mes)), link)
 	return
 }

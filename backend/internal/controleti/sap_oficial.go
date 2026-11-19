@@ -5,43 +5,23 @@ package controleti
 //
 //   - mês fechado COM KSB1: vale o SAP (pedidos que estão na planilha); imobilizado e itens sem pedido
 //     da planilha continuam valendo. A linha da planilha cujo pedido aparece na KSB1 NÃO é apagada: fica
-//     na lista (Subst = "kind X") e só deixa de somar nas contas.
+//     na lista (kind X) e só deixa de somar nas contas.
 //   - mês fechado SEM KSB1: planilha, marcado como provisório.
-//   - fechamento do dia 6: o mês de um lançamento da KSB1 é o MAIOR entre o mês da data de lançamento e a
-//     janela da data de ENTRADA no SAP (entrada do dia 6 em diante = mês da entrada; do dia 1 ao 5 = mês
-//     anterior). Lançamento com data do mês atual entrado de 1 a 5 é do mês atual; só o retroativo fica no
-//     mês que fecha. Sem a coluna de entrada, vale a data de lançamento.
-//   - "tardios": entrou no SAP depois do corte com data de lançamento de mês já fechado — conta no mês da
-//     janela (mês atual) e aparece como "após o fechamento".
+//   - o mês de cada lançamento da KSB1 é o da DATA DE LANÇAMENTO (decisão de 19/11/2026: a KSB1 não terá
+//     data de entrada). Não precisa de "janela de entrada": o próprio SAP só aceita lançamento retroativo
+//     até o dia 5, então o mês fechado não muda depois do corte do dia 6.
 
 import (
 	"sort"
-	"strconv"
 	"strings"
 )
 
-// janelaEntrada devolve o mês (AAAA-MM) a que a data de entrada (AAAA-MM-DD) pertence.
-func janelaEntrada(iso string) string {
-	if len(iso) < 10 {
-		return ""
-	}
-	ym := iso[:7]
-	if iso[8:10] >= "06" {
-		return ym
-	}
-	return mesSoma(ym, -1)
-}
-
-// MesEfetivo é o mês a que a linha da KSB1 conta (ver o cabeçalho do arquivo).
+// MesEfetivo é o mês a que a linha da KSB1 conta: o da data de lançamento.
 func MesEfetivo(l KSB1Linha) string {
 	if len(l.DataLanc) < 7 {
 		return ""
 	}
-	ym := l.DataLanc[:7]
-	if w := janelaEntrada(l.DataEntrada); w != "" && w > ym {
-		return w
-	}
-	return ym
+	return l.DataLanc[:7]
 }
 
 func chaveForn(s string) string {
@@ -60,14 +40,10 @@ func aplicarSAPOficial(in Entrada, meses []string) ([]Lanc, MetaSAP) {
 	meta.K1Modo = "sem KSB1"
 
 	porMes := map[string][]KSB1Linha{} // por mês EFETIVO
-	temEntrada := false
 	var de, ate string
 	for _, l := range in.KSB1 {
 		if len(l.DataLanc) < 7 || ccEhLeiDoBem(l.CCSap) {
 			continue
-		}
-		if l.DataEntrada != "" {
-			temEntrada = true
 		}
 		if m := l.DataLanc[:7]; de == "" || m < de {
 			de = m
@@ -80,9 +56,6 @@ func aplicarSAPOficial(in Entrada, meses []string) ([]Lanc, MetaSAP) {
 	meta.Ksb1De, meta.Ksb1Ate = de, ate
 	if len(in.KSB1) > 0 {
 		meta.K1Modo = "data de lançamento"
-		if temEntrada {
-			meta.K1Modo = "data de entrada"
-		}
 	}
 
 	elegivel := map[string]bool{}
@@ -227,74 +200,6 @@ func aplicarSAPOficial(in Entrada, meses []string) ([]Lanc, MetaSAP) {
 		}
 	}
 
-	// tardios: entraram no SAP depois do corte, com data de lançamento de mês já fechado
-	var tardios []KSB1Linha
-	var mesesTard []string
-	for ym := range porMes {
-		if ym > in.LastClosed {
-			mesesTard = append(mesesTard, ym)
-		}
-	}
-	sort.Strings(mesesTard)
-	for _, ym := range mesesTard {
-		for _, l := range porMes[ym] {
-			if l.DataLanc[:7] != ym && l.DataLanc[:7] <= in.LastClosed {
-				if _, nosso := pedPlan[l.Pedido]; l.Pedido != "" && nosso {
-					tardios = append(tardios, l)
-				}
-			}
-		}
-	}
-	var valTard float64
-	casou := map[int]bool{}
-	for i, k := range tardios {
-		valTard += k.Valor
-		eym, lym := MesEfetivo(k), k.DataLanc[:7]
-		_, kcc := DivCCDoSap(k.CCSap)
-		melhor := -1
-		for j, l := range saida {
-			if casou[j] || l.ForcaRealizado || !realizado(l) || l.Pedido != k.Pedido || len(l.Competencia) < 7 {
-				continue
-			}
-			if _, lcc := DivCCDoSap(l.CCSap); lcc != kcc || abs(l.Valor-k.Valor) > 1 {
-				continue
-			}
-			c := l.Competencia[:7]
-			if c != eym && c != lym {
-				continue
-			}
-			if melhor < 0 || (c == eym && saida[melhor].Competencia[:7] != eym) {
-				melhor = j
-			}
-		}
-		if melhor >= 0 {
-			casou[melhor] = true
-			saida[melhor].Subst = true
-		}
-		forn := fornPed(k.Pedido)
-		if forn == "" {
-			forn = k.Fornecedor
-		}
-		d := descDoPedido[k.Pedido]
-		if d == "" {
-			d = k.Texto
-		}
-		saida = append(saida, Lanc{
-			Ref: "SAPT-" + k.Pedido + "-" + strings.ReplaceAll(eym, "-", "") + "-" + itoa(i), Origem: "SAP (KSB1) após o fechamento", Status: "LANÇADO",
-			Pedido: k.Pedido, Competencia: eym + "-01", Valor: k.Valor, Fornecedor: forn,
-			Descricao: d + " (lançado no SAP após o fechamento de " + lym + ")",
-			CCSap:     k.CCSap, Conta: k.Conta, ForcaRealizado: true, Tardio: true, MesLanc: lym,
-		})
-	}
-	meta.Tardios = TardiosSAP{N: len(tardios), Valor: r2(valTard), Mes: mesSoma(in.LastClosed, 1)}
+	meta.Tardios = TardiosSAP{Mes: mesSoma(in.LastClosed, 1)} // sem data de entrada não há "tardios"
 	return saida, meta
 }
-
-func abs(v float64) float64 {
-	if v < 0 {
-		return -v
-	}
-	return v
-}
-
-func itoa(i int) string { return strconv.Itoa(i) }

@@ -171,11 +171,10 @@ Respostas do Welton (seção 15 da `Especificacao_Integracao_SAP`) implementadas
   lançadas (R$ 4.887.114,77); realizado oficial de out/26 = **R$ 4.920.941,56**; pagamentos **1.250 pagas / 41 em aberto /
   10 vencidas / 124 não localizadas** — idêntico ao painel dele, linha a linha.
 - **Realizado do SAP (KSB1)** reescrito como port do painel novo: a linha da planilha que a KSB1 substitui **fica na lista**
-  (`kind X`, não soma); `meta.tardios`, `meta.ignorado`, `k1modo`. Mês efetivo de cada lançamento da KSB1 = o maior entre o
-  mês da data de lançamento e a **janela da data de entrada** (entrada do dia 6 em diante = mês da entrada; do dia 1 ao 5 =
-  mês anterior). Lançamento com data do mês atual entrado de 1 a 5 é do mês atual; só o retroativo fica no mês que fecha.
-  **A KSB1 de hoje não traz a data de entrada**: o leitor aceita a coluna `Data de entrada` (ou `Entrado em`/`Data de
-  criação`); sem ela vale a data de lançamento e o painel avisa. Pedir ao SAP para incluir a coluna no layout.
+  (`kind X`, não soma); `meta.ignorado`, `k1modo`. **Decisão de 19/11/2026: a KSB1 não terá data de entrada** — o mês de cada
+  lançamento é o da **Data de Lançamento** (na KSB1 e na FBL1N). Não há "janela do dia 6" nem lançamentos "tardios": o próprio
+  SAP só aceita lançamento retroativo até o dia 5, então o mês fechado não muda depois do corte. A FBL1N traz os dados da nota
+  e as datas: lançamento (cruzamento), vencimento líquido (vencida), compensação e documento de compensação (paga) e bloqueio.
 - **Fechamento automático do dia 6** (`fechamento.go`, `ti_fechamentos`): o job roda às 00:30 do dia 6 (Recife), grava a
   foto do mês anterior (`aguardando_planilha`) e envia **e-mail** (só e-mail, sem Teams) aos ADM (usuários com o
   interruptor Controle TI) pedindo a sincronização; lembrete às 09:00. Importar a Despesas TI depois da foto conclui o

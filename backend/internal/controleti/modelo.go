@@ -285,9 +285,6 @@ func Montar(in Entrada) *Modelo {
 	m.Meta.Tardios, m.Meta.K1Modo, m.Meta.Ignorado = metaSap.Tardios, metaSap.K1Modo, metaSap.Ignorado
 	m.Meta.TotSap, m.Meta.TotNosso = metaSap.TotSap, metaSap.TotNosso
 	m.Meta.Warn = []string{}
-	if len(in.KSB1) > 0 && metaSap.K1Modo == "data de lançamento" {
-		m.Meta.Warn = append(m.Meta.Warn, "KSB1 sem a coluna \"Data de entrada\": lançamentos feitos depois do dia 6 com data do mês fechado ficam no mês fechado. Inclua \"Data de entrada\" no layout da KSB1.")
-	}
 
 	for _, l := range lancamentos {
 		div, cc := DivCCDoSap(l.CCSap)
