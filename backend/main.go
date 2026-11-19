@@ -477,6 +477,8 @@ func main() {
 	http.HandleFunc("POST /api/admin/configuracoes/sap/{servico}/testar", handlers.RequireAuth(withDB(handlers.SAPTestarHandler), "administrador"))
 	http.HandleFunc("GET /api/ti/modelo", handlers.RequireAuth(withDB(handlers.TIModeloHandler), ""))
 	http.HandleFunc("GET /api/ti/eu", handlers.RequireAuth(withDB(handlers.TIEuHandler), ""))
+	http.HandleFunc("GET /api/ti/destinatarios", handlers.RequireAuth(withDB(handlers.TIDestinatariosHandler), ""))
+	http.HandleFunc("POST /api/ti/enviar-resumo", handlers.RequireAuth(withDB(handlers.TIEnviarResumoHandler), ""))
 	http.HandleFunc("POST /api/ti/importar", handlers.RequireAuth(withDB(handlers.TIImportarHandler), ""))
 	http.HandleFunc("GET /api/ti/conferencia", handlers.RequireAuth(withDB(handlers.TIConferenciaHandler), ""))
 

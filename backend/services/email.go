@@ -8,7 +8,9 @@ package services
 // SendPasswordResetEmail) foi replicado.
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"mime"
@@ -181,4 +183,73 @@ func SendHTMLEmail(to []string, subject, bodyHTML string) error {
 	}
 	log.Printf("[Email] %q enviado para %d destinatário(s)", subject, len(to))
 	return nil
+}
+
+// SendHTMLEmailWithAttachment envia um e-mail HTML com UM anexo (multipart/mixed, base64).
+// O nome do arquivo é saneado (sem caminho, sem aspas/quebra de linha). Mesmas regras de SendHTMLEmail.
+func SendHTMLEmailWithAttachment(to []string, subject, bodyHTML, filename, contentType string, data []byte) error {
+	config := GetEmailConfig()
+	if config.Password == "" || len(to) == 0 {
+		return fmt.Errorf("serviço de e-mail não configurado ou sem destinatários")
+	}
+	for _, t := range to {
+		if strings.ContainsAny(t, "\r\n,;<>") {
+			return fmt.Errorf("destinatário inválido")
+		}
+	}
+	msg := buildMessageWithAttachment(config.From, to, subject, bodyHTML, filename, contentType, data)
+	var err error
+	if config.Port == 465 {
+		err = sendMailSSL(config, to, msg)
+	} else {
+		addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+		err = smtp.SendMail(addr, smtp.PlainAuth("", config.Username, config.Password, config.Host), config.Username, to, msg)
+	}
+	if err != nil {
+		log.Printf("[Email] Falha ao enviar %q com anexo: %v", subject, err)
+		return fmt.Errorf("falha ao enviar e-mail: %w", err)
+	}
+	log.Printf("[Email] %q enviado com anexo (%d bytes) para %d destinatário(s)", subject, len(data), len(to))
+	return nil
+}
+
+func nomeAnexoSeguro(nome string) string {
+	nome = strings.Map(func(r rune) rune {
+		switch {
+		case r == '/' || r == '\\' || r == '"' || r == '\r' || r == '\n' || r == '\x00' || r < 32:
+			return '_'
+		}
+		return r
+	}, nome)
+	nome = strings.TrimSpace(nome)
+	if nome == "" || nome == "." || nome == ".." {
+		nome = "anexo.pdf"
+	}
+	if len(nome) > 120 {
+		nome = nome[len(nome)-120:]
+	}
+	return nome
+}
+
+func buildMessageWithAttachment(from string, to []string, subject, bodyHTML, filename, contentType string, data []byte) []byte {
+	var b strings.Builder
+	boundary := fmt.Sprintf("fcx-%x", sha256.Sum256(append([]byte(subject), data[:min(len(data), 64)]...)))[:36]
+	nome := nomeAnexoSeguro(filename)
+	fmt.Fprintf(&b, "From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\n", from, strings.Join(to, ", "), mime.QEncoding.Encode("utf-8", subject))
+	fmt.Fprintf(&b, "Content-Type: multipart/mixed; boundary=%q\r\n\r\n", boundary)
+	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n", boundary, wrap76(base64.StdEncoding.EncodeToString([]byte(bodyHTML))))
+	fmt.Fprintf(&b, "--%s\r\nContent-Type: %s; name=%q\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=%q\r\n\r\n%s\r\n", boundary, contentType, mime.QEncoding.Encode("utf-8", nome), mime.QEncoding.Encode("utf-8", nome), wrap76(base64.StdEncoding.EncodeToString(data)))
+	fmt.Fprintf(&b, "--%s--\r\n", boundary)
+	return []byte(b.String())
+}
+
+func wrap76(s string) string {
+	var out strings.Builder
+	for len(s) > 76 {
+		out.WriteString(s[:76])
+		out.WriteString("\r\n")
+		s = s[76:]
+	}
+	out.WriteString(s)
+	return out.String()
 }

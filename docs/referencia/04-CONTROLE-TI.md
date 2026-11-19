@@ -196,7 +196,13 @@ Gestores do relatório (lista fixa em `GESTORES` no painel): Carvalho = 6720 + 6
 Klayton = RetailX + 6620 (o 6810 no relatório fica com o Carvalho; no acesso é compartilhado). Use mês **fechado**; mês em
 aberto sai como Provisório. Para imprimir de dentro do iframe do painel, o sandbox passou a ser `allow-scripts allow-modals`
 (sem rede, sem formulários e sem scripts de fora continuam valendo pela CSP do nginx). Gerar e enviar o PDF automaticamente
-depois do fechamento é a fase servidor (não implementada).
+depois do fechamento é a fase servidor (não implementada): o envio é **manual pelo Welton**.
+
+**Enviar resumo por e-mail** (19/11/2026): na aba Painel, o ADM tem o botão *Enviar resumo por e-mail*. O PDF é gerado pelo navegador
+(Exportar resumo (PDF) → Salvar como PDF); no diálogo o ADM escolhe o destinatário, o assunto, a mensagem e **anexa o PDF salvo**.
+`POST /api/ti/enviar-resumo` (só ADM) confere que o arquivo é um PDF (até 8 MB) e que o destinatário é do módulo (ADM ou
+gestor ativo, lista em `GET /api/ti/destinatarios`) — não é um relé de e-mail livre —, envia pelo SMTP com o PDF anexado e
+registra quem enviou, para quem e quando em `ti_envios_resumo` (o PDF não é guardado).
 
 ## Próximas fases
 

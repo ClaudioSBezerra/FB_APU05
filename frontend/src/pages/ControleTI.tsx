@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Upload } from 'lucide-react';
+import { Mail, Upload } from 'lucide-react';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
@@ -783,6 +784,107 @@ function Importar({ modelo }: { modelo: TiModelo }) {
   );
 }
 
+// ---- Enviar o resumo (PDF) por e-mail ----
+// O PDF é gerado pelo navegador (painel → Exportar resumo (PDF) → Salvar como PDF); aqui o ADM anexa o arquivo
+// salvo e escolhe o destinatário. Só quem é do módulo (ADM ou gestor) pode receber.
+interface Destinatario {
+  nome: string;
+  email: string;
+  tipo: 'adm' | 'gestor';
+  ccs: string;
+}
+
+function EnviarResumo() {
+  const [aberto, setAberto] = useState(false);
+  const [para, setPara] = useState('');
+  const [assunto, setAssunto] = useState('Resumo de despesas de TI');
+  const [mensagem, setMensagem] = useState('');
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const { data } = useQuery({
+    queryKey: ['ti-destinatarios'],
+    queryFn: () => pedir<{ destinatarios: Destinatario[] }>('/api/ti/destinatarios'),
+    enabled: aberto,
+  });
+  const enviar = useMutation({
+    mutationFn: async () => {
+      const corpo = new FormData();
+      corpo.append('destinatario', para);
+      corpo.append('assunto', assunto);
+      corpo.append('mensagem', mensagem);
+      if (arquivo) corpo.append('arquivo', arquivo);
+      return pedir<{ ok: boolean; destinatario: string }>('/api/ti/enviar-resumo', { method: 'POST', body: corpo });
+    },
+    onSuccess: (r) => {
+      toast.success(`Resumo enviado para ${r.destinatario}`);
+      setAberto(false);
+      setArquivo(null);
+      setMensagem('');
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+  const pdfOk = !arquivo || /\.pdf$/i.test(arquivo.name);
+  const pronto = Boolean(para && arquivo && pdfOk && assunto.trim());
+
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => setAberto(true)}>
+        <Mail />
+        Enviar resumo por e-mail
+      </Button>
+      <Dialog open={aberto} onOpenChange={setAberto}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Enviar o resumo por e-mail</DialogTitle>
+            <DialogDescription>
+              Primeiro gere o PDF: na Visão geral escolha o mês fechado e o gestor, clique em <strong>Exportar resumo (PDF)</strong> e salve como PDF. Depois anexe aqui o
+              arquivo salvo.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="ti-mail-para">Para</Label>
+              <Select value={para} onValueChange={setPara}>
+                <SelectTrigger id="ti-mail-para">
+                  <SelectValue placeholder="Escolha o destinatário" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(data?.destinatarios ?? []).map((d) => (
+                    <SelectItem key={d.email} value={d.email}>
+                      {d.nome} · {d.email}
+                      {d.tipo === 'gestor' && d.ccs ? ` (${d.ccs})` : d.tipo === 'adm' ? ' (ADM)' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="ti-mail-assunto">Assunto</Label>
+              <Input id="ti-mail-assunto" value={assunto} maxLength={150} onChange={(e) => setAssunto(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="ti-mail-msg">Mensagem (opcional)</Label>
+              <Textarea id="ti-mail-msg" rows={3} maxLength={2000} value={mensagem} onChange={(e) => setMensagem(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="ti-mail-pdf">PDF do resumo</Label>
+              <Input id="ti-mail-pdf" type="file" accept="application/pdf,.pdf" onChange={(e) => setArquivo(e.target.files?.[0] ?? null)} />
+              {!pdfOk && <p className="text-xs text-danger-text">O arquivo precisa ser um PDF.</p>}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAberto(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => enviar.mutate()} disabled={!pronto || enviar.isPending}>
+              {enviar.isPending ? 'Enviando...' : 'Enviar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 interface TiEu {
   nome: string;
   nivel: 'adm' | 'gestor';
@@ -813,6 +915,7 @@ export default function ControleTI() {
             {gestor && ' Você vê só os seus centros de custo (somente leitura).'}
           </p>
         </div>
+        {eu?.nivel === 'adm' && aba === 'painel' && <EnviarResumo />}
         {modelo && (
           <p className="text-xs text-fg-helper">
             Mês fechado: <span className="font-medium text-fg-secondary">{rotuloMes(modelo.meta.lastClosed)}</span> · fecha sozinho a partir do dia 6
