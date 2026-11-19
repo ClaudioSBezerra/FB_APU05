@@ -144,7 +144,7 @@ func Importar(db *sql.DB, p *Planilha, usuarioID, arquivo string) (Resumo, error
 		return res, err
 	}
 	res.Lancamentos = len(p.Lancamentos)
-	if _, err := tx.Exec(`UPDATE ti_lancamentos SET ano = COALESCE(EXTRACT(YEAR FROM competencia), 2026)::smallint WHERE ano IS NULL`); err != nil {
+	if _, err := tx.Exec(`UPDATE ti_lancamentos SET ano = 2026 WHERE ano IS NULL`); err != nil {
 		return res, fmt.Errorf("gravar ano dos lançamentos: %w", err)
 	}
 
