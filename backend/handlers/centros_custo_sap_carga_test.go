@@ -13,7 +13,7 @@ import (
 )
 
 func TestFilialDoCodigo(t *testing.T) {
-	casos := map[string]string{"10016000": "1001", "816000": "81", "9166000": "916", "40166010": "4016"}
+	casos := map[string]string{"10016000": "1001", "816000": "0081", "9166000": "0916", "40166010": "4016"}
 	for cod, esperado := range casos {
 		if f, ok := filialDoCodigo(cod); !ok || f != esperado {
 			t.Errorf("%s: esperava %s, veio %q ok=%v", cod, esperado, f, ok)
@@ -33,7 +33,7 @@ func TestCarregarCentrosCustoSAP(t *testing.T) {
 		return []sapodata.CentroCusto{
 			{Codigo: "10016000", Nome: "ADMINISTRATIVO"}, // filial 1001 já existe → cria CC
 			{Codigo: "10026000", Nome: "ADMINISTRATIVO"}, // filial 1002 nova, com nome no Controle TI
-			{Codigo: "816000", Nome: "ADM"},              // filial 81 nova, sem nome → usa o código
+			{Codigo: "816000", Nome: "ADM"},              // filial 81 → "0081" (4 caracteres); o nome vem do Controle TI sem os zeros
 			{Codigo: "10016010", Nome: "IMOVEIS"},        // já existe → atualiza
 			{Codigo: "6000", Nome: "CURTO"},              // sem filial → ignorado
 			{Codigo: "10016020", Nome: ""},               // sem nome → ignorado
@@ -45,7 +45,7 @@ func TestCarregarCentrosCustoSAP(t *testing.T) {
 	}
 	defer db.Close()
 	mock.ExpectQuery(`SELECT divisao, descricao FROM ti_param_divisao`).
-		WillReturnRows(sqlmock.NewRows([]string{"divisao", "descricao"}).AddRow("1002", "IMBIRIBEIRA"))
+		WillReturnRows(sqlmock.NewRows([]string{"divisao", "descricao"}).AddRow("1002", "IMBIRIBEIRA").AddRow("81", "ADM LOJA 81"))
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT codigo, id FROM divisoes`).WillReturnRows(sqlmock.NewRows([]string{"codigo", "id"}).AddRow("1001", "div-1001"))
 	cc := func(cod, nome, div, fil string, inserida bool) {
@@ -54,8 +54,8 @@ func TestCarregarCentrosCustoSAP(t *testing.T) {
 	cc("10016000", "ADMINISTRATIVO", "div-1001", "1001", true)
 	mock.ExpectQuery(`INSERT INTO divisoes`).WithArgs("1002", "IMBIRIBEIRA").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("div-1002"))
 	cc("10026000", "ADMINISTRATIVO", "div-1002", "1002", true)
-	mock.ExpectQuery(`INSERT INTO divisoes`).WithArgs("81", "81").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("div-81"))
-	cc("816000", "ADM", "div-81", "81", true)
+	mock.ExpectQuery(`INSERT INTO divisoes`).WithArgs("0081", "ADM LOJA 81").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("div-81"))
+	cc("816000", "ADM", "div-81", "0081", true)
 	cc("10016010", "IMOVEIS", "div-1001", "1001", false)
 	mock.ExpectCommit()
 
@@ -88,5 +88,32 @@ func TestCarregarCentrosCustoSAP_ZeroResultadosENaoSucesso(t *testing.T) {
 	}
 	if _, err := carregarCentrosCustoSAP(context.Background(), db, sapodata.Config{}, time.Now()); err == nil {
 		t.Fatal("erro do SAP deveria propagar")
+	}
+}
+
+func TestCodigoDivisao4(t *testing.T) {
+	casos := map[string]string{"91": "0091", "501": "0501", "1": "0001", "1001": "1001", "10016": "10016", " 7 ": "0007", "SEM-DIVISAO": "SEM-DIVISAO", "": "", "0091": "0091", "A1": "A1"}
+	for in, quer := range casos {
+		if got := CodigoDivisao4(in); got != quer {
+			t.Errorf("CodigoDivisao4(%q) = %q, esperava %q", in, got, quer)
+		}
+	}
+}
+
+func TestDivisao4_CSVEResolver(t *testing.T) {
+	v, err := decodeCSVDivisoes(nil, []string{"91", "Loja"})
+	if err != nil || v[0] != "0091" {
+		t.Fatalf("CSV de divisões deveria padronizar em 4 caracteres: %v %v", v, err)
+	}
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM divisoes WHERE codigo = \$1`).WithArgs("0501").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("d1"))
+	tx, _ := db.Begin()
+	if id, err := resolveDivisaoID(tx, "501"); err != nil || id != "d1" {
+		t.Fatalf("resolver deveria procurar 0501: %v %v", id, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
 	}
 }

@@ -189,7 +189,8 @@ func campoObrigatorio(valor, nomeCampo string) (string, error) {
 // linha").
 func resolveDivisaoID(tx *sql.Tx, codigo string) (string, error) {
 	var id string
-	err := tx.QueryRow(`SELECT id FROM divisoes WHERE codigo = $1`, codigo).Scan(&id)
+	// o código é procurado já com 4 caracteres ("91" → "0091"), como o cadastro guarda
+	err := tx.QueryRow(`SELECT id FROM divisoes WHERE codigo = $1`, CodigoDivisao4(codigo)).Scan(&id)
 	if err == sql.ErrNoRows {
 		return "", fmt.Errorf("divisão com código %q não encontrada — importe divisoes antes de centros-custo", codigo)
 	}
@@ -282,7 +283,7 @@ func decodeCSVDivisoes(_ *sql.Tx, linha []string) ([]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []interface{}{codigo, nome}, nil
+	return []interface{}{CodigoDivisao4(codigo), nome}, nil
 }
 
 func decodeCSVCentrosCusto(tx *sql.Tx, linha []string) ([]interface{}, error) {
@@ -304,7 +305,7 @@ func decodeCSVCentrosCusto(tx *sql.Tx, linha []string) ([]interface{}, error) {
 	}
 	// "filial" (Story 3.1): opcional — vazio no CSV vira NULL, não rejeita a
 	// linha (Design Notes da spec: carga real é tarefa do negócio).
-	filial := parseStringOpcional(linha[3])
+	filial := normalizaFilialOpcional(parseStringOpcional(linha[3]))
 	return []interface{}{codigo, nome, divisaoID, filial}, nil
 }
 

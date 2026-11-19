@@ -331,7 +331,7 @@ func decodeJSONDivisoes(corpo map[string]interface{}) ([]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []interface{}{codigo, nome}, nil
+	return []interface{}{CodigoDivisao4(codigo), nome}, nil
 }
 
 func decodeJSONCentrosCusto(corpo map[string]interface{}) ([]interface{}, error) {

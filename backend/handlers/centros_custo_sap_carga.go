@@ -6,7 +6,7 @@ package handlers
 //
 // Modelo (regra do negócio, doc 04 e 05): o código SAP do centro de custo é FILIAL + CC de 4 dígitos
 // (10016000 = filial 1001 + CC 6000). Cada código SAP completo vira um centro de custo, e a
-// DIVISÃO é a filial = o código sem os 4 últimos dígitos (a coluna `filial` recebe o mesmo valor,
+// DIVISÃO é a filial = o código sem os 4 últimos dígitos, com 4 caracteres ("81" → "0081"; a coluna `filial` recebe o mesmo valor,
 // só se ainda estiver vazia). A divisão é criada na hora quando não existe (nome: o da tabela de
 // parâmetros do Controle TI, se houver; senão o próprio código — ajustável depois em Cadastros).
 // Os centros antigos de 4 dígitos (CC "puro") NÃO são tocados nem apagados: continuam ligados aos
@@ -56,7 +56,7 @@ func filialDoCodigo(codigo string) (string, bool) {
 			return "", false
 		}
 	}
-	return codigo[:len(codigo)-4], true
+	return CodigoDivisao4(codigo[:len(codigo)-4]), true // 4 caracteres: "81" → "0081"
 }
 
 // nomesDivisaoControleTI lê os nomes das filiais da tabela de parâmetros do Controle TI (opcional:
@@ -127,6 +127,8 @@ func carregarCentrosCustoSAP(ctx context.Context, db *sql.DB, cfg sapodata.Confi
 			nomeDiv := filial
 			if n := nomesTI[filial]; n != "" {
 				nomeDiv = n
+			} else if n := nomesTI[strings.TrimLeft(filial, "0")]; n != "" {
+				nomeDiv = n // o Controle TI pode ter o nome sem os zeros à esquerda
 			}
 			if err := tx.QueryRowContext(ctx, `INSERT INTO divisoes (codigo, nome) VALUES ($1, $2) RETURNING id`, filial, nomeDiv).Scan(&divID); err != nil {
 				return res, fmt.Errorf("erro ao criar a divisão %s: %w", filial, err)

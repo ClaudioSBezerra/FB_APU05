@@ -94,7 +94,7 @@ func SincronizarCentrosCustoSAPHandler(db *sql.DB) http.HandlerFunc {
 				continue
 			}
 
-			filial := parseStringOpcional(linha.Filial)
+			filial := normalizaFilialOpcional(parseStringOpcional(linha.Filial))
 			var inserida bool
 			err = tx.QueryRow(`
 				INSERT INTO centros_custo (codigo, nome, divisao_id, filial)

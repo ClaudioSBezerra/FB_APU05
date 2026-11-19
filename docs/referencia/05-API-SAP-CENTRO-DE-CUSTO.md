@@ -84,7 +84,7 @@ modo direto (HTTPS + Basic) de antes. A chave **nunca** vai para o git nem para 
 
 - **Código:** o código SAP completo é **filial + CC de 4 dígitos** (`10016000` = filial `1001` + CC `6000`). Cada
   código completo vira um centro de custo em `centros_custo`.
-- **Divisão = filial:** o código sem os 4 últimos dígitos (`1001`, `1002`, `81`…). A divisão é **criada na carga** se
+- **Divisão = filial:** o código sem os 4 últimos dígitos, **sempre com 4 caracteres** (`1001`, `1002`, `0081`…; `81` vira `0081`, `916` vira `0916`, como o SAP escreve a filial). A divisão é **criada na carga** se
   não existir (nome: o da tabela de parâmetros do Controle TI, ex. `1001` GARANHUNS; senão o próprio código, para
   ajustar depois em Cadastros). A coluna `filial` do centro recebe o mesmo valor (só se estiver vazia).
 - **Nome:** descrição em PT (cai para o nome curto, depois para outro idioma).
@@ -117,3 +117,9 @@ QAS medido: 4.716 centros vigentes (4.771 no total), ~6 s para ler tudo, 66 `Bus
    nomes que ficaram iguais ao código.
 7. Primeira carga em PRD acompanhada: ver o resultado em Configurações (criados, atualizados, divisões novas, ignorados).
 8. **Rotacionar** a `apikey` do QAS depois da virada.
+
+**Código de divisão com 4 caracteres (19/11/2026).** O cadastro de Divisões e a filial dos centros de custo guardam o código com
+4 caracteres (`0091`, `0501`, `1001`): `handlers.CodigoDivisao4` completa com zeros à esquerda o que é só dígito e tem menos de 4
+(letras, como `SEM-DIVISAO`, e códigos já com 4+ não mudam). Vale na carga do SAP (esta), no cadastro manual, no CSV de
+divisões/centros de custo e no `divisao_codigo` das cargas por push; a migration 036 ajustou o que já existia. O Controle de
+Despesas não mudou: lá a divisão sai do CC SAP e dos Parâmetros do Welton (ex.: `91`).
