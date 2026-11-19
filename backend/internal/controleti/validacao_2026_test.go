@@ -55,6 +55,21 @@ func TestValidacao2026(t *testing.T) {
 		}
 		orc = append(orc, OrcDB{Ref: l.Ref, Origem: l.Origem, Divisao: l.Divisao, CC: l.CC, Conta: l.Conta, Fornecedor: l.Fornecedor, Descricao: l.Descricao, Valores: v})
 	}
+	if fc := os.Getenv("TI_FORECAST"); fc != "" { // orçado de 2027 em diante vem da FC FY27 Forecast (como em produção)
+		pl, err := LerPlanilha(lerArq(t, filepath.Dir(fc), filepath.Base(fc)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range pl.Orcamento {
+			v := map[string]float64{}
+			for j, ym := range pl.Meses {
+				if ym >= "2027-01" && j < len(l.Valores) {
+					v[ym] = l.Valores[j]
+				}
+			}
+			orc = append(orc, OrcDB{Ref: l.Ref, Origem: l.Origem, Divisao: l.Divisao, CC: l.CC, Conta: l.Conta, Fornecedor: l.Fornecedor, Descricao: l.Descricao, Valores: v})
+		}
+	}
 	saldos := map[string]float64{}
 	for _, k := range ksb2 {
 		saldos[k.Pedido] += k.Valor
