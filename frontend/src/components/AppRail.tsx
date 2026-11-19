@@ -162,7 +162,7 @@ export function AppRail() {
   const filaItem = { id: 'fila', icon: ListChecks, label: 'Fila de atendimento', path: '/fila' };
   const items = [
     ...(user?.perfil === 'atendente' ? mainItems.filter((i) => i.id === 'nova-solicitacao') : mainItems),
-    ...(permissoes?.controle_ti ? [{ id: 'controle-ti', icon: Cpu, label: 'Controle TI', path: '/controle-ti' }] : []),
+    ...(permissoes?.controle_ti ? [{ id: 'controle-ti', icon: Cpu, label: 'Controle de Despesas', path: '/controle-ti' }] : []),
     ...(podeAtender(user?.perfil) ? [filaItem] : []),
     ...(user?.perfil === 'administrador'
       ? [

@@ -443,7 +443,7 @@ const GestaoUsuarios = () => {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <div className="flex items-center gap-2" title="Libera o menu Controle TI (orçado, realizado e lançamentos das despesas de TI) para este usuário">
+                  <div className="flex items-center gap-2" title="Libera o menu Controle de Despesas (orçado, realizado e lançamentos das despesas de TI) para este usuário">
                     <Switch
                       aria-label={`Controle TI para ${u.nome}`}
                       checked={u.controle_ti}

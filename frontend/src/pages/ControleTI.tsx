@@ -807,7 +807,7 @@ export default function ControleTI() {
     <div className={cn('mx-auto flex w-full flex-col gap-4 p-6', aba === 'painel' ? 'max-w-none' : 'max-w-7xl')}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-foreground">Controle TI</h1>
+          <h1 className="text-lg font-semibold text-foreground">Controle de Despesas</h1>
           <p className="text-xs text-fg-helper">
             Despesas de TI: orçado, realizado, a lançar e projeção.
             {gestor && ' Você vê só os seus centros de custo (somente leitura).'}
@@ -833,7 +833,7 @@ export default function ControleTI() {
         </p>
       )}
 
-      <div role="tablist" aria-label="Seções do Controle TI" className="flex flex-wrap gap-2">
+      <div role="tablist" aria-label="Seções do Controle de Despesas" className="flex flex-wrap gap-2">
         {abasVisiveis.map((a) => (
           <button
             key={a.id}
@@ -856,7 +856,7 @@ export default function ControleTI() {
       {isLoading && <p className="text-sm text-fg-helper">Carregando...</p>}
       {error && (
         <p role="alert" className="rounded-md border border-danger-border bg-danger-bg px-4 py-3 text-sm text-danger-text">
-          Não foi possível carregar o Controle TI. {(error as Error).message}
+          Não foi possível carregar o Controle de Despesas. {(error as Error).message}
         </p>
       )}
 
