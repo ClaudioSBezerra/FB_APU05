@@ -629,3 +629,24 @@ func TestBaixarAnexoHandler_IDFormatoInvalido(t *testing.T) {
 		t.Fatalf("status = %d, esperado 404 (body=%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// Atendente/administrador "entram" em qualquer chamado (precisam ver antes de assumir); outro solicitante não.
+func TestObterSolicitacaoHandler_AtendenteVeQualquerChamado(t *testing.T) {
+	db, mock := newSQLMock(t)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT tipo_solicitacao, status, versao, solicitante_id, administrador_id, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material")).
+		WithArgs(testPendenciaSolicitacaoID).
+		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao", "fornecedor_cnpj", "fornecedor_nao_cadastrado", "quantidade_material"}).
+			AddRow("transferencia", "aberta", 1, testPendenciaSolicitanteID, nil, nil, nil, nil, false, nil))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_comentarios")).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "tipo", "texto", "created_at"}))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_anexos")).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "nome_arquivo", "content_type", "tamanho_bytes", "created_at"}))
+
+	req := newPendenciaRequest(http.MethodGet, "/api/solicitacoes/"+testPendenciaSolicitacaoID,
+		testPendenciaSolicitacaoID, testPendenciaOutroID, "atendente", "")
+	rec := httptest.NewRecorder()
+	ObterSolicitacaoHandler(db)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("atendente deveria ver o chamado ainda não assumido: %d %s", rec.Code, rec.Body.String())
+	}
+}

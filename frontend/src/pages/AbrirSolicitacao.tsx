@@ -789,7 +789,13 @@ const AbrirSolicitacao = () => {
                 </div>
               ),
             )}
-            <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setLinhas((a) => [...a, novaLinhaLancamento('origem')])}>
+            <Button type="button" variant="outline" size="sm" className="self-start" onClick={() =>
+                setLinhas((a) => {
+                  // a nova linha repete a conta da última origem: normalmente só o mês muda (chamado 1 para 1)
+                  const ultima = [...a].reverse().find((l) => l.lado === 'origem');
+                  return [...a, { ...novaLinhaLancamento('origem'), contaId: ultima?.contaId ?? '' }];
+                })
+              }>
               + linha de origem
             </Button>
           </section>

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -48,36 +49,6 @@ interface ItemFila {
   atrasada: boolean;
 }
 
-interface Comentario {
-  id: string;
-  autor_id: string;
-  tipo: string;
-  texto: string;
-  created_at: string;
-}
-
-interface AnexoDetalhe {
-  id: string;
-  nome_arquivo: string;
-  content_type: string;
-  tamanho_bytes: number;
-  created_at: string;
-}
-
-interface DetalheSolicitacao {
-  id: string;
-  tipo_solicitacao: string;
-  status: string;
-  versao: number;
-  fornecedor: string | null;
-  descricao: string | null;
-  anexos: AnexoDetalhe[];
-  comentarios: Comentario[];
-  fornecedor_cnpj?: string | null;
-  fornecedor_nao_cadastrado?: boolean;
-  quantidade_material?: number | null;
-}
-
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(url, init);
   const data = await resp.json();
@@ -119,29 +90,6 @@ function baixarArquivoBase64(nomeArquivo: string, base64: string) {
   a.download = nomeArquivo;
   a.click();
   URL.revokeObjectURL(url);
-}
-
-// baixarAnexo usa fetch (não um <a href> cru) porque o Authorization é
-// injetado só nas chamadas via window.fetch (interceptor de
-// AuthContext.tsx) — uma navegação nativa de <a> não carrega esse header e
-// voltaria 401.
-async function baixarAnexo(anexo: { id: string; nome_arquivo: string }) {
-  try {
-    const resp = await fetch(`/api/solicitacoes/anexos/${anexo.id}`);
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}));
-      throw new Error(data?.error || `Erro HTTP ${resp.status}`);
-    }
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = anexo.nome_arquivo;
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (err) {
-    toast.error(err instanceof Error ? err.message : 'Erro ao baixar anexo');
-  }
 }
 
 // Rótulos de negócio para o enum tipo_solicitacao (CHECK da migration 006).
@@ -217,10 +165,9 @@ function EstadoLista({ carregando, erro }: { carregando: boolean; erro: unknown 
 
 const FilaAtendimento = () => {
   const queryClient = useQueryClient();
-  const [detalheId, setDetalheId] = useState<string | null>(null);
+  const navigate = useNavigate();
   const [pendenciaItem, setPendenciaItem] = useState<ItemFila | null>(null);
   const [pendenciaTexto, setPendenciaTexto] = useState('');
-  const [comentarioTexto, setComentarioTexto] = useState('');
   const [finalizarItem, setFinalizarItem] = useState<ItemFila | null>(null);
   const [resultadoFinal, setResultadoFinal] = useState<'sucesso' | 'erro'>('sucesso');
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
@@ -262,12 +209,6 @@ const FilaAtendimento = () => {
     queryFn: () => fetchTudoPaginado<ItemFila>('/api/fila/minhas'),
   });
 
-  const detalheQuery = useQuery({
-    queryKey: ['solicitacao', detalheId],
-    queryFn: () => fetchJSON<DetalheSolicitacao>(`/api/solicitacoes/${detalheId}`),
-    enabled: Boolean(detalheId),
-  });
-
   function invalidarFila() {
     queryClient.invalidateQueries({ queryKey: ['fila-aberta'] });
     queryClient.invalidateQueries({ queryKey: ['fila-minhas'] });
@@ -298,22 +239,6 @@ const FilaAtendimento = () => {
       toast.success('Solicitação devolvida ao solicitante');
       setPendenciaItem(null);
       setPendenciaTexto('');
-      invalidarFila();
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const comentarMutation = useMutation({
-    mutationFn: ({ id, versao, comentario }: { id: string; versao: number; comentario: string }) =>
-      fetchJSON(`/api/solicitacoes/${id}/comentarios`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ versao, comentario }),
-      }),
-    onSuccess: () => {
-      toast.success('Comentário adicionado');
-      setComentarioTexto('');
-      queryClient.invalidateQueries({ queryKey: ['solicitacao', detalheId] });
       invalidarFila();
     },
     onError: (err: Error) => toast.error(err.message),
@@ -451,7 +376,7 @@ const FilaAtendimento = () => {
                   <TableCell><CentroCustoCell item={item} /></TableCell>
                   <TableCell className="tabular-nums text-fg-secondary">{dataHora(item.created_at)}</TableCell>
                   <TableCell className="flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setDetalheId(item.id)}>Ver</Button>
+                    <Button size="sm" variant="outline" onClick={() => navigate(`/fila/${item.id}`)}>Ver</Button>
                     <Button size="sm" onClick={() => setDecisaoItem({ item, decisao: 'aprovada' })}>Registrar aprovação</Button>
                     <Button size="sm" variant="outline" onClick={() => setDecisaoItem({ item, decisao: 'rejeitada' })}>Registrar rejeição</Button>
                   </TableCell>
@@ -593,7 +518,7 @@ const FilaAtendimento = () => {
                 <TableCell><PrazoCell atrasada={item.atrasada} prazo={item.prazo_limite} /></TableCell>
                 <TableCell>
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setDetalheId(item.id)}>
+                    <Button size="sm" variant="outline" onClick={() => navigate(`/fila/${item.id}`)}>
                       Ver e comentar
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setPendenciaItem(item)}>
@@ -616,81 +541,6 @@ const FilaAtendimento = () => {
           </TableBody>
         </Table>
       </SecaoFila>
-
-      <Dialog open={Boolean(detalheId)} onOpenChange={(o) => !o && setDetalheId(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Histórico da solicitação</DialogTitle>
-          </DialogHeader>
-          {(detalheQuery.data?.fornecedor || detalheQuery.data?.descricao || detalheQuery.data?.quantidade_material || (detalheQuery.data?.anexos.length ?? 0) > 0) && (
-            <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-card p-3 text-sm">
-              {detalheQuery.data?.quantidade_material ? (
-                <p>
-                  <span className="font-medium">Quantidade do material:</span> {detalheQuery.data.quantidade_material.toLocaleString('pt-BR')}
-                </p>
-              ) : null}
-              {detalheQuery.data?.fornecedor && (
-                <p>
-                  <span className="font-medium">Fornecedor:</span> {detalheQuery.data.fornecedor}
-                  {detalheQuery.data.fornecedor_cnpj && <span className="text-fg-helper"> · {detalheQuery.data.fornecedor_cnpj}</span>}
-                  {detalheQuery.data.fornecedor_nao_cadastrado && (
-                    <Badge variant="warning" className="ml-2">Não cadastrado</Badge>
-                  )}
-                </p>
-              )}
-              {detalheQuery.data?.descricao && (
-                <p>
-                  <span className="font-medium">Descrição:</span> {detalheQuery.data.descricao}
-                </p>
-              )}
-              {(detalheQuery.data?.anexos.length ?? 0) > 0 && (
-                <div className="flex flex-col gap-1">
-                  <span className="font-medium">Anexos:</span>
-                  {detalheQuery.data?.anexos.map((a) => (
-                    <button
-                      key={a.id}
-                      type="button"
-                      onClick={() => baixarAnexo(a)}
-                      className="text-left text-link underline underline-offset-2"
-                    >
-                      {a.nome_arquivo} ({Math.ceil(a.tamanho_bytes / 1024)} KB)
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          <div className="flex max-h-72 flex-col gap-2 overflow-y-auto">
-            {(detalheQuery.data?.comentarios ?? []).map((c) => (
-              <div key={c.id} className="rounded-lg border border-border bg-card p-2 text-sm">
-                <p className="text-xs text-muted-foreground">
-                  {c.tipo} · {new Date(c.created_at).toLocaleString('pt-BR')}
-                </p>
-                <p>{c.texto}</p>
-              </div>
-            ))}
-            {detalheQuery.data?.comentarios.length === 0 && (
-              <p className="text-sm text-muted-foreground">Nenhum comentário ainda.</p>
-            )}
-          </div>
-          <div className="grid gap-1.5">
-            <Label>Novo comentário</Label>
-            <Textarea value={comentarioTexto} onChange={(e) => setComentarioTexto(e.target.value)} />
-          </div>
-          <DialogFooter>
-            <Button
-              disabled={!comentarioTexto.trim() || !detalheQuery.data || comentarMutation.isPending}
-              onClick={() =>
-                detalheQuery.data &&
-                detalheId &&
-                comentarMutation.mutate({ id: detalheId, versao: detalheQuery.data.versao, comentario: comentarioTexto })
-              }
-            >
-              Comentar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={Boolean(pendenciaItem)} onOpenChange={(o) => !o && setPendenciaItem(null)}>
         <DialogContent className="max-w-sm">

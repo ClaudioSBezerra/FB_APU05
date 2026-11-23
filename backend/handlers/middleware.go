@@ -99,6 +99,20 @@ func RequireAuth(next http.HandlerFunc, perfilExigido string) http.HandlerFunc {
 // GetUserIDFromContext extrai a claim `user_id` das claims injetadas por
 // RequireAuth. Retorna string vazia se RequireAuth não foi aplicado antes
 // (não deveria acontecer em nenhuma rota registrada em main.go).
+// GetPerfilFromContext devolve a claim `perfil` do chamador ("" se ausente).
+func GetPerfilFromContext(r *http.Request) string {
+	claims, ok := r.Context().Value(ClaimsContextKey).(jwt.MapClaims)
+	if !ok {
+		return ""
+	}
+	perfil, _ := claims["perfil"].(string)
+	return perfil
+}
+
+// perfilAtende: administrador e atendente enxergam qualquer solicitação (precisam "entrar" no chamado
+// antes de assumir); os demais só a própria.
+func perfilAtende(perfil string) bool { return perfil == "administrador" || perfil == "atendente" }
+
 func GetUserIDFromContext(r *http.Request) string {
 	claims, ok := r.Context().Value(ClaimsContextKey).(jwt.MapClaims)
 	if !ok {

@@ -7,6 +7,7 @@ import Login from '@/pages/Login'
 import AuthCallback from '@/pages/AuthCallback'
 import AuthError from '@/pages/AuthError'
 import AprovarPorLink from '@/pages/AprovarPorLink'
+import SolicitacaoDetalhe from '@/pages/SolicitacaoDetalhe'
 import PainelConsolidado from '@/pages/PainelConsolidado'
 import ForgotPassword from '@/pages/ForgotPassword'
 import ResetPassword from '@/pages/ResetPassword'
@@ -106,6 +107,14 @@ function App() {
                   <Route path="/" element={<PaginaInicial />} />
                   <Route path="/painel" element={<PainelRoute><PainelConsolidado /></PainelRoute>} />
                   <Route path="/solicitacoes/nova" element={<AbrirSolicitacao />} />
+                  <Route
+                    path="/fila/:id"
+                    element={
+                      <AtendimentoRoute>
+                        <SolicitacaoDetalhe />
+                      </AtendimentoRoute>
+                    }
+                  />
                   <Route
                     path="/fila"
                     element={

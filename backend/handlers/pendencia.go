@@ -273,7 +273,7 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		chamadorID := GetUserIDFromContext(r)
 		souAdministrador := administradorID.Valid && administradorID.String == chamadorID
-		if chamadorID != solicitanteID && !souAdministrador {
+		if chamadorID != solicitanteID && !souAdministrador && !perfilAtende(GetPerfilFromContext(r)) {
 			// Mesmo padrão de jsonErr(w, http.StatusForbidden, ...) de
 			// handlers/solicitacoes.go:289 — terceiro sem relação com a
 			// solicitação nunca vê nem o histórico.
@@ -330,8 +330,11 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
+		extras := detalheExtras(db, id)
+
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"extras":                    extras,
 			"id":                        id,
 			"tipo_solicitacao":          tipoSolicitacao,
 			"status":                    status,
@@ -389,7 +392,7 @@ func BaixarAnexoHandler(db *sql.DB) http.HandlerFunc {
 
 		chamadorID := GetUserIDFromContext(r)
 		souAdministrador := administradorID.Valid && administradorID.String == chamadorID
-		if chamadorID != solicitanteID && !souAdministrador {
+		if chamadorID != solicitanteID && !souAdministrador && !perfilAtende(GetPerfilFromContext(r)) {
 			jsonErr(w, http.StatusForbidden, "você não tem permissão para baixar este anexo")
 			return
 		}
@@ -413,4 +416,67 @@ func BaixarAnexoHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", meta.NomeArquivo))
 		_, _ = io.Copy(w, conteudo)
 	}
+}
+
+// detalheExtras reúne o que a página do chamado mostra além do histórico: quem abriu, centro de custo, como
+// foi preenchido (lançamentos) e o aprovador. É complementar: se alguma consulta falhar, o detalhe básico
+// continua válido (só é registrado no log).
+func detalheExtras(db *sql.DB, id string) map[string]interface{} {
+	out := map[string]interface{}{}
+	var solNome, solEmail, admNome, ccCod, ccNome sql.NullString
+	var criada sql.NullTime
+	var snap []byte
+	if err := db.QueryRow(`
+		SELECT u.nome, u.email, a.nome, cc.codigo, cc.nome, s.created_at, s.aprovador_snapshot
+		FROM solicitacoes s
+		LEFT JOIN usuarios u ON u.id = s.solicitante_id
+		LEFT JOIN usuarios a ON a.id = s.administrador_id
+		LEFT JOIN centros_custo cc ON cc.id = s.centro_custo_id
+		WHERE s.id = $1`, id).Scan(&solNome, &solEmail, &admNome, &ccCod, &ccNome, &criada, &snap); err != nil {
+		log.Printf("[Fila] detalhe da solicitação %s: dados do cabeçalho indisponíveis: %v", id, err)
+		return out
+	}
+	out["solicitante_nome"] = nullStringOuNil(solNome)
+	out["solicitante_email"] = nullStringOuNil(solEmail)
+	out["atendente_nome"] = nullStringOuNil(admNome)
+	out["centro_custo_codigo"] = nullStringOuNil(ccCod)
+	out["centro_custo_nome"] = nullStringOuNil(ccNome)
+	if criada.Valid {
+		out["created_at"] = criada.Time
+	}
+	if len(snap) > 0 {
+		var m map[string]interface{}
+		if json.Unmarshal(snap, &m) == nil {
+			out["aprovador"] = map[string]interface{}{"tipo": m["tipo"], "nome": m["nome"], "motivo": m["motivo"]}
+		}
+	}
+	rows, err := db.Query(`
+		SELECT l.lado, cc.codigo, cc.nome, COALESCE(c.codigo, ''), COALESCE(c.nome, ''), COALESCE(ci.nome, ''),
+		       COALESCE(to_char(l.mes, 'YYYY-MM'), ''), l.valor::float8
+		FROM solicitacao_lancamentos l
+		JOIN centros_custo cc ON cc.id = l.centro_custo_id
+		LEFT JOIN contas c ON c.id = l.conta_id
+		LEFT JOIN classes_imobilizado ci ON ci.id = l.classe_imobilizado_id
+		WHERE l.solicitacao_id = $1
+		ORDER BY l.lado DESC, l.mes, l.created_at`, id)
+	if err != nil {
+		log.Printf("[Fila] detalhe da solicitação %s: lançamentos indisponíveis: %v", id, err)
+		return out
+	}
+	defer rows.Close()
+	lanc := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var lado, ccC, ccN, contaC, contaN, classe, mes string
+		var valor float64
+		if err := rows.Scan(&lado, &ccC, &ccN, &contaC, &contaN, &classe, &mes, &valor); err != nil {
+			log.Printf("[Fila] detalhe da solicitação %s: lançamento ilegível: %v", id, err)
+			break
+		}
+		lanc = append(lanc, map[string]interface{}{
+			"lado": lado, "centro_custo": ccC + " — " + ccN, "conta": contaC, "conta_nome": contaN,
+			"classe_imobilizado": classe, "mes": mes, "valor": valor,
+		})
+	}
+	out["lancamentos"] = lanc
+	return out
 }
