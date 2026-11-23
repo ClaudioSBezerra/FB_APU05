@@ -82,8 +82,10 @@ func TestTransferencia_VariasOrigensParaDestinoEmOutroCC(t *testing.T) {
 		mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico")).
 			WithArgs("alcadas", alcadaID).
 			WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(1))
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_limite_transferencia'")).
+			WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("50000"))
 		mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-			WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), nil, nil, nil, false, nil).
+			WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), nil, nil, nil, false, nil, "aberta").
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testRegrasSolicitacao))
 		for _, l := range []struct {
 			mes   string

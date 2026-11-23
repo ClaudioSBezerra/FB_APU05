@@ -568,8 +568,10 @@ func TestAbrirSolicitacaoHandler_ComFornecedorDescricaoEAnexo(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico")).
 		WithArgs("alcadas", alcadaID).
 		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(3))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_limite_transferencia'")).
+		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("50000"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), "Fornecedor Teste Ltda", "Transferência para cobrir despesa X", nil, false, nil).
+		WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), "Fornecedor Teste Ltda", "Transferência para cobrir despesa X", nil, false, nil, "aberta").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
 		WithArgs(solicitacaoID, "origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", nil, 1000.0).

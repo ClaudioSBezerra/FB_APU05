@@ -344,6 +344,22 @@ func main() {
 		}
 	}
 
+	// Aprovação por link no e-mail: o token na URL é a credencial (rotas públicas); a decisão manual é do
+	// atendimento. Precisam das duas conexões (a privilegiada é a única que grava o status — AD-4).
+	withBothDB := func(factory func(db, dbPriv *sql.DB) http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			a, p := getDBApp(), getDBPrivileged()
+			if a == nil || p == nil {
+				http.Error(w, "Database initializing, please wait...", http.StatusServiceUnavailable)
+				return
+			}
+			factory(a, p)(w, r)
+		}
+	}
+	http.HandleFunc("GET /api/aprovacao/{token}", withDB(handlers.ConsultarAprovacaoHandler))
+	http.HandleFunc("POST /api/aprovacao/{token}", withBothDB(handlers.DecidirAprovacaoPorLinkHandler))
+	http.HandleFunc("POST /api/solicitacoes/{id}/aprovacao-manual", handlers.RequireAuth(withBothDB(handlers.DecidirAprovacaoManualHandler), "administrador,atendente"))
+
 	// SSO Keycloak (AD-6) — fluxo de login preferencial do FB_APU05. Config
 	// exposta em runtime (não build-time) via /api/auth/sso/config,
 	// replicando o padrão já validado em produção no FB_APU02 (ver spec Code

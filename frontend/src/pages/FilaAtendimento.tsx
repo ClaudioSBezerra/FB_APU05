@@ -230,6 +230,33 @@ const FilaAtendimento = () => {
     queryFn: () => fetchTudoPaginado<ItemFila>('/api/fila/solicitacoes'),
   });
 
+  // Transferências acima do limite esperando a diretoria. O e-mail com o link já foi ao aprovador; aqui o
+  // atendimento registra a decisão à mão (aprovador que é cargo/grupo, sem e-mail, ou e-mail que não chegou).
+  const aguardandoQuery = useQuery({
+    queryKey: ['fila-aguardando-aprovacao'],
+    queryFn: () => fetchTudoPaginado<ItemFila>('/api/fila/solicitacoes?status=aguardando_aprovacao'),
+  });
+  const [decisaoItem, setDecisaoItem] = useState<{ item: ItemFila; decisao: 'aprovada' | 'rejeitada' } | null>(null);
+  const [decisaoMotivo, setDecisaoMotivo] = useState('');
+  const decisaoMutation = useMutation({
+    mutationFn: async () => {
+      if (!decisaoItem) return;
+      await fetchJSON(`/api/solicitacoes/${decisaoItem.item.id}/aprovacao-manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ versao: decisaoItem.item.versao, decisao: decisaoItem.decisao, motivo: decisaoMotivo.trim() }),
+      });
+    },
+    onSuccess: () => {
+      toast.success(decisaoItem?.decisao === 'aprovada' ? 'Aprovada: entrou na fila de atendimento.' : 'Rejeitada.');
+      setDecisaoItem(null);
+      setDecisaoMotivo('');
+      queryClient.invalidateQueries({ queryKey: ['fila-aguardando-aprovacao'] });
+      queryClient.invalidateQueries({ queryKey: ['fila-aberta'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const minhasQuery = useQuery({
     queryKey: ['fila-minhas'],
     queryFn: () => fetchTudoPaginado<ItemFila>('/api/fila/minhas'),
@@ -405,6 +432,61 @@ const FilaAtendimento = () => {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
       <h1 className="text-lg font-semibold text-foreground">Fila de atendimento</h1>
+
+      {(aguardandoQuery.data?.length ?? 0) > 0 && (
+        <SecaoFila titulo="Aguardando aprovação da diretoria" quantidade={aguardandoQuery.data?.length}>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Tipo</TableHead>
+                <TableHead>Centro de custo</TableHead>
+                <TableHead>Aberta em</TableHead>
+                <TableHead className="w-px" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(aguardandoQuery.data ?? []).map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell className="font-medium">{rotuloTipo(item.tipo_solicitacao)}</TableCell>
+                  <TableCell><CentroCustoCell item={item} /></TableCell>
+                  <TableCell className="tabular-nums text-fg-secondary">{dataHora(item.created_at)}</TableCell>
+                  <TableCell className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setDetalheId(item.id)}>Ver</Button>
+                    <Button size="sm" onClick={() => setDecisaoItem({ item, decisao: 'aprovada' })}>Registrar aprovação</Button>
+                    <Button size="sm" variant="outline" onClick={() => setDecisaoItem({ item, decisao: 'rejeitada' })}>Registrar rejeição</Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </SecaoFila>
+      )}
+
+      <Dialog open={!!decisaoItem} onOpenChange={(o) => { if (!o) { setDecisaoItem(null); setDecisaoMotivo(''); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{decisaoItem?.decisao === 'aprovada' ? 'Registrar aprovação' : 'Registrar rejeição'}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-fg-secondary">
+            {decisaoItem?.decisao === 'aprovada'
+              ? 'Use quando a diretoria já aprovou por fora do sistema. A solicitação entra na fila de atendimento.'
+              : 'A solicitação é encerrada e o solicitante é avisado por e-mail.'}
+          </p>
+          <div className="grid gap-1.5">
+            <Label htmlFor="decisao-motivo">{decisaoItem?.decisao === 'rejeitada' ? 'Motivo (obrigatório)' : 'Observação (opcional)'}</Label>
+            <Textarea id="decisao-motivo" value={decisaoMotivo} onChange={(e) => setDecisaoMotivo(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDecisaoItem(null)}>Cancelar</Button>
+            <Button
+              onClick={() => decisaoMutation.mutate()}
+              disabled={decisaoMutation.isPending || (decisaoItem?.decisao === 'rejeitada' && decisaoMotivo.trim().length < 3)}
+            >
+              Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <SecaoFila titulo="Aguardando atendimento" quantidade={filaQuery.data?.length}>
         <EstadoLista carregando={filaQuery.isLoading} erro={filaQuery.error} />

@@ -236,7 +236,7 @@ func TestListarFilaHandler_DecoraComSLA(t *testing.T) {
 	recente := time.Now().Add(-1 * time.Hour)
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacoes")).
-		WithArgs(20, 0).
+		WithArgs(20, 0, "aberta").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "centro_custo_id", "codigo", "nome", "status", "versao", "created_at"}).
 			AddRow("aaaaaaaa-0000-0000-0000-000000000001", "transferencia", "cc00000-0000-0000-0000-000000000001", "CC101", "Controladoria", "aberta", 1, antiga).
 			AddRow("bbbbbbbb-0000-0000-0000-000000000002", "obras", nil, nil, nil, "aberta", 1, recente))

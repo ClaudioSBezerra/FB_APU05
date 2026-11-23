@@ -48,6 +48,11 @@ func ListarFilaHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		pagina, tamanho := paginacaoDaQuery(r)
+		// ?status=aguardando_aprovacao lista as transferências esperando aprovação (decisão manual pelo atendente)
+		statusFila := "aberta"
+		if r.URL.Query().Get("status") == "aguardando_aprovacao" {
+			statusFila = "aguardando_aprovacao"
+		}
 
 		// Calendário carregado uma vez por requisição e reaproveitado para
 		// decorar todas as linhas da página — internal/sla é a ÚNICA fonte
@@ -63,10 +68,10 @@ func ListarFilaHandler(db *sql.DB) http.HandlerFunc {
 			SELECT s.id, s.tipo_solicitacao, s.centro_custo_id, cc.codigo, cc.nome, s.status, s.versao, s.created_at
 			FROM solicitacoes s
 			LEFT JOIN centros_custo cc ON cc.id = s.centro_custo_id
-			WHERE s.status = 'aberta'
+			WHERE s.status = $3
 			ORDER BY s.created_at ASC, s.id ASC
 			LIMIT $1 OFFSET $2
-		`, tamanho, (pagina-1)*tamanho)
+		`, tamanho, (pagina-1)*tamanho, statusFila)
 		if err != nil {
 			log.Printf("[Fila] Erro ao listar fila: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")

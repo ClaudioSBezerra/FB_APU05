@@ -460,12 +460,18 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		fornecedor := stringOuNulo(req.Fornecedor)
 		descricao := stringOuNulo(req.Descricao)
 
+		// Transferência acima do limite (padrão R$ 50.000) só entra na fila depois da aprovação.
+		statusInicial := "aberta"
+		if req.TipoSolicitacao == "transferencia" && valorTotal > limiteAprovacaoTransferencia(tx) {
+			statusInicial = "aguardando_aprovacao"
+		}
+
 		var solicitacaoID string
 		err = tx.QueryRow(`
 			INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material)
-			VALUES ($1, $2, $3, 'aberta', $4, 1, $5, $6, $7, $8, $9)
+			VALUES ($1, $2, $3, $10, $4, 1, $5, $6, $7, $8, $9)
 			RETURNING id
-		`, req.TipoSolicitacao, solicitanteID, centroCustoID, string(snapshotJSON), fornecedor, descricao, fornecedorCNPJ, req.FornecedorNaoCadastrado, quantidadeMaterial).Scan(&solicitacaoID)
+		`, req.TipoSolicitacao, solicitanteID, centroCustoID, string(snapshotJSON), fornecedor, descricao, fornecedorCNPJ, req.FornecedorNaoCadastrado, quantidadeMaterial, statusInicial).Scan(&solicitacaoID)
 		if err != nil {
 			log.Printf("[Solicitacoes] Erro ao inserir solicitacao: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -515,8 +521,11 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		log.Printf("[Solicitacoes] %s abriu solicitação %s (tipo=%s, cc=%s, aprovador=%s/%s)",
-			solicitanteID, solicitacaoID, req.TipoSolicitacao, centroCustoID, aprovadorResolvido.Tipo, aprovadorResolvido.Nome)
+		log.Printf("[Solicitacoes] %s abriu solicitação %s (tipo=%s, cc=%s, aprovador=%s/%s, status=%s)",
+			solicitanteID, solicitacaoID, req.TipoSolicitacao, centroCustoID, aprovadorResolvido.Tipo, aprovadorResolvido.Nome, statusInicial)
+		if statusInicial == "aguardando_aprovacao" {
+			go convidarAprovador(db, solicitacaoID, aprovadorResolvido)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -524,7 +533,7 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			"id":                 solicitacaoID,
 			"tipo_solicitacao":   req.TipoSolicitacao,
 			"centro_custo_id":    centroCustoID,
-			"status":             "aberta",
+			"status":             statusInicial,
 			"versao":             1,
 			"aprovador_snapshot": snapshot,
 			"fornecedor":         nullStringOuNil(fornecedor),

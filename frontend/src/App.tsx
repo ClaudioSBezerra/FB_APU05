@@ -6,6 +6,7 @@ import { Layout } from '@/components/Layout'
 import Login from '@/pages/Login'
 import AuthCallback from '@/pages/AuthCallback'
 import AuthError from '@/pages/AuthError'
+import AprovarPorLink from '@/pages/AprovarPorLink'
 import PainelConsolidado from '@/pages/PainelConsolidado'
 import ForgotPassword from '@/pages/ForgotPassword'
 import ResetPassword from '@/pages/ResetPassword'
@@ -95,6 +96,7 @@ function App() {
         <Route path="/alterar-senha" element={<ChangePassword />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/auth/error" element={<AuthError />} />
+        <Route path="/aprovacao/:token" element={<AprovarPorLink />} />
         <Route
           path="/*"
           element={
