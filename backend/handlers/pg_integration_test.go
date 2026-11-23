@@ -64,10 +64,15 @@ func pgSetup(t *testing.T) *pgEnv {
 		app:   abrirPG(t, raw, "fb_apu05_app", "changeme"),
 		priv:  abrirPG(t, raw, "fb_apu05_privilegiado", "changeme"),
 	}
+	// trava de segurança: a limpeza abaixo APAGA dados; só roda em banco cujo nome indica que é de teste
+	var nome string
+	if err := e.admin.QueryRow(`SELECT current_database()`).Scan(&nome); err != nil || !strings.Contains(strings.ToLower(nome), "test") {
+		t.Fatalf("recusado: o banco %q não parece ser de teste (o nome precisa conter 'test')", nome)
+	}
 	// banco descartável: limpa o que os testes criam (respeita as FKs)
 	for _, q := range []string{
-		"DELETE FROM solicitacao_aprovacoes", "DELETE FROM solicitacao_comentarios", "DELETE FROM solicitacao_lancamentos",
-		"DELETE FROM solicitacoes", "DELETE FROM papel_pessoa", "DELETE FROM contas WHERE codigo LIKE 'T%'",
+		"TRUNCATE solicitacoes, papel_pessoa CASCADE", // leva junto lançamentos, anexos, comentários, aprovações, exportações
+		"DELETE FROM contas WHERE codigo LIKE 'T%' OR codigo LIKE '4%'",
 		"DELETE FROM classes_imobilizado WHERE codigo LIKE 'T%'",
 	} {
 		if _, err := e.admin.Exec(q); err != nil {
