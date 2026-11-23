@@ -59,7 +59,7 @@ func decSaldo(t *testing.T, rec *httptest.ResponseRecorder) []saldoLinhaSaida {
 	return o.Linhas
 }
 
-func TestSaldo_OrigemEDestino_AvisoQuandoExcede(t *testing.T) {
+func TestSaldo_Origem_AvisoQuandoExcede_DestinoNaoConsulta(t *testing.T) {
 	cacheSaldo = map[string]cacheSaldoItem{}
 	db, mock := newSQLMock(t)
 	orig := consultarSaldoSAP
@@ -70,7 +70,7 @@ func TestSaldo_OrigemEDestino_AvisoQuandoExcede(t *testing.T) {
 		return saldoFalso([12]float64{1000, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500})(ctx, c, o, k, g)
 	}
 	esperaBaseSaldo(mock, "true")
-	// 3 linhas: duas origens (jan 800 e fev 900) no mesmo CC/conta + destino em outro CC
+	// duas origens (jan 800 e fev 900) no mesmo CC/conta + destino em outro CC (não é consultado)
 	esperaCodigos(mock, sCC1, "10026040")
 	esperaCodigos(mock, sCC1, "10026040")
 	esperaCodigos(mock, sCC2, "10016000")
@@ -91,17 +91,11 @@ func TestSaldo_OrigemEDestino_AvisoQuandoExcede(t *testing.T) {
 	if !l[1].Excede || *l[1].RetiradaAcum != 1700 || *l[1].Falta != 200 {
 		t.Errorf("fev: deveria avisar (retirada acumulada 1700 > 1500): %+v", l[1])
 	}
-	if l[2].Status != "ok" || l[2].Excede || l[2].RetiradaAcum != nil || *l[2].DispAcum != 1500 {
-		t.Errorf("destino mostra saldo e nunca excede: %+v", l[2])
+	if l[2].Status != "nao_identificado" || l[2].DispAcum != nil || !strings.Contains(l[2].Motivo, "só para a origem") {
+		t.Errorf("o destino não pode devolver saldo: %+v", l[2])
 	}
-	if len(chamadas) != 3 { // jan/fev usam a MESMA chave; destino é outro CC: 2 chaves de CC → mas exercício é o mesmo
-		// origem (CC1) e destino (CC2) são 2 chaves distintas
-		if len(chamadas) != 2 {
-			t.Errorf("consultas ao SAP: %v", chamadas)
-		}
-	}
-	if !strings.Contains(chamadas[0], "KSFC01") {
-		t.Errorf("objnr: %v", chamadas)
+	if len(chamadas) != 1 || !strings.HasPrefix(chamadas[0], "KSFC01") {
+		t.Errorf("só a origem é consultada (1 chave distinta): %v", chamadas)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Error(err)
@@ -146,7 +140,7 @@ func TestSaldo_NaoAtivado_CCAntigo_SemPermissao(t *testing.T) {
 	rec := httptest.NewRecorder()
 	SaldoOrcamentoHandler(db)(rec, reqSaldo(t, corpo))
 	l := decSaldo(t, rec)
-	if !strings.Contains(l[0].Motivo, "não ativada") || !strings.Contains(l[1].Motivo, "não existe no SAP") || !strings.Contains(l[2].Motivo, "sem permissão") {
+	if !strings.Contains(l[0].Motivo, "não ativada") || !strings.Contains(l[1].Motivo, "só para a origem") || !strings.Contains(l[2].Motivo, "sem permissão") {
 		t.Errorf("motivos: %q | %q | %q", l[0].Motivo, l[1].Motivo, l[2].Motivo)
 	}
 	for _, x := range l {

@@ -6,9 +6,9 @@ package handlers
 //	POST /api/solicitacoes/saldo   corpo {"lancamentos":[{lado, centro_custo_id, conta_id, mes}]}
 //
 // Decisões do usuário (23/11/2026): é AVISO, não trava (nunca impede o envio); se o SAP não responde, a linha volta
-// "nao_identificado" (a tela mostra "Saldo Não Identificado"); origem E destino mostram o saldo.
-// Autorização: o SAP não restringe por CC, então AQUI a origem só é consultada para os CCs do solicitante (próprio
-// + exceções); o destino de transferência pode ser qualquer CC (a lista de destinos já é aberta).
+// "nao_identificado" (a tela mostra "Saldo Não Identificado"); basta o saldo da ORIGEM (confirmado com a Wanessa).
+// Autorização: o SAP não restringe por CC, então AQUI só se consulta a ORIGEM e só para os CCs do solicitante (próprio
+// + exceções); o saldo de um CC de destino (de outra pessoa) nunca é devolvido.
 
 import (
 	"context"
@@ -190,7 +190,11 @@ func SaldoOrcamentoHandler(db *sql.DB) http.HandlerFunc {
 				continue
 			}
 			s.CC, s.Conta = cc, conta
-			if l.Lado == "origem" && !meusCCs[l.CentroCustoID] {
+			if l.Lado != "origem" {
+				fim("o saldo é mostrado só para a origem")
+				continue
+			}
+			if !meusCCs[l.CentroCustoID] {
 				fim("sem permissão para ver o saldo deste centro de custo")
 				continue
 			}

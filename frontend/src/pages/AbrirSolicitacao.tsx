@@ -520,15 +520,16 @@ const AbrirSolicitacao = () => {
 
   const linhasOrigem = linhas.filter((l) => l.lado === 'origem');
   const somaOrigens = Math.round(linhasOrigem.reduce((acc, l) => acc + (parseFloat(l.valor) || 0), 0) * 100) / 100;
+  // saldo do SAP só da ORIGEM da transferência (decisão com a Wanessa, 23/11/2026): é de onde sai o valor
   const { linhas: saldos, carregando: carregandoSaldo } = useSaldoOrcamento(
     linhas.map((l) => ({
       lado: l.lado,
-      centro_custo_id: tipo === 'transferencia' && l.lado === 'destino' ? ccDestinoId || centroCustoId : centroCustoId,
+      centro_custo_id: l.lado === 'origem' ? centroCustoId : '',
       conta_id: l.contaId,
       mes: l.mes ? `${l.mes}-01` : '',
       valor: parseFloat(l.valor) || 0,
     })),
-    tipo === 'transferencia' || tipo === 'inclusao' || tipo === 'inclusao_sfc',
+    tipo === 'transferencia',
   );
   const saldoDe = (i: number) => saldos.find((x) => x.indice === i);
   const ccDestino = ccDestinoId
@@ -816,9 +817,6 @@ const AbrirSolicitacao = () => {
                       {reais.format(somaOrigens)}
                     </div>
                   </div>
-                  <div className="sm:col-span-3">
-                    <SaldoDaLinha saldo={saldoDe(i)} carregando={carregandoSaldo} />
-                  </div>
                 </div>
               ),
             )}
@@ -881,11 +879,6 @@ const AbrirSolicitacao = () => {
                 onChange={(e) => atualizarLinha(i, 'valor', e.target.value)}
               />
             </div>
-            {(tipo === 'inclusao' || tipo === 'inclusao_sfc') && (
-              <div className="col-span-2">
-                <SaldoDaLinha saldo={saldoDe(i)} carregando={carregandoSaldo} />
-              </div>
-            )}
           </div>
         ))}
 

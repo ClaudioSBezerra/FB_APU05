@@ -69,7 +69,7 @@ Várias origens do mesmo (CC, conta) em meses diferentes: validar mês a mês de
 
 1. **Aviso, não trava.** O sistema nunca bloqueia o envio por saldo: mostra o aviso e o aprovador decide.
 2. **SAP fora do ar → "Saldo Não Identificado"** (o motivo aparece ao passar o mouse). Também aparece quando a consulta ainda não está ativada.
-3. **Origem e destino mostram o saldo** (e a Inclusão/Inclusão SFC, só informativo).
+3. **Basta o saldo da ORIGEM** (confirmado com a Wanessa em 23/11/2026): o destino e as inclusões não mostram saldo, e o servidor só consulta a origem, só para os CCs do solicitante.
 
 Implementado (sem poder testar contra o SAP real: falta rota/firewall e credencial — ver "Pontos de atenção"):
 
@@ -77,10 +77,10 @@ Implementado (sem poder testar contra o SAP real: falta rota/firewall e credenci
   troca a área), validação das 3 chaves antes de montar o `$filter` (sem injeção) e sonda de teste. Serviço `bg` em Configurações
   (URL, usuário/senha do SAP ou apikey própria, "Consultar na hora"); desligado por padrão (migration 038, URL do QAS).
 - `POST /api/solicitacoes/saldo` (`handlers/saldo_orcamento.go`): até 30 linhas, 4 consultas em paralelo, timeout 8 s, cache de 20 s. A **origem só é
-  consultada para os CCs do solicitante** (o SAP não restringe por CC); o destino pode ser qualquer CC. Devolve por linha o planejado, realizado,
+  consultada para os CCs do solicitante** (o SAP não restringe por CC); o destino nunca é consultado. Devolve por linha o planejado, realizado,
   comprometido, disposto, disponível do mês e o **disponível acumulado** (o que vale), e na origem a **retirada acumulada** do mesmo CC+conta até
   o mês: `excede` quando passa do disponível acumulado (várias origens em meses diferentes são somadas mês a mês).
-- Formulário (`AbrirSolicitacao.tsx`): cada linha mostra "Saldo disponível até este mês (acumulado)"; em vermelho, o aviso de estouro.
+- Formulário (`AbrirSolicitacao.tsx`): cada linha de **origem** mostra "Saldo disponível até este mês (acumulado)"; em vermelho, o aviso de estouro.
 - A consulta do serviço `bg` usa a credencial própria (Basic do SAP ou apikey do serviço): **nunca a apikey geral/ambiente do Kong**.
 
 Falta: mostrar o saldo na **tela do aprovador** (reconsultar na hora da decisão) — depende de a consulta estar ativa.
