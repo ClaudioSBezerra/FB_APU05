@@ -539,7 +539,7 @@ func main() {
 	// ordem real em `obra_ordens` para cada linha de Obras 'CRIAR' — tudo
 	// numa única transação pela conexão PRIVILEGIADA (mesma conexão de
 	// internal/fila/GerarLote*).
-	http.HandleFunc("POST /api/solicitacoes/{id}/finalizar", handlers.RequireAuth(withPrivilegedDB(handlers.FinalizarSolicitacaoHandler), "administrador,atendente"))
+	http.HandleFunc("POST /api/solicitacoes/{id}/finalizar", handlers.RequireAuth(withBothDB(handlers.FinalizarSolicitacaoComConfigHandler), "administrador,atendente"))
 
 	// Painel consolidado (Story 5.1, Epic 5, FR-17, AD-1/AD-14) — único
 	// handler de "Painéis e Indicadores": só leitura (withDB, conexão

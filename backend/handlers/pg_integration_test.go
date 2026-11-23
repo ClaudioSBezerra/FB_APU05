@@ -548,3 +548,29 @@ func TestPG_FinalizarComErroNaoExigeExportacao(t *testing.T) {
 		t.Fatalf("finalizar com erro sem exportar: %+v %v", s, err)
 	}
 }
+
+// Finalizar com SUCESSO sem lote: dispensado por padrão (robô SAP não ligado); com a chave ligada, volta a exigir.
+func TestPG_FinalizarSucessoSemExportacao_ConformeConfiguracao(t *testing.T) {
+	e := pgSetup(t)
+	b := e.seed(t)
+	rodar := func(exige string) (int, string) {
+		e.cfg(t, "finalizar_exige_exportacao", exige)
+		id := e.solicitacao(t, b, "em_atendimento")
+		if _, err := e.priv.Exec(`UPDATE solicitacoes SET administrador_id = $1 WHERE id = $2`, b.usuario, id); err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/solicitacoes/"+id+"/finalizar", strings.NewReader(`{"versao":1,"resultado":"sucesso","ordens_criadas":[]}`))
+		req.SetPathValue("id", id)
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": b.usuario, "perfil": "atendente"}))
+		rec := httptest.NewRecorder()
+		FinalizarSolicitacaoComConfigHandler(e.app, e.priv)(rec, req)
+		s, _ := statusDe(t, e.admin, id)
+		return rec.Code, s
+	}
+	if code, st := rodar("false"); code != 200 || st != "finalizada_sucesso" {
+		t.Errorf("chave desligada: esperado 200/finalizada_sucesso, veio %d/%s", code, st)
+	}
+	if code, st := rodar("true"); code != http.StatusConflict || st != "em_atendimento" {
+		t.Errorf("chave ligada sem lote: esperado 409 e nada gravado, veio %d/%s", code, st)
+	}
+}

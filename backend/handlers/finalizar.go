@@ -143,6 +143,23 @@ func tratarErroFinalizar(w http.ResponseWriter, err error) bool {
 
 // FinalizarSolicitacaoHandler — POST /api/solicitacoes/{id}/finalizar.
 func FinalizarSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
+	return finalizarHandler(db, func() bool { return false })
+}
+
+// FinalizarSolicitacaoComConfigHandler: grava o status pela conexão privilegiada (dbPriv) e lê a chave
+// finalizar_exige_exportacao pela conexão geral (a privilegiada não enxerga `configuracoes`, que guarda
+// credenciais cifradas). Chave desligada (padrão) dispensa a exportação para finalizar com sucesso.
+func FinalizarSolicitacaoComConfigHandler(dbApp, dbPriv *sql.DB) http.HandlerFunc {
+	return finalizarHandler(dbPriv, func() bool {
+		var v string
+		if err := dbApp.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'finalizar_exige_exportacao'`).Scan(&v); err != nil {
+			return false
+		}
+		return v != "true" // dispensa quando a chave NÃO está ligada
+	})
+}
+
+func finalizarHandler(db *sql.DB, dispensaExportacao func() bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -166,7 +183,7 @@ func FinalizarSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		administradorID := GetUserIDFromContext(r)
 
-		exportador := exportacao.ExportadorVBA{}
+		exportador := exportacao.ExportadorVBA{DispensaExportacao: dispensaExportacao()}
 		resultadoFinal, err := exportador.Finalizar(db, id, versao, administradorID, resultado, ordensCriadas)
 		if err != nil {
 			if tratarErroFinalizar(w, err) {

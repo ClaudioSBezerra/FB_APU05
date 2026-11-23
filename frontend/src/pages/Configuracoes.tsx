@@ -32,6 +32,7 @@ interface ServicoSAP {
 interface Config {
   testes?: { origem_todos_cc: boolean };
   aprovacao?: { obrigatoria: boolean };
+  exportacao?: { exigir_para_finalizar: boolean };
   sap: {
     horario: string;
     usuario: string;
@@ -358,6 +359,25 @@ function Formulario({ data }: { data: Config }) {
               Desligado (atual): a alçada não é obrigatória e toda solicitação entra direto na fila do atendente, que documenta a
               autorização recebida do gerente. Ligado: exige alçada cadastrada; transferência acima do limite e todo imobilizado aguardam a
               aprovação por link no e-mail antes de entrar na fila.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="cfg-exportacao" className="grid gap-3 rounded-lg border bg-card p-5">
+        <h2 id="cfg-exportacao" className="text-base font-semibold text-foreground">Exportação para o robô SAP</h2>
+        <div className="flex items-start gap-3">
+          <Switch
+            id="exportacao-exigir"
+            checked={!!data.exportacao?.exigir_para_finalizar}
+            disabled={salvar.isPending}
+            onCheckedChange={(v) => salvar.mutate({ exportacao: { exigir_para_finalizar: v } })}
+          />
+          <div>
+            <Label htmlFor="exportacao-exigir">Exigir exportação (lote) para finalizar com sucesso</Label>
+            <p className="text-xs text-muted-foreground">
+              Desligado (atual): o atendimento finaliza com sucesso sem gerar o lote, enquanto o robô SAP não está ligado. Ligue quando o
+              arquivo do robô estiver publicado no servidor. Finalizar com erro nunca exige exportação.
             </p>
           </div>
         </div>

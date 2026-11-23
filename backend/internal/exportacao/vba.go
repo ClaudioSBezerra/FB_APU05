@@ -35,6 +35,9 @@ import (
 // não reaproveita/renomeia TemplatePath (Design Notes da spec 4.4: evita
 // qualquer mudança em vba_test.go da Story 4.3, já revisada).
 type ExportadorVBA struct {
+	// DispensaExportacao: permite finalizar com sucesso sem lote GERADO (robô SAP ainda não ligado).
+	DispensaExportacao bool
+
 	TemplatePath     string
 	TemplatePathObra string
 }
