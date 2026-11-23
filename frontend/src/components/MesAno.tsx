@@ -19,7 +19,7 @@ export function MesAno({ value, onChange }: { value: string; onChange: (v: strin
   const emitir = (a: string, m: string) => onChange(a && m ? `${a}-${m}` : '');
   return (
     <div className="flex gap-2">
-      <div className="flex-1">
+      <div className="min-w-0 flex-1">
         <Select value={mesAtual} onValueChange={(m) => { setMes(m); emitir(anoAtual, m); }}>
           <SelectTrigger aria-label="Mês"><SelectValue placeholder="Mês" /></SelectTrigger>
           <SelectContent>

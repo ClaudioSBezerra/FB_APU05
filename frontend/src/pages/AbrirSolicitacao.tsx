@@ -193,26 +193,33 @@ function ContaCombobox({
   onChange,
   opcoes,
   placeholder = 'Escolha a conta',
+  vazio = 'Nenhuma conta encontrada.',
+  limparRotulo,
 }: {
   value: string;
   onChange: (id: string) => void;
   opcoes: OpcaoItem[];
   placeholder?: string;
+  vazio?: string;
+  // quando informado, a primeira opção da lista limpa a escolha (value '') com este texto
+  limparRotulo?: string;
 }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState('');
   const [indice, setIndice] = useState(0);
   const raiz = useRef<HTMLDivElement>(null);
-  const selecionada = opcoes.find((o) => o.id === value);
+  // índice normalizado uma vez por lista (listas de milhares de itens: não refazer a cada tecla)
+  const indiceBusca = useMemo(() => {
+    const base: OpcaoItem[] = limparRotulo ? [{ id: '', codigo: '', nome: limparRotulo }, ...opcoes] : opcoes;
+    return base.map((o) => ({ o, alvo: normalizar(`${o.codigo} ${o.nome}`) }));
+  }, [opcoes, limparRotulo]);
+  const selecionada = indiceBusca.find((x) => x.o.id === value)?.o;
 
   const resultados = useMemo(() => {
     const termos = normalizar(busca).split(/\s+/).filter(Boolean);
-    if (termos.length === 0) return opcoes;
-    return opcoes.filter((o) => {
-      const alvo = normalizar(`${o.codigo} ${o.nome}`);
-      return termos.every((t) => alvo.includes(t));
-    });
-  }, [busca, opcoes]);
+    const achados = termos.length === 0 ? indiceBusca : indiceBusca.filter((x) => termos.every((t) => x.alvo.includes(t)));
+    return achados.map((x) => x.o);
+  }, [busca, indiceBusca]);
   const visiveis = resultados.slice(0, 60);
 
   useEffect(() => {
@@ -270,14 +277,14 @@ function ContaCombobox({
           className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-card px-3 py-2 text-left text-sm focus:outline-none focus:border-ring focus:ring-1 focus:ring-ring"
         >
           <span className={selecionada ? 'truncate text-foreground' : 'truncate text-fg-muted'}>
-            {selecionada ? `${selecionada.codigo} — ${selecionada.nome}` : placeholder}
+            {selecionada ? (selecionada.codigo ? `${selecionada.codigo} — ${selecionada.nome}` : selecionada.nome) : placeholder}
           </span>
           <Search className="size-4 shrink-0 text-fg-muted" />
         </button>
       )}
       {aberto && (
         <div className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-md border border-border bg-card shadow-popover" role="listbox">
-          {visiveis.length === 0 && <p className="p-3 text-xs text-fg-helper">Nenhuma conta encontrada.</p>}
+          {visiveis.length === 0 && <p className="p-3 text-xs text-fg-helper">{vazio}</p>}
           {visiveis.map((o, i) => (
             <button
               key={o.id}
@@ -289,7 +296,13 @@ function ContaCombobox({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => escolher(o)}
             >
-              <span className="font-medium">{o.codigo}</span> — {o.nome}
+              {o.codigo ? (
+                <>
+                  <span className="font-medium">{o.codigo}</span> — {o.nome}
+                </>
+              ) : (
+                o.nome
+              )}
             </button>
           ))}
           {resultados.length > visiveis.length && (
@@ -519,14 +532,7 @@ const AbrirSolicitacao = () => {
     }
   }
 
-  const [buscaCC, setBuscaCC] = useState('');
   const opcoesOrigemTodas = (tipo === 'transferencia' ? opcoes?.centros_custo_origem : undefined) ?? opcoes?.centros_custo ?? [];
-  const opcoesOrigem = useMemo(() => {
-    const q = buscaCC.trim().toLowerCase();
-    if (!q) return opcoesOrigemTodas;
-    return opcoesOrigemTodas.filter((cc) => cc.id === centroCustoId || `${cc.codigo} ${cc.nome}`.toLowerCase().includes(q));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opcoesOrigemTodas, buscaCC, centroCustoId]);
   const centroCustoSelecionado = opcoesOrigemTodas.find((cc) => cc.id === centroCustoId);
 
   const linhasOrigem = linhas.filter((l) => l.lado === 'origem');
@@ -731,25 +737,13 @@ const AbrirSolicitacao = () => {
       {tipo !== 'obras' && (
         <div className="grid gap-1.5">
           <Label>{tipo === 'transferencia' ? 'Centro de custo de origem' : 'Centro de custo'}</Label>
-          {opcoesOrigemTodas.length > 12 && (
-            <Input
-              placeholder="Buscar por código ou nome do centro de custo"
-              value={buscaCC}
-              onChange={(e) => setBuscaCC(e.target.value)}
-            />
-          )}
-          <Select value={centroCustoId} onValueChange={setCentroCustoId}>
-            <SelectTrigger>
-              <SelectValue placeholder="Escolha o centro de custo" />
-            </SelectTrigger>
-            <SelectContent>
-              {opcoesOrigem.map((cc) => (
-                <SelectItem key={cc.id} value={cc.id}>
-                  {cc.codigo} — {cc.nome}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <ContaCombobox
+            value={centroCustoId}
+            onChange={setCentroCustoId}
+            opcoes={opcoesOrigemTodas}
+            placeholder="Escolha o centro de custo"
+            vazio="Nenhum centro de custo encontrado."
+          />
           {opcoes && opcoesOrigemTodas.length === 0 && (
             <p className="text-xs text-destructive">
               Seu usuário não tem nenhum centro de custo autorizado ainda — fale com o administrador.
@@ -767,7 +761,7 @@ const AbrirSolicitacao = () => {
             </p>
             {linhas.map((linha, i) =>
               linha.lado !== 'origem' ? null : (
-                <div key={i} className="grid grid-cols-1 gap-3 border-t border-border pt-3 first-of-type:border-0 sm:grid-cols-[1fr_150px_150px_auto] sm:items-end">
+                <div key={i} className="grid grid-cols-1 gap-3 border-t border-border pt-3 first-of-type:border-0 sm:grid-cols-[minmax(0,1fr)_17rem_9rem_auto] sm:items-end">
                   <div className="grid gap-1.5">
                     <Label>Conta</Label>
                     <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
@@ -804,23 +798,18 @@ const AbrirSolicitacao = () => {
             <h2 className="text-sm font-semibold text-foreground">Destino</h2>
             <div className="grid gap-1.5">
               <Label>Centro de custo de destino</Label>
-              <Select value={ccDestinoId || 'mesmo'} onValueChange={(v) => setCcDestinoId(v === 'mesmo' ? '' : v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="mesmo">Mesmo centro de custo da origem</SelectItem>
-                  {(opcoes?.centros_custo_destino ?? []).map((cc) => (
-                    <SelectItem key={cc.id} value={cc.id}>
-                      {cc.codigo} — {cc.nome}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ContaCombobox
+                value={ccDestinoId}
+                onChange={setCcDestinoId}
+                opcoes={opcoes?.centros_custo_destino ?? []}
+                placeholder="Mesmo centro de custo da origem"
+                vazio="Nenhum centro de custo encontrado."
+                limparRotulo="Mesmo centro de custo da origem"
+              />
             </div>
             {linhas.map((linha, i) =>
               linha.lado !== 'destino' ? null : (
-                <div key={i} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_150px_150px] sm:items-end">
+                <div key={i} className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_17rem_9rem] sm:items-end">
                   <div className="grid gap-1.5">
                     <Label>Conta</Label>
                     <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
