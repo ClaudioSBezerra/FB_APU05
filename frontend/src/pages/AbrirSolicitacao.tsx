@@ -19,6 +19,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Search } from 'lucide-react';
+import { MesAno } from '@/components/MesAno';
 import { useSaldoOrcamento, type SaldoLinha } from '@/hooks/useSaldoOrcamento';
 
 // Tela de abertura de solicitação (Epic 3 — Stories 3.1 a 3.5). Cobre os 5
@@ -756,7 +757,7 @@ const AbrirSolicitacao = () => {
                   </div>
                   <div className="grid gap-1.5">
                     <Label>Mês</Label>
-                    <Input type="month" value={linha.mes} onChange={(e) => atualizarLinha(i, 'mes', e.target.value)} />
+                    <MesAno value={linha.mes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
                   </div>
                   <div className="grid gap-1.5">
                     <Label>Valor (R$)</Label>
@@ -809,7 +810,7 @@ const AbrirSolicitacao = () => {
                   </div>
                   <div className="grid gap-1.5">
                     <Label>Mês</Label>
-                    <Input type="month" value={linha.mes} onChange={(e) => atualizarLinha(i, 'mes', e.target.value)} />
+                    <MesAno value={linha.mes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
                   </div>
                   <div className="grid gap-1.5">
                     <Label>Valor (soma)</Label>
@@ -865,7 +866,7 @@ const AbrirSolicitacao = () => {
                 </div>
                 <div className="grid gap-1.5">
                   <Label>Mês de competência</Label>
-                  <Input type="month" value={linha.mes} onChange={(e) => atualizarLinha(i, 'mes', e.target.value)} />
+                  <MesAno value={linha.mes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
                 </div>
               </>
             )}
