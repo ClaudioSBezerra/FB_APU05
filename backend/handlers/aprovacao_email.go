@@ -50,6 +50,16 @@ type consultaRow interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
+// aprovacaoObrigatoria: configuracoes.aprovacao_obrigatoria. Desligada (padrão), a alçada não é obrigatória e
+// toda solicitação vai direto para a fila do atendente, que documenta a autorização recebida do gerente.
+func aprovacaoObrigatoria(q consultaRow) bool {
+	var v string
+	if err := q.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'aprovacao_obrigatoria'`).Scan(&v); err != nil {
+		return false
+	}
+	return v == "true"
+}
+
 // limiteAprovacaoTransferencia lê o teto sem aprovação (configuracoes.aprovacao_limite_transferencia).
 func limiteAprovacaoTransferencia(q consultaRow) float64 {
 	var v string

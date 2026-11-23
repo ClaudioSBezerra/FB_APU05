@@ -424,6 +424,13 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			Valor:                  valorTotal,
 			AutorizadorEscolhidoID: req.AutorizadorID,
 		})
+		// Alçada opcional (padrão, sugestão do Marlos 23/11/2026): sem alçada cadastrada a solicitação segue
+		// para o atendimento, que documenta a autorização recebida do gerente. Com aprovacao_obrigatoria
+		// ligada, volta o erro 422 de antes.
+		if semAlcadaErr := (*aprovacao.ErrSemAlcadaCadastrada)(nil); err != nil && errors.As(err, &semAlcadaErr) && !aprovacaoObrigatoria(tx) {
+			aprovadorResolvido = aprovacao.Aprovador{Tipo: aprovacao.TipoCargo, Nome: "A confirmar pelo atendimento", Motivo: "sem alçada cadastrada (não obrigatória)"}
+			err = nil
+		}
 		if err != nil {
 			var semAlcada *aprovacao.ErrSemAlcadaCadastrada
 			if errors.As(err, &semAlcada) {
@@ -461,13 +468,16 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		descricao := stringOuNulo(req.Descricao)
 
 		// Transferência acima do limite (padrão R$ 50.000) só entra na fila depois da aprovação.
+		// Só com aprovacao_obrigatoria ligada; desligada (padrão), toda solicitação entra direto na fila.
 		statusInicial := "aberta"
-		if req.TipoSolicitacao == "transferencia" && valorTotal > limiteAprovacaoTransferencia(tx) {
-			statusInicial = "aguardando_aprovacao"
-		}
-		// Imobilizado: qualquer valor passa pela Superintendência (decisão do negócio, 23/11/2026).
-		if req.TipoSolicitacao == "imobilizado" {
-			statusInicial = "aguardando_aprovacao"
+		if aprovacaoObrigatoria(tx) {
+			if req.TipoSolicitacao == "transferencia" && valorTotal > limiteAprovacaoTransferencia(tx) {
+				statusInicial = "aguardando_aprovacao"
+			}
+			// Imobilizado: qualquer valor passa pela Superintendência (decisão do negócio, 23/11/2026).
+			if req.TipoSolicitacao == "imobilizado" {
+				statusInicial = "aguardando_aprovacao"
+			}
 		}
 
 		var solicitacaoID string

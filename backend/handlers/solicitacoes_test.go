@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -446,6 +447,8 @@ func TestAbrirSolicitacaoHandler_SemAlcadaCadastrada(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
 	mock.ExpectQuery(regexp.QuoteMeta("centro_custo_id IS NULL AND divisao_id IS NULL")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_obrigatoria'")).
+		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("true"))
 	mock.ExpectRollback()
 
 	handler := AbrirSolicitacaoHandler(db)
@@ -464,6 +467,60 @@ func TestAbrirSolicitacaoHandler_SemAlcadaCadastrada(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectativas do mock não satisfeitas: %v", err)
+	}
+}
+
+func TestAbrirSolicitacaoHandler_SemAlcada_NaoObrigatoriaSegueParaAFila(t *testing.T) {
+	db, mock := newSQLMock(t)
+
+	corpo := corpoTransferencia(
+		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", 50000) + "," +
+			linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 50000),
+	)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo, divisao_id, filial FROM centros_custo WHERE id = $1")).
+		WithArgs(testSolicitacaoCentroCustoID).
+		WillReturnRows(sqlmock.NewRows([]string{"codigo", "divisao_id", "filial"}).
+			AddRow("CC1", testSolicitacaoDivisaoID, "F1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT cc_proprio_id FROM usuarios WHERE id = $1")).
+		WithArgs(testAtorID).
+		WillReturnRows(sqlmock.NewRows([]string{"cc_proprio_id"}).AddRow(testSolicitacaoCentroCustoID))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
+		WithArgs(testSolicitacaoContaOrigem).
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT plano FROM contas WHERE id = $1")).
+		WithArgs(testSolicitacaoContaDestino).
+		WillReturnRows(sqlmock.NewRows([]string{"plano"}).AddRow("0050"))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM regras_aprovacao")).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM alcadas")).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "papel_aprovador"}))
+	mock.ExpectQuery(regexp.QuoteMeta("centro_custo_id = $2")).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
+	mock.ExpectQuery(regexp.QuoteMeta("centro_custo_id IS NULL AND divisao_id = $2")).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
+	mock.ExpectQuery(regexp.QuoteMeta("centro_custo_id IS NULL AND divisao_id IS NULL")).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_obrigatoria'")).
+		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("false"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_obrigatoria'")).
+		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("false"))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "aberta").
+		WillReturnError(errors.New("parou aqui de propósito"))
+	mock.ExpectRollback()
+
+	handler := AbrirSolicitacaoHandler(db)
+	req := newSolicitacaoRequest(corpo)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code == http.StatusUnprocessableEntity || strings.Contains(rec.Body.String(), "sem alçada") {
+		t.Fatalf("sem alçada não deve barrar quando a aprovação não é obrigatória: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("a solicitação deveria seguir até gravar com status 'aberta': %v", err)
 	}
 }
 
@@ -568,6 +625,8 @@ func TestAbrirSolicitacaoHandler_ComFornecedorDescricaoEAnexo(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 1) FROM cadastro_historico")).
 		WithArgs("alcadas", alcadaID).
 		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(3))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_obrigatoria'")).
+		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("true"))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_limite_transferencia'")).
 		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("50000"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
@@ -748,6 +807,8 @@ func TestAbrirSolicitacaoHandler_InclusaoSFC_SemAlcadaCadastrada(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
 	mock.ExpectQuery(regexp.QuoteMeta("centro_custo_id IS NULL AND divisao_id IS NULL")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "colaborador_id", "papel_aprovador"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_obrigatoria'")).
+		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("true"))
 	mock.ExpectRollback()
 
 	handler := AbrirSolicitacaoHandler(db)

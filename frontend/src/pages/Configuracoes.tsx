@@ -31,6 +31,7 @@ interface ServicoSAP {
 }
 interface Config {
   testes?: { origem_todos_cc: boolean };
+  aprovacao?: { obrigatoria: boolean };
   sap: {
     horario: string;
     usuario: string;
@@ -339,6 +340,26 @@ function Formulario({ data }: { data: Config }) {
           <Button size="sm" onClick={salvarSAP} disabled={salvar.isPending}>
             Salvar integração SAP
           </Button>
+        </div>
+      </section>
+
+      <section aria-labelledby="cfg-aprovacao" className="grid gap-3 rounded-lg border bg-card p-5">
+        <h2 id="cfg-aprovacao" className="text-base font-semibold text-foreground">Fluxo de aprovação</h2>
+        <div className="flex items-start gap-3">
+          <Switch
+            id="aprovacao-obrigatoria"
+            checked={!!data.aprovacao?.obrigatoria}
+            disabled={salvar.isPending}
+            onCheckedChange={(v) => salvar.mutate({ aprovacao: { obrigatoria: v } })}
+          />
+          <div>
+            <Label htmlFor="aprovacao-obrigatoria">Exigir alçada e aprovação por e-mail</Label>
+            <p className="text-xs text-muted-foreground">
+              Desligado (atual): a alçada não é obrigatória e toda solicitação entra direto na fila do atendente, que documenta a
+              autorização recebida do gerente. Ligado: exige alçada cadastrada; transferência acima do limite e todo imobilizado aguardam a
+              aprovação por link no e-mail antes de entrar na fila.
+            </p>
+          </div>
         </div>
       </section>
 

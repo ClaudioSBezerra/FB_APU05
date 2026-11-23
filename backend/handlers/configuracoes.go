@@ -37,9 +37,10 @@ const (
 	cfgSapSenha   = "sap_senha"
 	// gateway interno (Kong): chave (criptografada) e mandante informados na tela; a variável de
 	// ambiente SAP_API_KEY/SAP_CLIENT vale quando a tela não tem a chave.
-	cfgSapApiKey          = "sap_apikey"
-	cfgSapClient          = "sap_client"
-	cfgTesteOrigemTodosCC = "teste_origem_todos_cc"
+	cfgSapApiKey            = "sap_apikey"
+	cfgSapClient            = "sap_client"
+	cfgTesteOrigemTodosCC   = "teste_origem_todos_cc"
+	cfgAprovacaoObrigatoria = "aprovacao_obrigatoria"
 )
 
 var clientRegexp = regexp.MustCompile(`^\d{1,3}$`)
@@ -99,6 +100,9 @@ type configuracoesResposta struct {
 	Testes struct {
 		OrigemTodosCC bool `json:"origem_todos_cc"`
 	} `json:"testes"`
+	Aprovacao struct {
+		Obrigatoria bool `json:"obrigatoria"`
+	} `json:"aprovacao"`
 }
 
 func montarResposta(m map[string]string) configuracoesResposta {
@@ -110,6 +114,7 @@ func montarResposta(m map[string]string) configuracoesResposta {
 	r.SAP.ApiKeyAmbiente = sapodata.ModoGateway()
 	r.SAP.SapClient = m[cfgSapClient]
 	r.Testes.OrigemTodosCC = m[cfgTesteOrigemTodosCC] == "true"
+	r.Aprovacao.Obrigatoria = m[cfgAprovacaoObrigatoria] == "true"
 	for _, sv := range sapodata.Todos {
 		sc := servicoConfig{
 			Chave: sv.Chave, Nome: sv.Nome, Diaria: sv.Diaria,
@@ -177,6 +182,9 @@ type configuracoesEntrada struct {
 	Testes *struct {
 		OrigemTodosCC *bool `json:"origem_todos_cc"`
 	} `json:"testes"`
+	Aprovacao *struct {
+		Obrigatoria *bool `json:"obrigatoria"`
+	} `json:"aprovacao"`
 }
 
 // validarEntrada transforma a entrada em pares chave→valor a gravar (a senha já cifrada), ou erro de validação.
@@ -184,6 +192,9 @@ func validarEntrada(in configuracoesEntrada, atual map[string]string) (map[strin
 	grava := map[string]string{}
 	if in.Testes != nil && in.Testes.OrigemTodosCC != nil {
 		grava[cfgTesteOrigemTodosCC] = strconv.FormatBool(*in.Testes.OrigemTodosCC)
+	}
+	if in.Aprovacao != nil && in.Aprovacao.Obrigatoria != nil {
+		grava[cfgAprovacaoObrigatoria] = strconv.FormatBool(*in.Aprovacao.Obrigatoria)
 	}
 	if in.SAP == nil {
 		return grava, nil
