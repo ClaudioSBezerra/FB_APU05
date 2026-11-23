@@ -125,7 +125,7 @@ func centrosCustoAutorizados(db *sql.DB, usuarioID string) ([]centroCustoOpcao, 
 // chamada, todo cadastro mestre que um formulário de abertura de
 // solicitação (qualquer um dos 5 tipos) precisa para popular combos:
 // centros de custo autorizados do usuário logado, divisões, contas (do plano de
-// contas do SAP), classes de imobilizado, locais
+// contas do SAP — só as de despesa, que começam com 4 (regra do negócio, 23/11/2026) —, classes de imobilizado, locais
 // de obra e subgrupos de despesa.
 func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +151,7 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		contas, err := listarOpcoes(db, "SELECT id, codigo, nome FROM contas WHERE plano = '"+sapodata.PlanoContas()+"' ORDER BY nome")
+		contas, err := listarOpcoes(db, "SELECT id, codigo, nome FROM contas WHERE plano = '"+sapodata.PlanoContas()+"' AND codigo LIKE '4%' ORDER BY codigo")
 		if err != nil {
 			log.Printf("[Formulario] Erro ao consultar contas: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
