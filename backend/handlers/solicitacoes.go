@@ -465,6 +465,10 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		if req.TipoSolicitacao == "transferencia" && valorTotal > limiteAprovacaoTransferencia(tx) {
 			statusInicial = "aguardando_aprovacao"
 		}
+		// Imobilizado: qualquer valor passa pela Superintendência (decisão do negócio, 23/11/2026).
+		if req.TipoSolicitacao == "imobilizado" {
+			statusInicial = "aguardando_aprovacao"
+		}
 
 		var solicitacaoID string
 		err = tx.QueryRow(`
@@ -524,7 +528,12 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		log.Printf("[Solicitacoes] %s abriu solicitação %s (tipo=%s, cc=%s, aprovador=%s/%s, status=%s)",
 			solicitanteID, solicitacaoID, req.TipoSolicitacao, centroCustoID, aprovadorResolvido.Tipo, aprovadorResolvido.Nome, statusInicial)
 		if statusInicial == "aguardando_aprovacao" {
-			go convidarAprovador(db, solicitacaoID, aprovadorResolvido)
+			convidado := aprovadorResolvido
+			if req.TipoSolicitacao == "imobilizado" {
+				// o autorizador escolhido continua gravado na solicitação; quem decide é a Superintendência
+				convidado = aprovacao.Aprovador{Tipo: aprovacao.TipoCargo, Nome: papelSuperintendencia}
+			}
+			go convidarAprovador(db, solicitacaoID, convidado, req.TipoSolicitacao)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

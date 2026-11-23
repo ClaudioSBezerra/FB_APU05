@@ -12,7 +12,7 @@ interface Consulta {
   estado: 'pendente' | 'decidida' | 'expirada' | 'encerrada';
   decisao?: 'aprovada' | 'rejeitada';
   aprovador: string;
-  resumo: { solicitante: string; total: number; linhas: Linha[] };
+  resumo: { tipo_solicitacao: string; solicitante: string; total: number; linhas: Linha[] };
 }
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -78,7 +78,7 @@ export default function AprovarPorLink() {
     corpo = (
       <div className="grid gap-4">
         <p className="text-sm">
-          <strong>{c.resumo.solicitante}</strong> pede a transferência de orçamento de{' '}
+          <strong>{c.resumo.solicitante}</strong> abriu {c.resumo.tipo_solicitacao === 'imobilizado' ? 'uma solicitação de imobilizado' : 'uma transferência de orçamento'} de{' '}
           <strong>{moeda.format(c.resumo.total)}</strong>.
         </p>
         <div className="overflow-x-auto">
@@ -124,7 +124,7 @@ export default function AprovarPorLink() {
   return (
     <div className="flex min-h-screen items-start justify-center bg-background px-4 py-10">
       <div className="w-full max-w-2xl rounded-lg border border-border bg-card p-6 shadow-sm">
-        <h1 className="mb-4 text-base font-semibold text-card-foreground">Aprovação de transferência de orçamento</h1>
+        <h1 className="mb-4 text-base font-semibold text-card-foreground">Aprovação de solicitação</h1>
         {corpo}
       </div>
     </div>

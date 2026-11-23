@@ -33,7 +33,16 @@ import (
 const (
 	limiteTransferenciaPadrao = 50000.0
 	validadeConviteAprovacao  = 7 * 24 * time.Hour
+	papelSuperintendencia     = "Superintendência" // papel em "Papel × Pessoa" que aprova todo imobilizado
 )
+
+// rotuloAprovacao é o nome da solicitação nos e-mails e na página de aprovação.
+func rotuloAprovacao(tipo string) string {
+	if tipo == "imobilizado" {
+		return "solicitação de imobilizado"
+	}
+	return "transferência de orçamento"
+}
 
 var aprovacaoTokenRL = newRateLimiter(60, time.Minute)
 
@@ -98,10 +107,11 @@ func carregarResumo(q interface {
 		return nil, err
 	}
 	rows, err := q.Query(`
-		SELECT l.lado, cc.codigo || ' — ' || cc.nome, COALESCE(c.codigo || ' — ' || c.nome, ''), COALESCE(to_char(l.mes, 'YYYY-MM'), ''), l.valor::float8
+		SELECT l.lado, cc.codigo || ' — ' || cc.nome, COALESCE(c.codigo || ' — ' || c.nome, 'Classe: ' || ci.nome, ''), COALESCE(to_char(l.mes, 'YYYY-MM'), ''), l.valor::float8
 		FROM solicitacao_lancamentos l
 		JOIN centros_custo cc ON cc.id = l.centro_custo_id
 		LEFT JOIN contas c ON c.id = l.conta_id
+		LEFT JOIN classes_imobilizado ci ON ci.id = l.classe_imobilizado_id
 		WHERE l.solicitacao_id = $1 ORDER BY l.lado DESC, l.mes, l.created_at`, id)
 	if err != nil {
 		return nil, err
@@ -151,7 +161,7 @@ func appURL() string {
 
 // convidarAprovador cria o convite e envia o e-mail. Roda depois do commit (em goroutine); qualquer
 // falha só é logada: a solicitação continua 'aguardando_aprovacao' e o atendente pode decidir à mão.
-func convidarAprovador(db *sql.DB, solicitacaoID string, ap aprovacao.Aprovador) {
+func convidarAprovador(db *sql.DB, solicitacaoID string, ap aprovacao.Aprovador, tipo string) {
 	type dest struct{ email, nome string }
 	var destinos []dest
 	switch {
@@ -201,7 +211,7 @@ func convidarAprovador(db *sql.DB, solicitacaoID string, ap aprovacao.Aprovador)
 			continue
 		}
 		link := appURL() + "/aprovacao/" + token
-		if err := services.SendHTMLEmail([]string{d.email}, "Aprovação de transferência de orçamento — "+moedaBR(resumo.Total), corpoConvite(d.nome, resumo, link)); err != nil {
+		if err := services.SendHTMLEmail([]string{d.email}, "Aprovação de "+rotuloAprovacao(tipo)+" — "+moedaBR(resumo.Total), corpoConvite(d.nome, resumo, link)); err != nil {
 			log.Printf("[Aprovacao] %s: falha ao enviar o e-mail para %s: %v", solicitacaoID, d.nome, err)
 			continue
 		}
@@ -224,11 +234,11 @@ func tabelaLinhas(r *resumoSolicitacao) string {
 func corpoConvite(nome string, r *resumoSolicitacao, link string) string {
 	return fmt.Sprintf(`<div style="font-family:Arial,sans-serif;color:#333;max-width:640px;margin:0 auto">
 <p>Olá, %s.</p>
-<p><strong>%s</strong> abriu uma transferência de orçamento de <strong>%s</strong> que precisa da sua aprovação.</p>
+<p><strong>%s</strong> abriu uma %s de <strong>%s</strong> que precisa da sua aprovação.</p>
 %s
 <p style="text-align:center;margin:28px 0"><a href="%s" style="background:#2d3748;color:#fff;text-decoration:none;padding:12px 24px;border-radius:4px;font-weight:bold">Ver e decidir</a></p>
 <p style="font-size:12px;color:#777">Ou copie o link: %s<br>O link vale por 7 dias e só pode ser usado uma vez. A decisão só é registrada depois que você confirmar na página.</p></div>`,
-		html.EscapeString(nome), html.EscapeString(r.Solicitante), moedaBR(r.Total), tabelaLinhas(r), link, html.EscapeString(link))
+		html.EscapeString(nome), html.EscapeString(r.Solicitante), rotuloAprovacao(r.Tipo), moedaBR(r.Total), tabelaLinhas(r), link, html.EscapeString(link))
 }
 
 // avisarSolicitante manda ao solicitante o resultado da aprovação.
@@ -253,9 +263,9 @@ func avisarSolicitante(db *sql.DB, solicitacaoID string, aprovada bool, motivo, 
 		extra = `<p>Ela segue para o atendimento.</p>`
 	}
 	corpo := fmt.Sprintf(`<div style="font-family:Arial,sans-serif;color:#333;max-width:640px;margin:0 auto"><p>Olá, %s.</p>
-<p>Sua transferência de orçamento de <strong>%s</strong> foi <strong style="color:%s">%s</strong> por %s.</p>%s%s</div>`,
-		html.EscapeString(nome), moedaBR(resumo.Total), cor, res, html.EscapeString(quem), extra, tabelaLinhas(resumo))
-	if err := services.SendHTMLEmail([]string{email}, "Sua transferência foi "+res, corpo); err != nil {
+<p>Sua %s de <strong>%s</strong> foi <strong style="color:%s">%s</strong> por %s.</p>%s%s</div>`,
+		html.EscapeString(nome), rotuloAprovacao(resumo.Tipo), moedaBR(resumo.Total), cor, res, html.EscapeString(quem), extra, tabelaLinhas(resumo))
+	if err := services.SendHTMLEmail([]string{email}, "Sua "+rotuloAprovacao(resumo.Tipo)+" foi "+res, corpo); err != nil {
 		log.Printf("[Aprovacao] %s: falha ao avisar o solicitante: %v", solicitacaoID, err)
 	}
 }

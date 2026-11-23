@@ -126,7 +126,7 @@ func TestConvidarAprovador_CargoSemPessoasNaoEnviaNada(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("FROM papel_pessoa pp JOIN usuarios u")).
 		WithArgs("Diretor").
 		WillReturnRows(sqlmock.NewRows([]string{"email", "nome"}))
-	convidarAprovador(db, "so1", aprovacao.Aprovador{Tipo: aprovacao.TipoCargo, Nome: "Diretor"})
+	convidarAprovador(db, "so1", aprovacao.Aprovador{Tipo: aprovacao.TipoCargo, Nome: "Diretor"}, "transferencia")
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Error(err) // só a busca do papel; nada de convite nem e-mail
 	}
