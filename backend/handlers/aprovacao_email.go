@@ -152,26 +152,33 @@ func appURL() string {
 // convidarAprovador cria o convite e envia o e-mail. Roda depois do commit (em goroutine); qualquer
 // falha só é logada: a solicitação continua 'aguardando_aprovacao' e o atendente pode decidir à mão.
 func convidarAprovador(db *sql.DB, solicitacaoID string, ap aprovacao.Aprovador) {
-	if ap.Tipo != aprovacao.TipoPessoa || ap.ColaboradorID == nil {
-		log.Printf("[Aprovacao] %s: aprovador é cargo/grupo (%s) — decisão manual pelo atendente", solicitacaoID, ap.Nome)
-		return
+	type dest struct{ email, nome string }
+	var destinos []dest
+	switch {
+	case ap.Tipo == aprovacao.TipoPessoa && ap.ColaboradorID != nil:
+		var d dest
+		if err := db.QueryRow(`SELECT email, nome FROM usuarios WHERE id = $1`, *ap.ColaboradorID).Scan(&d.email, &d.nome); err == nil {
+			destinos = append(destinos, d)
+		}
+	case strings.TrimSpace(ap.Nome) != "":
+		// cargo: todos os usuários ligados ao papel em "Papel × Pessoa" recebem; o primeiro que decidir vale
+		rows, err := db.Query(`
+			SELECT DISTINCT u.email, u.nome FROM papel_pessoa pp JOIN usuarios u ON u.id = pp.colaborador_id
+			WHERE LOWER(TRIM(pp.papel)) = LOWER(TRIM($1)) AND u.ativo = true AND u.email <> ''`, ap.Nome)
+		if err != nil {
+			log.Printf("[Aprovacao] %s: erro ao buscar as pessoas do papel %q: %v", solicitacaoID, ap.Nome, err)
+		} else {
+			for rows.Next() {
+				var d dest
+				if rows.Scan(&d.email, &d.nome) == nil {
+					destinos = append(destinos, d)
+				}
+			}
+			rows.Close()
+		}
 	}
-	var email, nome string
-	if err := db.QueryRow(`SELECT email, nome FROM usuarios WHERE id = $1`, *ap.ColaboradorID).Scan(&email, &nome); err != nil || strings.TrimSpace(email) == "" {
-		log.Printf("[Aprovacao] %s: aprovador sem e-mail cadastrado — decisão manual pelo atendente", solicitacaoID)
-		return
-	}
-	token, hash, err := novoTokenAprovacao()
-	if err != nil {
-		log.Printf("[Aprovacao] %s: não foi possível gerar o token: %v", solicitacaoID, err)
-		return
-	}
-	var conviteID string
-	if err := db.QueryRow(`
-		INSERT INTO solicitacao_aprovacoes (solicitacao_id, token_hash, aprovador_nome, aprovador_email, canal, expira_em)
-		VALUES ($1, $2, $3, $4, 'email', now() + $5::interval) RETURNING id`,
-		solicitacaoID, hash, nome, email, fmt.Sprintf("%d hours", int(validadeConviteAprovacao.Hours()))).Scan(&conviteID); err != nil {
-		log.Printf("[Aprovacao] %s: erro ao gravar o convite: %v", solicitacaoID, err)
+	if len(destinos) == 0 {
+		log.Printf("[Aprovacao] %s: nenhum aprovador com e-mail para %q — decisão manual pelo atendente", solicitacaoID, ap.Nome)
 		return
 	}
 	resumo, err := carregarResumo(db, solicitacaoID)
@@ -179,13 +186,28 @@ func convidarAprovador(db *sql.DB, solicitacaoID string, ap aprovacao.Aprovador)
 		log.Printf("[Aprovacao] %s: erro ao montar o resumo: %v", solicitacaoID, err)
 		return
 	}
-	link := appURL() + "/aprovacao/" + token
-	if err := services.SendHTMLEmail([]string{email}, "Aprovação de transferência de orçamento — "+moedaBR(resumo.Total), corpoConvite(nome, resumo, link)); err != nil {
-		log.Printf("[Aprovacao] %s: falha ao enviar o e-mail para o aprovador: %v", solicitacaoID, err)
-		return
+	for _, d := range destinos {
+		token, hash, err := novoTokenAprovacao()
+		if err != nil {
+			log.Printf("[Aprovacao] %s: não foi possível gerar o token: %v", solicitacaoID, err)
+			continue
+		}
+		var conviteID string
+		if err := db.QueryRow(`
+			INSERT INTO solicitacao_aprovacoes (solicitacao_id, token_hash, aprovador_nome, aprovador_email, canal, expira_em)
+			VALUES ($1, $2, $3, $4, 'email', now() + $5::interval) RETURNING id`,
+			solicitacaoID, hash, d.nome, d.email, fmt.Sprintf("%d hours", int(validadeConviteAprovacao.Hours()))).Scan(&conviteID); err != nil {
+			log.Printf("[Aprovacao] %s: erro ao gravar o convite: %v", solicitacaoID, err)
+			continue
+		}
+		link := appURL() + "/aprovacao/" + token
+		if err := services.SendHTMLEmail([]string{d.email}, "Aprovação de transferência de orçamento — "+moedaBR(resumo.Total), corpoConvite(d.nome, resumo, link)); err != nil {
+			log.Printf("[Aprovacao] %s: falha ao enviar o e-mail para %s: %v", solicitacaoID, d.nome, err)
+			continue
+		}
+		_, _ = db.Exec(`UPDATE solicitacao_aprovacoes SET email_enviado_em = now() WHERE id = $1`, conviteID)
+		log.Printf("[Aprovacao] %s: convite enviado a %s", solicitacaoID, d.nome)
 	}
-	_, _ = db.Exec(`UPDATE solicitacao_aprovacoes SET email_enviado_em = now() WHERE id = $1`, conviteID)
-	log.Printf("[Aprovacao] %s: convite enviado ao aprovador %s", solicitacaoID, nome)
 }
 
 func tabelaLinhas(r *resumoSolicitacao) string {

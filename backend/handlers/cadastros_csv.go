@@ -368,7 +368,7 @@ func decodeCSVAlcadas(_ *sql.Tx, linha []string) ([]interface{}, error) {
 	return []interface{}{filial, centroCustoCodigo, valorMinimo, valorMaximo, papelAprovador, ativo}, nil
 }
 
-func decodeCSVPapelPessoa(_ *sql.Tx, linha []string) ([]interface{}, error) {
+func decodeCSVPapelPessoa(tx *sql.Tx, linha []string) ([]interface{}, error) {
 	papel, err := campoObrigatorio(linha[0], "papel")
 	if err != nil {
 		return nil, err
@@ -377,7 +377,11 @@ func decodeCSVPapelPessoa(_ *sql.Tx, linha []string) ([]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []interface{}{papel, pessoaNome}, nil
+	colaboradorID, err := resolveColaboradorIDPorEmailOpcional(tx, linha[2])
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{papel, pessoaNome, colaboradorID}, nil
 }
 
 func decodeCSVFeriados(_ *sql.Tx, linha []string) ([]interface{}, error) {

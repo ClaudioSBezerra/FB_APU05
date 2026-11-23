@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+
+	"fb_apu05/internal/aprovacao"
 )
 
 func reqToken(metodo, token, corpo string) *http.Request {
@@ -116,5 +118,16 @@ func TestDecidirPorLink_StatusJaMudou409_DesfazReserva(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Error("a reserva do convite deveria ter sido desfeita: ", err)
+	}
+}
+
+func TestConvidarAprovador_CargoSemPessoasNaoEnviaNada(t *testing.T) {
+	db, mock := newSQLMock(t)
+	mock.ExpectQuery(regexp.QuoteMeta("FROM papel_pessoa pp JOIN usuarios u")).
+		WithArgs("Diretor").
+		WillReturnRows(sqlmock.NewRows([]string{"email", "nome"}))
+	convidarAprovador(db, "so1", aprovacao.Aprovador{Tipo: aprovacao.TipoCargo, Nome: "Diretor"})
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err) // só a busca do papel; nada de convite nem e-mail
 	}
 }

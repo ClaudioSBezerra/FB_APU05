@@ -127,10 +127,11 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   {
     tipo: 'papel-pessoa',
     label: 'Papel × Pessoa',
-    csvCabecalho: 'papel;pessoa_nome',
+    csvCabecalho: 'papel;pessoa_nome;colaborador_email',
     campos: [
-      { nome: 'papel', label: 'Papel', kind: 'texto' },
+      { nome: 'papel', label: 'Papel', kind: 'texto', ajuda: 'o mesmo texto do "Papel aprovador" da alçada (ex.: Diretor). Pode haver várias pessoas no mesmo papel: qualquer uma decide' },
       { nome: 'pessoa_nome', label: 'Pessoa (nome)', kind: 'texto' },
+      { nome: 'colaborador_id', label: 'Usuário do sistema', kind: 'uuid_opcional', ref: 'usuarios', ajuda: 'recebe o e-mail de aprovação' },
     ],
   },
   {

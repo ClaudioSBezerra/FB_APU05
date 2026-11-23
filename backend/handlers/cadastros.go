@@ -135,10 +135,11 @@ var cadastroRegistry = map[string]cadastroTipo{
 	},
 	"papel-pessoa": {
 		Tabela:       "papel_pessoa",
-		CSVCabecalho: []string{"papel", "pessoa_nome"},
+		CSVCabecalho: []string{"papel", "pessoa_nome", "colaborador_email"},
 		Colunas: []colunaDef{
 			{Nome: "papel", Kind: colString},
 			{Nome: "pessoa_nome", Kind: colString},
+			{Nome: "colaborador_id", Kind: colStringNulo},
 		},
 		DecodeCSV:  decodeCSVPapelPessoa,
 		DecodeJSON: decodeJSONPapelPessoa,
@@ -446,7 +447,11 @@ func decodeJSONPapelPessoa(corpo map[string]interface{}) ([]interface{}, error) 
 	if err != nil {
 		return nil, err
 	}
-	return []interface{}{papel, pessoaNome}, nil
+	colaboradorID, err := extractUUIDOpcional(corpo, "colaborador_id")
+	if err != nil {
+		return nil, err
+	}
+	return []interface{}{papel, pessoaNome, colaboradorID}, nil
 }
 
 func decodeJSONFeriados(corpo map[string]interface{}) ([]interface{}, error) {

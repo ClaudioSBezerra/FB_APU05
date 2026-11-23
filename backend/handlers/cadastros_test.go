@@ -536,7 +536,7 @@ func TestImportarCadastroHandler_PapelPessoa_Success(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	const papelID = "99999999-9999-9999-9999-999999999999"
-	csv := "papel;pessoa_nome\nGerente;Fulano de Tal\n"
+	csv := "papel;pessoa_nome;colaborador_email\nGerente;Fulano de Tal;\n"
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
@@ -544,11 +544,11 @@ func TestImportarCadastroHandler_PapelPessoa_Success(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM papel_pessoa)")).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO papel_pessoa (papel, pessoa_nome) VALUES ($1, $2) RETURNING id")).
-		WithArgs("Gerente", "Fulano de Tal").
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO papel_pessoa (papel, pessoa_nome, colaborador_id) VALUES ($1, $2, $3) RETURNING id")).
+		WithArgs("Gerente", "Fulano de Tal", nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(papelID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
-		WithArgs("papel-pessoa", papelID, `{"papel":"Gerente","pessoa_nome":"Fulano de Tal"}`, testAtorID).
+		WithArgs("papel-pessoa", papelID, `{"colaborador_id":null,"papel":"Gerente","pessoa_nome":"Fulano de Tal"}`, testAtorID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
