@@ -761,8 +761,8 @@ const AbrirSolicitacao = () => {
             </p>
             {linhas.map((linha, i) =>
               linha.lado !== 'origem' ? null : (
-                <div key={i} className="grid grid-cols-1 gap-3 border-t border-border pt-3 first-of-type:border-0 sm:grid-cols-[minmax(0,1fr)_17rem_9rem_auto] sm:items-end">
-                  <div className="grid gap-1.5">
+                <div key={i} className="grid grid-cols-1 gap-3 border-t border-border pt-3 first-of-type:border-0 sm:grid-cols-[17rem_9rem_auto] sm:items-end">
+                  <div className="grid gap-1.5 sm:col-span-3">
                     <Label>Conta</Label>
                     <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
                   </div>
@@ -783,7 +783,7 @@ const AbrirSolicitacao = () => {
                   >
                     Remover
                   </Button>
-                  <div className="sm:col-span-4">
+                  <div className="sm:col-span-3">
                     {saldoAtivo && <SaldoDaLinha saldo={saldoDe(i)} carregando={carregandoSaldo} />}
                   </div>
                 </div>
@@ -809,8 +809,8 @@ const AbrirSolicitacao = () => {
             </div>
             {linhas.map((linha, i) =>
               linha.lado !== 'destino' ? null : (
-                <div key={i} className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_17rem_9rem] sm:items-end">
-                  <div className="grid gap-1.5">
+                <div key={i} className="grid grid-cols-1 gap-3 sm:grid-cols-[17rem_9rem] sm:items-end">
+                  <div className="grid gap-1.5 sm:col-span-2">
                     <Label>Conta</Label>
                     <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
                   </div>
