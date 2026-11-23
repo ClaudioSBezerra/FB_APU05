@@ -29,7 +29,7 @@ export interface SaldoLinha {
   falta?: number;
 }
 
-type Estado = { carregando: boolean; linhas: SaldoLinha[] };
+type Estado = { carregando: boolean; linhas: SaldoLinha[]; ativo: boolean };
 
 export function useSaldoOrcamento(linhas: LinhaSaldoEntrada[], habilitado: boolean): Estado {
   // só linhas completas entram na consulta; a chave do efeito muda só quando algo relevante muda
@@ -38,11 +38,11 @@ export function useSaldoOrcamento(linhas: LinhaSaldoEntrada[], habilitado: boole
     [linhas],
   );
   const chave = JSON.stringify(completas.map((l) => [l.lado, l.centro_custo_id, l.conta_id, l.mes, l.lado === 'origem' ? l.valor : 0]));
-  const [estado, setEstado] = useState<Estado>({ carregando: false, linhas: [] });
+  const [estado, setEstado] = useState<Estado>({ carregando: false, linhas: [], ativo: true });
 
   useEffect(() => {
     if (!habilitado || completas.length === 0) {
-      setEstado({ carregando: false, linhas: [] });
+      setEstado((e) => ({ ...e, carregando: false, linhas: [] }));
       return;
     }
     const ctrl = new AbortController();
@@ -57,13 +57,14 @@ export function useSaldoOrcamento(linhas: LinhaSaldoEntrada[], habilitado: boole
           signal: ctrl.signal,
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const dados = (await resp.json()) as { linhas: SaldoLinha[] };
+        const dados = (await resp.json()) as { ativo?: boolean; linhas: SaldoLinha[] };
         // volta para o índice original da linha do formulário
-        setEstado({ carregando: false, linhas: dados.linhas.map((s, k) => ({ ...s, indice: completas[k].i })) });
+        setEstado({ carregando: false, ativo: dados.ativo !== false, linhas: dados.linhas.map((s, k) => ({ ...s, indice: completas[k].i })) });
       } catch (e) {
         if ((e as Error).name === 'AbortError') return;
         setEstado({
           carregando: false,
+          ativo: true,
           linhas: completas.map((l) => ({
             indice: l.i, lado: l.lado, cc: '', conta: '', mes: l.mes.slice(0, 7), status: 'nao_identificado', motivo: 'servidor indisponível', excede: false,
           })),

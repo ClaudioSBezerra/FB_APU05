@@ -120,7 +120,7 @@ func TestSaldo_SAPForaDoAr_NaoIdentificado(t *testing.T) {
 	}
 }
 
-func TestSaldo_NaoAtivado_CCAntigo_SemPermissao(t *testing.T) {
+func TestSaldo_Desligado_EscondeSaldo(t *testing.T) {
 	cacheSaldo = map[string]cacheSaldoItem{}
 	db, mock := newSQLMock(t)
 	orig := consultarSaldoSAP
@@ -130,7 +130,27 @@ func TestSaldo_NaoAtivado_CCAntigo_SemPermissao(t *testing.T) {
 		return nil, nil
 	}
 	esperaBaseSaldo(mock, "false")
-	esperaCodigos(mock, sCC1, "10026040")    // consulta ainda não ativada
+	rec := httptest.NewRecorder()
+	SaldoOrcamentoHandler(db)(rec, reqSaldo(t, `{"lancamentos":[{"lado":"origem","centro_custo_id":"`+sCC1+`","conta_id":"`+sConta+`","mes":"2026-03-01","valor":50}]}`))
+	var r struct {
+		Ativo  bool  `json:"ativo"`
+		Linhas []any `json:"linhas"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil || r.Ativo || len(r.Linhas) != 0 {
+		t.Errorf("desligado deve devolver ativo=false e nenhuma linha: %s", rec.Body.String())
+	}
+}
+
+func TestSaldo_CCAntigo_SemPermissao(t *testing.T) {
+	cacheSaldo = map[string]cacheSaldoItem{}
+	db, mock := newSQLMock(t)
+	orig := consultarSaldoSAP
+	t.Cleanup(func() { consultarSaldoSAP = orig })
+	consultarSaldoSAP = func(context.Context, sapodata.Config, string, string, string) (*sapodata.Saldo, error) {
+		return nil, errors.New("SAP fora do ar")
+	}
+	esperaBaseSaldo(mock, "true")
+	esperaCodigos(mock, sCC1, "10026040")    // origem válida, SAP indisponível
 	esperaCodigos(mock, sCC2, "CC-TESTE-01") // destino com código fora do padrão do SAP
 	esperaCodigos(mock, sCC2, "10016000")    // origem de CC que NÃO é do usuário
 	corpo := `{"lancamentos":[
@@ -140,7 +160,7 @@ func TestSaldo_NaoAtivado_CCAntigo_SemPermissao(t *testing.T) {
 	rec := httptest.NewRecorder()
 	SaldoOrcamentoHandler(db)(rec, reqSaldo(t, corpo))
 	l := decSaldo(t, rec)
-	if !strings.Contains(l[0].Motivo, "não ativada") || !strings.Contains(l[1].Motivo, "só para a origem") || !strings.Contains(l[2].Motivo, "sem permissão") {
+	if !strings.Contains(l[0].Motivo, "SAP") || !strings.Contains(l[1].Motivo, "só para a origem") || !strings.Contains(l[2].Motivo, "sem permissão") {
 		t.Errorf("motivos: %q | %q | %q", l[0].Motivo, l[1].Motivo, l[2].Motivo)
 	}
 	for _, x := range l {

@@ -149,6 +149,13 @@ func SaldoOrcamentoHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
+		ativo := m[cfgServico(sapodata.SaldoOrcamentario, "ativo")] == "true"
+		if !ativo {
+			// chave desligada em Configurações: a tela esconde o saldo (modo de testes sem a API)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"ativo": false, "linhas": []saldoLinhaSaida{}})
+			return
+		}
 		autorizados, err := centrosCustoAutorizados(db, GetUserIDFromContext(r))
 		if err != nil {
 			log.Printf("[Saldo] Erro ao ler os CCs do usuário: %v", err)
@@ -159,7 +166,6 @@ func SaldoOrcamentoHandler(db *sql.DB) http.HandlerFunc {
 		for _, c := range autorizados {
 			meusCCs[c.ID] = true
 		}
-		ativo := m[cfgServico(sapodata.SaldoOrcamentario, "ativo")] == "true"
 		cfg := credencialSaldo(m)
 
 		saida := make([]saldoLinhaSaida, len(in.Lancamentos))
@@ -206,11 +212,6 @@ func SaldoOrcamentoHandler(db *sql.DB) http.HandlerFunc {
 			objnr, errObj := sapodata.ObjnrCentroCusto(cc)
 			if errObj != nil {
 				fim("este centro de custo não existe no SAP (código antigo)")
-				continue
-			}
-			if !ativo {
-				fim("consulta de saldo ainda não ativada")
-				saida[i].Mes = s.Mes
 				continue
 			}
 			saida[i] = s
@@ -299,6 +300,6 @@ func SaldoOrcamentoHandler(db *sql.DB) http.HandlerFunc {
 		sort.Slice(saida, func(a, b int) bool { return saida[a].Indice < saida[b].Indice })
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]any{"linhas": saida})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ativo": true, "linhas": saida})
 	}
 }

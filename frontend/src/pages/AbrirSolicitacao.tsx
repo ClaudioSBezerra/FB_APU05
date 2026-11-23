@@ -521,7 +521,7 @@ const AbrirSolicitacao = () => {
   const linhasOrigem = linhas.filter((l) => l.lado === 'origem');
   const somaOrigens = Math.round(linhasOrigem.reduce((acc, l) => acc + (parseFloat(l.valor) || 0), 0) * 100) / 100;
   // saldo do SAP só da ORIGEM da transferência (decisão com a Wanessa, 23/11/2026): é de onde sai o valor
-  const { linhas: saldos, carregando: carregandoSaldo } = useSaldoOrcamento(
+  const { linhas: saldos, carregando: carregandoSaldo, ativo: saldoAtivo } = useSaldoOrcamento(
     linhas.map((l) => ({
       lado: l.lado,
       centro_custo_id: l.lado === 'origem' ? centroCustoId : '',
@@ -772,7 +772,7 @@ const AbrirSolicitacao = () => {
                     Remover
                   </Button>
                   <div className="sm:col-span-4">
-                    <SaldoDaLinha saldo={saldoDe(i)} carregando={carregandoSaldo} />
+                    {saldoAtivo && <SaldoDaLinha saldo={saldoDe(i)} carregando={carregandoSaldo} />}
                   </div>
                 </div>
               ),
