@@ -65,8 +65,23 @@ Várias origens do mesmo (CC, conta) em meses diferentes: validar mês a mês de
 5. O `comp` (`WRTTP` 21/22) inclui requisições e pedidos ainda sem fatura? (para o "disponível" refletir o que de fato já foi pedido)
 6. Há outros tipos de objeto além de CC (`KS`) que precisaremos (ordens `OR`)? Hoje só CC.
 
-## Decisões do usuário (pendentes)
+## Decisões do usuário (23/11/2026) e implementação
 
-1. **Trava dura ou aviso?** Bloquear a transferência quando a origem não tem saldo, ou só avisar e deixar o aprovador decidir?
-2. **SAP fora do ar:** impedir o envio, ou deixar enviar marcado "saldo não verificado" e conferir de novo na aprovação?
-3. Mostrar o saldo do **destino** ao solicitante, ou só da origem (que ele já pode ver)?
+1. **Aviso, não trava.** O sistema nunca bloqueia o envio por saldo: mostra o aviso e o aprovador decide.
+2. **SAP fora do ar → "Saldo Não Identificado"** (o motivo aparece ao passar o mouse). Também aparece quando a consulta ainda não está ativada.
+3. **Origem e destino mostram o saldo** (e a Inclusão/Inclusão SFC, só informativo).
+
+Implementado (sem poder testar contra o SAP real: falta rota/firewall e credencial — ver "Pontos de atenção"):
+
+- `internal/sapodata/saldo.go`: cliente OData V4 (`ConsultarSaldo`), `ObjnrCentroCusto` (`KS` + `FC01` + CC com 10 posições; `SAP_CONTROLLING_AREA`
+  troca a área), validação das 3 chaves antes de montar o `$filter` (sem injeção) e sonda de teste. Serviço `bg` em Configurações
+  (URL, usuário/senha do SAP ou apikey própria, "Consultar na hora"); desligado por padrão (migration 038, URL do QAS).
+- `POST /api/solicitacoes/saldo` (`handlers/saldo_orcamento.go`): até 30 linhas, 4 consultas em paralelo, timeout 8 s, cache de 20 s. A **origem só é
+  consultada para os CCs do solicitante** (o SAP não restringe por CC); o destino pode ser qualquer CC. Devolve por linha o planejado, realizado,
+  comprometido, disposto, disponível do mês e o **disponível acumulado** (o que vale), e na origem a **retirada acumulada** do mesmo CC+conta até
+  o mês: `excede` quando passa do disponível acumulado (várias origens em meses diferentes são somadas mês a mês).
+- Formulário (`AbrirSolicitacao.tsx`): cada linha mostra "Saldo disponível até este mês (acumulado)"; em vermelho, o aviso de estouro.
+- A consulta do serviço `bg` usa a credencial própria (Basic do SAP ou apikey do serviço): **nunca a apikey geral/ambiente do Kong**.
+
+Falta: mostrar o saldo na **tela do aprovador** (reconsultar na hora da decisão) — depende de a consulta estar ativa.
+

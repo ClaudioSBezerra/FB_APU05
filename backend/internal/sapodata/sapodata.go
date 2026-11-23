@@ -37,18 +37,23 @@ type Servico struct {
 	Segmento string // nome do serviço no caminho da URL
 	Entidade string // entity set listado na sonda
 	Chaves   string // $select mínimo da sonda
+	V4       bool   // OData V4 (envelope `value`), não V2 (`d.results`)
+	Diaria   bool   // lido pela rotina das 06:00; false = consulta sob demanda (ex.: saldo na hora)
 }
 
 // Serviços conhecidos.
 var (
 	CentrosCusto = Servico{Chave: "cc", Nome: "Centros de custo", Segmento: "API_COSTCENTER_SRV",
-		Entidade: "A_CostCenter", Chaves: "ControllingArea,CostCenter"}
+		Entidade: "A_CostCenter", Chaves: "ControllingArea,CostCenter", Diaria: true}
 	ContasContabeis = Servico{Chave: "gl", Nome: "Contas contábeis", Segmento: "API_GLACCOUNTINCHARTOFACCOUNTS_SRV",
-		Entidade: "A_GLAccountInChartOfAccounts", Chaves: "ChartOfAccounts,GLAccount"}
+		Entidade: "A_GLAccountInChartOfAccounts", Chaves: "ChartOfAccounts,GLAccount", Diaria: true}
+	// Saldo orçamentário (trava): consulta NA HORA por CC × conta × exercício, OData V4. docs/referencia/07-API-SAP-TRAVA-ORCAMENTARIA.md
+	SaldoOrcamentario = Servico{Chave: "bg", Nome: "Saldo orçamentário (trava)", Segmento: "zsd_trava_orcamentaria",
+		Entidade: "Trava_orcamentaria", Chaves: "objnr,kstar,gjahr", V4: true}
 )
 
 // Todos é a ordem em que a rotina diária processa os serviços.
-var Todos = []Servico{CentrosCusto, ContasContabeis}
+var Todos = []Servico{CentrosCusto, ContasContabeis, SaldoOrcamentario}
 
 // PorChave devolve o serviço da chave ("cc"/"gl").
 func PorChave(chave string) (Servico, bool) {
@@ -216,6 +221,9 @@ var (
 
 // Sonda faz a chamada de leitura e devolve o resultado (nunca erro: tudo vira Resultado.Mensagem).
 func Sonda(ctx context.Context, sv Servico, cfg Config) Resultado {
+	if sv.V4 {
+		return sondaSaldo(ctx, sv, cfg)
+	}
 	ini := time.Now()
 	res := func(ok bool, total int, status int, msg string) Resultado {
 		return Resultado{OK: ok, Total: total, HTTPStatus: status, Mensagem: msg, DuracaoMs: time.Since(ini).Milliseconds()}

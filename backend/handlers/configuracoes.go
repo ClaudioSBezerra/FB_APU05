@@ -75,6 +75,7 @@ type resultadoSalvo struct {
 type servicoConfig struct {
 	Chave           string          `json:"chave"`
 	Nome            string          `json:"nome"`
+	Diaria          bool            `json:"diaria"` // false = consulta sob demanda (saldo), sem leitura das 06:00
 	Ativo           bool            `json:"ativo"`
 	URLBase         string          `json:"url_base"`
 	ApiKeyDefinida  bool            `json:"apikey_definida"` // apikey própria deste serviço
@@ -105,7 +106,7 @@ func montarResposta(m map[string]string) configuracoesResposta {
 	r.SAP.SapClient = m[cfgSapClient]
 	for _, sv := range sapodata.Todos {
 		sc := servicoConfig{
-			Chave: sv.Chave, Nome: sv.Nome,
+			Chave: sv.Chave, Nome: sv.Nome, Diaria: sv.Diaria,
 			Ativo:          m[cfgServico(sv, "ativo")] == "true",
 			URLBase:        m[cfgServico(sv, "url_base")],
 			ApiKeyDefinida: m[cfgServico(sv, "apikey")] != "",
@@ -348,6 +349,9 @@ var (
 )
 
 func credencialSAP(m map[string]string, sv sapodata.Servico) sapodata.Config {
+	if sv.Chave == sapodata.SaldoOrcamentario.Chave {
+		return credencialSaldo(m) // consulta direta no SAP (Basic) ou apikey própria; nunca a chave do Kong
+	}
 	senha := ""
 	if cifrada := m[cfgSapSenha]; cifrada != "" {
 		if txt, err := crypto.DecryptField(cifrada); err == nil {
@@ -473,7 +477,7 @@ func RotinaSAPDiaria(db *sql.DB, agora time.Time) {
 		return
 	}
 	for _, sv := range sapodata.Todos {
-		if m[cfgServico(sv, "ativo")] != "true" || !sapDevido(m[cfgSapHorario], m[cfgServico(sv, "ultima_execucao")], agora) {
+		if !sv.Diaria || m[cfgServico(sv, "ativo")] != "true" || !sapDevido(m[cfgSapHorario], m[cfgServico(sv, "ultima_execucao")], agora) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

@@ -20,7 +20,8 @@ interface ResultadoSAP {
   origem: 'agendada' | 'manual';
 }
 interface ServicoSAP {
-  chave: 'cc' | 'gl';
+  chave: 'cc' | 'gl' | 'bg';
+  diaria: boolean; // false = consulta sob demanda (saldo), sem leitura das 06:00
   nome: string;
   ativo: boolean;
   url_base: string;
@@ -273,7 +274,7 @@ function Formulario({ data }: { data: Config }) {
                 </div>
                 <div className="flex items-center gap-2">
                   <Label htmlFor={`sap-ativo-${s.chave}`} className="text-xs text-muted-foreground">
-                    Ler todo dia
+                    {s.diaria ? 'Ler todo dia' : 'Consultar na hora'}
                   </Label>
                   <Switch
                     id={`sap-ativo-${s.chave}`}
@@ -292,7 +293,7 @@ function Formulario({ data }: { data: Config }) {
                 />
                 <p className="text-xs text-muted-foreground">
                   Direto no SAP: só https, em servidor de um domínio da Ferreira Costa. Pelo gateway (com apikey): http da rede interna,
-                  ex.: <code>http://10.131.1.80:8000/sap/qas/{s.chave === 'cc' ? 'cost-center-read' : 'gl-account-read'}/</code>. Troque pela de
+                  ex.: <code>http://10.131.1.80:8000/sap/qas/{s.chave === 'cc' ? 'cost-center-read' : 'gl-account-read'}/</code>.{s.chave === 'bg' && ' Saldo orçamentário (OData V4): consulta direta no SAP com o usuário e a senha acima (ou apikey própria); mostra o saldo no formulário como aviso.'} Troque pela de
                   produção quando for liberada.
                 </p>
               </div>

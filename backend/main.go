@@ -429,6 +429,8 @@ func main() {
 	// suporte nesta story; o mesmo handler será estendido pelas histórias
 	// 3.2-3.5 para os outros 4 tipos.
 	http.HandleFunc("POST /api/solicitacoes", handlers.RequireAuth(withDB(handlers.AbrirSolicitacaoHandler), ""))
+	// saldo orçamentário (API de Trava orçamentária): AVISO no formulário, nunca trava (docs/referencia/07)
+	http.HandleFunc("POST /api/solicitacoes/saldo", handlers.RequireAuth(withDB(handlers.SaldoOrcamentoHandler), ""))
 
 	// Opções de formulário (suporte de front-end ao Epic 3) — somente
 	// leitura, mesmo nível de permissão de POST /api/solicitacoes

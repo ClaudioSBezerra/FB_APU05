@@ -19,6 +19,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Search } from 'lucide-react';
+import { useSaldoOrcamento, type SaldoLinha } from '@/hooks/useSaldoOrcamento';
 
 // Tela de abertura de solicitação (Epic 3 — Stories 3.1 a 3.5). Cobre os 5
 // tipos aceitos por POST /api/solicitacoes (handlers/solicitacoes.go):
@@ -49,6 +50,35 @@ interface OpcoesFormulario {
   classes_imobilizado: OpcaoItem[];
   locais_obra: OpcaoItem[];
   subgrupos_despesa: OpcaoItem[];
+}
+
+// Saldo orçamentário do SAP (aviso, nunca trava): mostra o disponível ACUMULADO até o mês da linha.
+// "Saldo Não Identificado" quando o SAP não responde ou não foi possível consultar.
+const moedaSaldo = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
+function SaldoDaLinha({ saldo, carregando }: { saldo?: SaldoLinha; carregando: boolean }) {
+  if (!saldo) return carregando ? <p className="text-xs text-fg-helper">Consultando o saldo no SAP…</p> : null;
+  if (saldo.status === 'nao_identificado') {
+    return (
+      <p className="text-xs text-fg-helper" title={saldo.motivo}>
+        Saldo Não Identificado
+      </p>
+    );
+  }
+  const acum = saldo.disponivel_acumulado ?? 0;
+  const tit = `Planejado ${moedaSaldo.format(saldo.planejado ?? 0)} · realizado ${moedaSaldo.format(saldo.realizado ?? 0)} · comprometido ${moedaSaldo.format(saldo.comprometido ?? 0)} no mês`;
+  return (
+    <p className={saldo.excede ? 'text-xs font-medium text-danger-text' : 'text-xs text-fg-secondary'} title={tit} role={saldo.excede ? 'alert' : 'status'}>
+      Saldo disponível até este mês (acumulado): <span className="font-medium tabular-nums">{moedaSaldo.format(acum)}</span>
+      {saldo.status === 'sem_lancamentos' && ' · sem orçamento nem lançamentos no SAP'}
+      {saldo.excede && saldo.falta != null && (
+        <>
+          {' '}
+          · ⚠ retirada acumulada de {moedaSaldo.format(saldo.retirada_acumulada ?? 0)} passa do saldo em <span className="tabular-nums">{moedaSaldo.format(saldo.falta)}</span> (aviso: o envio não é bloqueado)
+        </>
+      )}
+    </p>
+  );
 }
 
 interface LinhaLancamento {
@@ -490,6 +520,17 @@ const AbrirSolicitacao = () => {
 
   const linhasOrigem = linhas.filter((l) => l.lado === 'origem');
   const somaOrigens = Math.round(linhasOrigem.reduce((acc, l) => acc + (parseFloat(l.valor) || 0), 0) * 100) / 100;
+  const { linhas: saldos, carregando: carregandoSaldo } = useSaldoOrcamento(
+    linhas.map((l) => ({
+      lado: l.lado,
+      centro_custo_id: tipo === 'transferencia' && l.lado === 'destino' ? ccDestinoId || centroCustoId : centroCustoId,
+      conta_id: l.contaId,
+      mes: l.mes ? `${l.mes}-01` : '',
+      valor: parseFloat(l.valor) || 0,
+    })),
+    tipo === 'transferencia' || tipo === 'inclusao' || tipo === 'inclusao_sfc',
+  );
+  const saldoDe = (i: number) => saldos.find((x) => x.indice === i);
   const ccDestino = ccDestinoId
     ? opcoes?.centros_custo_destino?.find((cc) => cc.id === ccDestinoId)
     : centroCustoSelecionado;
@@ -729,6 +770,9 @@ const AbrirSolicitacao = () => {
                   >
                     Remover
                   </Button>
+                  <div className="sm:col-span-4">
+                    <SaldoDaLinha saldo={saldoDe(i)} carregando={carregandoSaldo} />
+                  </div>
                 </div>
               ),
             )}
@@ -771,6 +815,9 @@ const AbrirSolicitacao = () => {
                     <div className="flex h-10 items-center rounded-md border border-input bg-[var(--bg-input-disabled)] px-3 text-sm tabular-nums text-foreground" aria-live="polite">
                       {reais.format(somaOrigens)}
                     </div>
+                  </div>
+                  <div className="sm:col-span-3">
+                    <SaldoDaLinha saldo={saldoDe(i)} carregando={carregandoSaldo} />
                   </div>
                 </div>
               ),
@@ -834,6 +881,11 @@ const AbrirSolicitacao = () => {
                 onChange={(e) => atualizarLinha(i, 'valor', e.target.value)}
               />
             </div>
+            {(tipo === 'inclusao' || tipo === 'inclusao_sfc') && (
+              <div className="col-span-2">
+                <SaldoDaLinha saldo={saldoDe(i)} carregando={carregandoSaldo} />
+              </div>
+            )}
           </div>
         ))}
 
