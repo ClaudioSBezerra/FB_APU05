@@ -46,6 +46,8 @@ interface OpcoesFormulario {
   centros_custo: CentroCustoOpcao[];
   // Todos os CCs (destino de Transferência, 11/11) — centros_custo traz só os autorizados.
   centros_custo_destino?: CentroCustoOpcao[];
+  // Origem da Transferência: todos os CCs na fase de testes; senão igual a centros_custo.
+  centros_custo_origem?: CentroCustoOpcao[];
   divisoes: OpcaoItem[];
   contas: OpcaoItem[]; // plano de contas do SAP
   classes_imobilizado: OpcaoItem[];
@@ -517,7 +519,15 @@ const AbrirSolicitacao = () => {
     }
   }
 
-  const centroCustoSelecionado = opcoes?.centros_custo.find((cc) => cc.id === centroCustoId);
+  const [buscaCC, setBuscaCC] = useState('');
+  const opcoesOrigemTodas = (tipo === 'transferencia' ? opcoes?.centros_custo_origem : undefined) ?? opcoes?.centros_custo ?? [];
+  const opcoesOrigem = useMemo(() => {
+    const q = buscaCC.trim().toLowerCase();
+    if (!q) return opcoesOrigemTodas;
+    return opcoesOrigemTodas.filter((cc) => cc.id === centroCustoId || `${cc.codigo} ${cc.nome}`.toLowerCase().includes(q));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opcoesOrigemTodas, buscaCC, centroCustoId]);
+  const centroCustoSelecionado = opcoesOrigemTodas.find((cc) => cc.id === centroCustoId);
 
   const linhasOrigem = linhas.filter((l) => l.lado === 'origem');
   const somaOrigens = Math.round(linhasOrigem.reduce((acc, l) => acc + (parseFloat(l.valor) || 0), 0) * 100) / 100;
@@ -721,19 +731,26 @@ const AbrirSolicitacao = () => {
       {tipo !== 'obras' && (
         <div className="grid gap-1.5">
           <Label>{tipo === 'transferencia' ? 'Centro de custo de origem' : 'Centro de custo'}</Label>
+          {opcoesOrigemTodas.length > 12 && (
+            <Input
+              placeholder="Buscar por código ou nome do centro de custo"
+              value={buscaCC}
+              onChange={(e) => setBuscaCC(e.target.value)}
+            />
+          )}
           <Select value={centroCustoId} onValueChange={setCentroCustoId}>
             <SelectTrigger>
               <SelectValue placeholder="Escolha o centro de custo" />
             </SelectTrigger>
             <SelectContent>
-              {(opcoes?.centros_custo ?? []).map((cc) => (
+              {opcoesOrigem.map((cc) => (
                 <SelectItem key={cc.id} value={cc.id}>
                   {cc.codigo} — {cc.nome}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          {opcoes && opcoes.centros_custo.length === 0 && (
+          {opcoes && opcoesOrigemTodas.length === 0 && (
             <p className="text-xs text-destructive">
               Seu usuário não tem nenhum centro de custo autorizado ainda — fale com o administrador.
             </p>

@@ -78,6 +78,18 @@ func todosCentrosCusto(db *sql.DB) ([]centroCustoOpcao, error) {
 	return itens, rows.Err()
 }
 
+// origemLivre: fase de testes — na transferência a origem pode ser qualquer centro de custo
+// (configuração teste_origem_todos_cc, ligada/desligada em Configurações).
+func origemLivre(q interface {
+	QueryRow(query string, args ...any) *sql.Row
+}) bool {
+	var v string
+	if err := q.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'teste_origem_todos_cc'`).Scan(&v); err != nil {
+		return false
+	}
+	return v == "true"
+}
+
 func centrosCustoAutorizados(db *sql.DB, usuarioID string) ([]centroCustoOpcao, error) {
 	rows, err := db.Query(`
 		SELECT cc.id, cc.codigo, cc.nome, cc.divisao_id
@@ -169,6 +181,14 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 
 		// Destino de Transferência (11/11, item 2): pode ser QUALQUER CC, não
 		// só os autorizados ao solicitante (a permissão vale para a origem).
+		centrosCustoOrigem := centrosCusto
+		if origemLivre(db) {
+			if centrosCustoOrigem, err = todosCentrosCusto(db); err != nil {
+				log.Printf("[Formulario] Erro ao consultar centros de custo de origem: %v", err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+		}
 		centrosCustoDestino, err := todosCentrosCusto(db)
 		if err != nil {
 			log.Printf("[Formulario] Erro ao consultar centros de custo de destino: %v", err)
@@ -180,6 +200,7 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"centros_custo":         centrosCusto,
 			"centros_custo_destino": centrosCustoDestino,
+			"centros_custo_origem":  centrosCustoOrigem,
 			"divisoes":              divisoes,
 			"contas":                contas,
 			"classes_imobilizado":   classesImobilizado,

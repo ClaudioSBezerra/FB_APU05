@@ -30,6 +30,7 @@ interface ServicoSAP {
   ultimo_resultado?: ResultadoSAP;
 }
 interface Config {
+  testes?: { origem_todos_cc: boolean };
   sap: {
     horario: string;
     usuario: string;
@@ -338,6 +339,25 @@ function Formulario({ data }: { data: Config }) {
           <Button size="sm" onClick={salvarSAP} disabled={salvar.isPending}>
             Salvar integração SAP
           </Button>
+        </div>
+      </section>
+
+      <section aria-labelledby="cfg-testes" className="grid gap-3 rounded-lg border bg-card p-5">
+        <h2 id="cfg-testes" className="text-base font-semibold text-foreground">Fase de testes</h2>
+        <div className="flex items-start gap-3">
+          <Switch
+            id="teste-origem"
+            checked={!!data.testes?.origem_todos_cc}
+            disabled={salvar.isPending}
+            onCheckedChange={(v) => salvar.mutate({ testes: { origem_todos_cc: v } })}
+          />
+          <div>
+            <Label htmlFor="teste-origem">Transferência: origem em qualquer centro de custo</Label>
+            <p className="text-xs text-muted-foreground">
+              Ligado: quem abre uma transferência pode escolher qualquer centro de custo como origem (e vê o saldo dele).
+              Desligue quando a regra definitiva for decidida; volta a valer só o centro de custo próprio e as exceções.
+            </p>
+          </div>
         </div>
       </section>
     </div>

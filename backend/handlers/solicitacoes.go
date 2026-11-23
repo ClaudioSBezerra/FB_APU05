@@ -324,7 +324,7 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
-		if !autorizado {
+		if !autorizado && !(req.TipoSolicitacao == "transferencia" && origemLivre(tx)) {
 			jsonErr(w, http.StatusForbidden, "centro de custo não autorizado para este solicitante")
 			return
 		}

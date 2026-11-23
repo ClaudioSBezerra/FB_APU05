@@ -22,6 +22,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,8 +37,9 @@ const (
 	cfgSapSenha   = "sap_senha"
 	// gateway interno (Kong): chave (criptografada) e mandante informados na tela; a variável de
 	// ambiente SAP_API_KEY/SAP_CLIENT vale quando a tela não tem a chave.
-	cfgSapApiKey = "sap_apikey"
-	cfgSapClient = "sap_client"
+	cfgSapApiKey          = "sap_apikey"
+	cfgSapClient          = "sap_client"
+	cfgTesteOrigemTodosCC = "teste_origem_todos_cc"
 )
 
 var clientRegexp = regexp.MustCompile(`^\d{1,3}$`)
@@ -94,6 +96,9 @@ type configuracoesResposta struct {
 		SapClient      string          `json:"sap_client"`
 		Servicos       []servicoConfig `json:"servicos"`
 	} `json:"sap"`
+	Testes struct {
+		OrigemTodosCC bool `json:"origem_todos_cc"`
+	} `json:"testes"`
 }
 
 func montarResposta(m map[string]string) configuracoesResposta {
@@ -104,6 +109,7 @@ func montarResposta(m map[string]string) configuracoesResposta {
 	r.SAP.ApiKeyDefinida = m[cfgSapApiKey] != ""
 	r.SAP.ApiKeyAmbiente = sapodata.ModoGateway()
 	r.SAP.SapClient = m[cfgSapClient]
+	r.Testes.OrigemTodosCC = m[cfgTesteOrigemTodosCC] == "true"
 	for _, sv := range sapodata.Todos {
 		sc := servicoConfig{
 			Chave: sv.Chave, Nome: sv.Nome, Diaria: sv.Diaria,
@@ -167,12 +173,18 @@ type servicoEntrada struct {
 }
 
 type configuracoesEntrada struct {
-	SAP *sapEntrada `json:"sap"`
+	SAP    *sapEntrada `json:"sap"`
+	Testes *struct {
+		OrigemTodosCC *bool `json:"origem_todos_cc"`
+	} `json:"testes"`
 }
 
 // validarEntrada transforma a entrada em pares chave→valor a gravar (a senha já cifrada), ou erro de validação.
 func validarEntrada(in configuracoesEntrada, atual map[string]string) (map[string]string, error) {
 	grava := map[string]string{}
+	if in.Testes != nil && in.Testes.OrigemTodosCC != nil {
+		grava[cfgTesteOrigemTodosCC] = strconv.FormatBool(*in.Testes.OrigemTodosCC)
+	}
 	if in.SAP == nil {
 		return grava, nil
 	}

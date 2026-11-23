@@ -162,6 +162,7 @@ func SaldoOrcamentoHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
+		todosLiberados := m[cfgTesteOrigemTodosCC] == "true" // fase de testes: origem livre
 		meusCCs := map[string]bool{}
 		for _, c := range autorizados {
 			meusCCs[c.ID] = true
@@ -200,7 +201,7 @@ func SaldoOrcamentoHandler(db *sql.DB) http.HandlerFunc {
 				fim("o saldo é mostrado só para a origem")
 				continue
 			}
-			if !meusCCs[l.CentroCustoID] {
+			if !meusCCs[l.CentroCustoID] && !todosLiberados {
 				fim("sem permissão para ver o saldo deste centro de custo")
 				continue
 			}
