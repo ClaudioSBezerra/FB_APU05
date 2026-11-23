@@ -94,7 +94,9 @@ func (e ExportadorVBA) Finalizar(db *sql.DB, solicitacaoID string, versaoLida in
 	if err != nil {
 		return Solicitacao{}, fmt.Errorf("exportacao: contar exportacoes_sap migradas da solicitação %s: %w", solicitacaoID, err)
 	}
-	if linhasExportacoesMigradas == 0 {
+	// Finalizar com ERRO não exige exportação prévia: o atendimento encerra um chamado que falhou sem gerar lote.
+	// Com SUCESSO continua exigindo (a ordem de obra e o lote são o que prova que foi executado).
+	if linhasExportacoesMigradas == 0 && resultado != "erro" {
 		// A solicitação existe, está em_atendimento e o lock otimista bateu
 		// — mas nenhuma linha `exportacoes_sap` GERADO existe para ela
 		// (nunca foi exportada, ou já foi finalizada antes). Recusa a

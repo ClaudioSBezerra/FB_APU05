@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"fb_apu05/internal/aprovacao"
+	"fb_apu05/internal/exportacao"
 	"fb_apu05/internal/fila"
 	"fb_apu05/internal/sapodata"
 
@@ -496,4 +497,54 @@ func TestPG_AbrirTransferencia_ModosDeAprovacao(t *testing.T) {
 		t.Errorf("esperava 2 lançamentos, há %d", n)
 	}
 	e.cfg(t, "aprovacao_obrigatoria", "false")
+}
+
+// ---- atendimento: comentar em chamado alheio e finalizar com erro (feedback do Wilker) ----
+
+func TestPG_AtendenteComentaChamadoAlheioSemMudarStatus(t *testing.T) {
+	e := pgSetup(t)
+	b := e.seed(t)
+	var atendente string
+	if err := e.admin.QueryRow(`INSERT INTO usuarios (email, nome, perfil) VALUES ('atend'||$1||'@teste.local', 'Atendente', 'atendente')
+		ON CONFLICT (LOWER(email)) DO UPDATE SET nome = EXCLUDED.nome RETURNING id`, fmt.Sprintf("%d", os.Getpid())).Scan(&atendente); err != nil {
+		t.Fatal(err)
+	}
+	id := e.solicitacao(t, b, "pendente")
+	// o solicitante-dono responde: reabre
+	if _, err := fila.Comentar(e.priv, id, 1, atendente, "x"); err == nil {
+		t.Fatal("quem não é o solicitante não deveria passar por Comentar")
+	}
+	s, err := fila.ComentarAtendimento(e.priv, id, 1, atendente, "preciso do anexo")
+	if err != nil || s.Status != "pendente" || s.Versao != 2 {
+		t.Fatalf("atendente comenta sem mudar o status: %+v %v", s, err)
+	}
+	if _, err := fila.ComentarAtendimento(e.priv, id, 1, atendente, "de novo"); err == nil {
+		t.Fatal("versão obsoleta deveria dar conflito")
+	}
+	var n int
+	_ = e.admin.QueryRow(`SELECT count(*) FROM solicitacao_comentarios WHERE solicitacao_id = $1 AND autor_id = $2`, id, atendente).Scan(&n)
+	if n != 1 {
+		t.Errorf("esperava 1 comentário do atendente, há %d", n)
+	}
+}
+
+func TestPG_FinalizarComErroNaoExigeExportacao(t *testing.T) {
+	e := pgSetup(t)
+	b := e.seed(t)
+	exp := exportacao.ExportadorVBA{}
+	// sem exportação: erro pode finalizar; sucesso não
+	id := e.solicitacao(t, b, "em_atendimento")
+	if _, err := e.priv.Exec(`UPDATE solicitacoes SET administrador_id = $1 WHERE id = $2`, b.usuario, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exp.Finalizar(e.priv, id, 1, b.usuario, "sucesso", nil); err == nil {
+		t.Fatal("sucesso sem exportação deveria ser recusado")
+	}
+	if s, _ := statusDe(t, e.admin, id); s != "em_atendimento" {
+		t.Fatalf("a recusa não pode deixar escrita parcial (status=%s)", s)
+	}
+	s, err := exp.Finalizar(e.priv, id, 1, b.usuario, "erro", nil)
+	if err != nil || s.Status != "finalizada_erro" {
+		t.Fatalf("finalizar com erro sem exportar: %+v %v", s, err)
+	}
 }

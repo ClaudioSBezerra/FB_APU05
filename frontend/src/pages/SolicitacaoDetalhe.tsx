@@ -42,7 +42,8 @@ interface Detalhe {
 const TIPO: Record<string, string> = { transferencia: 'Transferência', inclusao: 'Inclusão', inclusao_sfc: 'Inclusão SFC', imobilizado: 'Imobilizado', obras: 'Obras' };
 const STATUS: Record<string, string> = {
   aguardando_aprovacao: 'Aguardando aprovação', aberta: 'Aguardando atendimento', em_atendimento: 'Em atendimento',
-  pendente: 'Pendente (com o solicitante)', finalizada: 'Finalizada', rejeitada: 'Rejeitada',
+  pendente: 'Pendente (com o solicitante)', finalizada_sucesso: 'Finalizada com sucesso', finalizada_erro: 'Finalizada com erro',
+  finalizada: 'Finalizada', rejeitada: 'Rejeitada',
 };
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const dataHora = (iso?: string) => (iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
@@ -238,7 +239,7 @@ export default function SolicitacaoDetalhe() {
             </>
           )}
           {d.status === 'aguardando_aprovacao' && <p className="text-sm text-muted-foreground">Aguardando aprovação. A decisão manual fica na fila de atendimento.</p>}
-          {['finalizada', 'rejeitada', 'pendente'].includes(d.status) && <p className="text-sm text-muted-foreground">Sem ações disponíveis neste status.</p>}
+          {['finalizada', 'finalizada_sucesso', 'finalizada_erro', 'rejeitada', 'pendente'].includes(d.status) && <p className="text-sm text-muted-foreground">Sem ações disponíveis neste status.</p>}
         </section>
       )}
     </div>

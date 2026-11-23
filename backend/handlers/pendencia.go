@@ -193,6 +193,10 @@ func ComentarSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		solicitanteID := GetUserIDFromContext(r)
 
 		resultado, err := fila.Comentar(db, id, versao, solicitanteID, comentario)
+		if errors.Is(err, fila.ErrNaoAutorizado) && perfilAtende(GetPerfilFromContext(r)) {
+			// atendente/administrador comentando no chamado de outra pessoa: não reabre nem muda o status
+			resultado, err = fila.ComentarAtendimento(db, id, versao, solicitanteID, comentario)
+		}
 		if err != nil {
 			if tratarErroEscritaFila(w, err) {
 				return

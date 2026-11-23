@@ -239,6 +239,49 @@ func Comentar(db *sql.DB, id string, versaoLida int, solicitanteID string, comen
 	return s, nil
 }
 
+// ComentarAtendimento: comentário de atendente/administrador em um chamado aberto por OUTRA pessoa. Não troca o
+// status (só o solicitante, ao responder uma pendência, reabre o chamado) e confere a versão como as demais
+// escritas. 404 (inexistente) e 409 (versão obsoleta) como em Comentar.
+func ComentarAtendimento(db *sql.DB, id string, versaoLida int, autorID string, comentario string) (Solicitacao, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return Solicitacao{}, fmt.Errorf("iniciar transação para comentar em %s: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var s Solicitacao
+	var administradorID sql.NullString
+	err = tx.QueryRow(`
+		UPDATE solicitacoes SET versao = versao + 1
+		WHERE id = $1 AND versao = $2
+		RETURNING id, tipo_solicitacao, status, versao, administrador_id
+	`, id, versaoLida).Scan(&s.ID, &s.TipoSolicitacao, &s.Status, &s.Versao, &administradorID)
+	s.AdministradorID = administradorID.String
+	if err != nil {
+		if err != sql.ErrNoRows {
+			return Solicitacao{}, fmt.Errorf("comentar (atendimento) em %s: %w", id, err)
+		}
+		_ = tx.Rollback()
+		var versaoAtual int
+		if e := db.QueryRow(`SELECT versao FROM solicitacoes WHERE id = $1`, id).Scan(&versaoAtual); e == sql.ErrNoRows {
+			return Solicitacao{}, ErrNaoEncontrada
+		} else if e != nil {
+			return Solicitacao{}, fmt.Errorf("consultar versão atual de %s: %w", id, e)
+		}
+		return Solicitacao{}, &ErrConflitoVersao{VersaoAtual: versaoAtual}
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto)
+		VALUES ($1, $2, 'comentario', $3)
+	`, id, autorID, comentario); err != nil {
+		return Solicitacao{}, fmt.Errorf("inserir comentário em %s: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Solicitacao{}, fmt.Errorf("confirmar transação de comentário em %s: %w", id, err)
+	}
+	return s, nil
+}
+
 // fallbackComentar distingue 404/403/409 quando o UPDATE de Comentar afeta 0
 // linhas — mesma ordem documentada ali. `solicitante_id` é NOT NULL
 // (migration 006), então nunca precisa de sql.NullString como em

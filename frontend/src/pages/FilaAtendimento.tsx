@@ -585,7 +585,7 @@ const FilaAtendimento = () => {
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Gere a exportação SAP (lote Despesa/Obra) antes de finalizar — finalizar é uma ação separada.
+              Para finalizar com sucesso, gere antes a exportação SAP (lote Despesa/Obra). Finalizar com erro não exige exportação.
             </p>
           </div>
           <DialogFooter>
