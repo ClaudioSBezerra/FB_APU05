@@ -50,6 +50,14 @@ func ObjnrCentroCusto(codigo string) (string, error) {
 	return "KS" + AreaControladoria() + strings.Repeat("0", 10-len(c)) + c, nil
 }
 
+// VersaoPlano é a versão do plano de custos (COSP.VERSN) que vale para o saldo (env SAP_PLAN_VERSION, padrão "000").
+func VersaoPlano() string {
+	if v := strings.TrimSpace(os.Getenv("SAP_PLAN_VERSION")); v != "" {
+		return v
+	}
+	return "000"
+}
+
 // ConsultarSaldo lê o saldo de um (objnr, kstar, gjahr). Valida as três chaves antes de montar o $filter.
 func ConsultarSaldo(ctx context.Context, cfg Config, objnr, kstar, gjahr string) (*Saldo, error) {
 	if !reObjnr.MatchString(objnr) || !reKstar.MatchString(kstar) || !reGjahr.MatchString(gjahr) {
@@ -98,12 +106,23 @@ func lerSaldoV4(corpo []byte) (*Saldo, error) {
 		return nil, errors.New("resposta do SAP em formato inesperado (esperado JSON OData V4)")
 	}
 	s := &Saldo{}
-	if len(env.Value) == 0 {
+	// A API agrupa também por VERSN (versão do plano): vale só a versão configurada; somar versões
+	// duplicaria o planejado. Linhas sem o campo versn (API antiga) são aceitas como estão.
+	versao := VersaoPlano()
+	var linhas []map[string]json.RawMessage
+	for _, linha := range env.Value {
+		if raw, ok := linha["versn"]; ok {
+			if strings.Trim(strings.TrimSpace(string(raw)), `"`) != versao {
+				continue
+			}
+		}
+		linhas = append(linhas, linha)
+	}
+	if len(linhas) == 0 {
 		return s, nil
 	}
 	s.Encontrado = true
-	// uma linha por (objnr, kstar, gjahr); se vierem mais, soma (defensivo)
-	for _, linha := range env.Value {
+	for _, linha := range linhas {
 		for mes := 1; mes <= 12; mes++ {
 			for nome, dest := range map[string]*[12]float64{"plan": &s.Plan, "real": &s.Real, "comp": &s.Comp,
 				"disposto": &s.Disposto, "disponivel": &s.Disponivel, "disp_acum": &s.DispAcum} {

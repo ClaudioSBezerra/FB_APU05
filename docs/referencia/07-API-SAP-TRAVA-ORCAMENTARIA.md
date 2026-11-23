@@ -85,3 +85,10 @@ Implementado (sem poder testar contra o SAP real: falta rota/firewall e credenci
 
 Falta: mostrar o saldo na **tela do aprovador** (reconsultar na hora da decisão) — depende de a consulta estar ativa.
 
+
+## Atualização 2026-11-23 — versão do plano (VERSN)
+
+- Query da API (Marlos): `DISPONIVEL = PLAN − (REAL + COMP)`; REAL = WRTTP 4; COMP = WRTTP 21/22; `DISP_ACUMn` = soma dos disponíveis de 1..n. Ou seja, o comprometido já está descontado.
+- A query original não filtrava VERSN (somaria versões do plano). A Duda incluiu VERSN na query e no GROUP BY: agora pode vir uma linha por versão.
+- O sistema usa só a versão `SAP_PLAN_VERSION` (padrão `000`) e ignora as demais (`lerSaldoV4`). Linhas sem o campo `versn` são aceitas como antes. **Confirmar ao vivo** o nome do campo (`versn`) e a versão que vale.
+- Pontos de atenção: COSS (custos secundários) fora da query; realizado só das operações RMBA/COIN/RMBE — conferir com a KSB1 de um CC real.

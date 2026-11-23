@@ -82,3 +82,20 @@ func TestSondaSaldo(t *testing.T) {
 		t.Fatalf("sonda: %+v", r)
 	}
 }
+
+func TestLerSaldoV4FiltraVersaoDoPlano(t *testing.T) {
+	corpo := []byte(`{"value":[
+	 {"objnr":"X","kstar":"1","gjahr":"2026","versn":"000","plan1":"100.00","real1":"10.00","comp1":"0","disposto1":"10","disponivel1":"90","disp_acum1":"90"},
+	 {"objnr":"X","kstar":"1","gjahr":"2026","versn":"001","plan1":"500.00","real1":"0","comp1":"0","disposto1":"0","disponivel1":"500","disp_acum1":"500"}]}`)
+	s, err := lerSaldoV4(corpo)
+	if err != nil || !s.Encontrado {
+		t.Fatalf("esperava encontrado, err=%v", err)
+	}
+	if s.Plan[0] != 100 || s.DispAcum[0] != 90 {
+		t.Fatalf("versão 001 não deveria somar: plan=%v disp=%v", s.Plan[0], s.DispAcum[0])
+	}
+	s, _ = lerSaldoV4([]byte(`{"value":[{"versn":"001","plan1":"5"}]}`))
+	if s.Encontrado {
+		t.Fatal("sem a versão configurada deve ser 'sem lançamentos'")
+	}
+}
