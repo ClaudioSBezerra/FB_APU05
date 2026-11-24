@@ -66,6 +66,10 @@ type saldoLinhaSaida struct {
 	RetiradaAcum *float64 `json:"retirada_acumulada,omitempty"`
 	Excede       bool     `json:"excede"`
 	Falta        *float64 `json:"falta,omitempty"`
+	// só origem: o que a solicitação retira NESTE mês (CC+conta+mês) contra o disponível do mês (aviso, nunca bloqueia)
+	RetiradaMes *float64 `json:"retirada_mes,omitempty"`
+	ExcedeMes   bool     `json:"excede_mes"`
+	FaltaMes    *float64 `json:"falta_mes,omitempty"`
 }
 
 type cacheSaldoItem struct {
@@ -285,13 +289,20 @@ func SaldoOrcamentoHandler(db *sql.DB) http.HandlerFunc {
 			s.Planejado, s.Realizado, s.Comprom = r2f(rs.s.Plan[n]), r2f(rs.s.Real[n]), r2f(rs.s.Comp[n])
 			s.Disposto, s.Disponivel, s.DispAcum = r2f(rs.s.Disposto[n]), r2f(rs.s.Disponivel[n]), r2f(rs.s.DispAcum[n])
 			if in.Lancamentos[i].Lado == "origem" && in.Lancamentos[i].Valor > 0 {
-				var ret float64
+				var ret, retMes float64
 				for _, x := range retiradas[chaveRet{s.CC, s.Conta, c.gjahr}] {
 					if x.mes <= n {
 						ret += x.valor
 					}
+					if x.mes == n {
+						retMes += x.valor
+					}
 				}
 				s.RetiradaAcum = r2f(ret)
+				s.RetiradaMes = r2f(retMes)
+				if retMes > rs.s.Disponivel[n]+0.005 {
+					s.ExcedeMes, s.FaltaMes = true, r2f(retMes-rs.s.Disponivel[n])
+				}
 				if ret > rs.s.DispAcum[n]+0.005 {
 					s.Excede, s.Falta = true, r2f(ret-rs.s.DispAcum[n])
 				}

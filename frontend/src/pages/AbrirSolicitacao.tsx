@@ -72,15 +72,24 @@ function SaldoDaLinha({ saldo, carregando }: { saldo?: SaldoLinha; carregando: b
     );
   }
   const acum = saldo.disponivel_acumulado ?? 0;
+  const mes = saldo.disponivel ?? 0;
+  const aviso = saldo.excede || !!saldo.excede_mes;
   const tit = `Planejado ${moedaSaldo.format(saldo.planejado ?? 0)} · realizado ${moedaSaldo.format(saldo.realizado ?? 0)} · comprometido ${moedaSaldo.format(saldo.comprometido ?? 0)} no mês`;
   return (
-    <p className={saldo.excede ? 'text-xs font-medium text-danger-text' : 'text-xs text-fg-secondary'} title={tit} role={saldo.excede ? 'alert' : 'status'}>
-      Saldo disponível até este mês (acumulado): <span className="font-medium tabular-nums">{moedaSaldo.format(acum)}</span>
+    <p className={aviso ? 'text-xs font-medium text-danger-text' : 'text-xs text-fg-secondary'} title={tit} role={aviso ? 'alert' : 'status'}>
+      Disponível no mês: <span className="font-medium tabular-nums">{moedaSaldo.format(mes)}</span> · Acumulado até o mês:{' '}
+      <span className="font-medium tabular-nums">{moedaSaldo.format(acum)}</span>
       {saldo.status === 'sem_lancamentos' && ' · sem orçamento nem lançamentos no SAP'}
+      {saldo.excede_mes && saldo.falta_mes != null && (
+        <>
+          {' '}
+          · ⚠ retirada do mês de {moedaSaldo.format(saldo.retirada_mes ?? 0)} passa do disponível do mês em <span className="tabular-nums">{moedaSaldo.format(saldo.falta_mes)}</span> (aviso: você pode continuar)
+        </>
+      )}
       {saldo.excede && saldo.falta != null && (
         <>
           {' '}
-          · ⚠ retirada acumulada de {moedaSaldo.format(saldo.retirada_acumulada ?? 0)} passa do saldo em <span className="tabular-nums">{moedaSaldo.format(saldo.falta)}</span> (aviso: o envio não é bloqueado)
+          · ⚠ retirada acumulada de {moedaSaldo.format(saldo.retirada_acumulada ?? 0)} passa do saldo acumulado em <span className="tabular-nums">{moedaSaldo.format(saldo.falta)}</span> (aviso: você pode continuar)
         </>
       )}
     </p>

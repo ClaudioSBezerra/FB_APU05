@@ -27,6 +27,9 @@ export interface SaldoLinha {
   retirada_acumulada?: number;
   excede: boolean;
   falta?: number;
+  retirada_mes?: number;
+  excede_mes?: boolean;
+  falta_mes?: number;
 }
 
 type Estado = { carregando: boolean; linhas: SaldoLinha[]; ativo: boolean };

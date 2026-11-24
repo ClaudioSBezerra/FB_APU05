@@ -202,3 +202,25 @@ func TestSaldo_UsaOAnoEscolhido(t *testing.T) {
 		}
 	}
 }
+
+// Retorno da homologação (item 6): o aviso também compara a retirada do MÊS com o disponível do mês,
+// mesmo quando o acumulado comporta (exemplo: R$ 8.000 contra R$ 7.700 no mês e R$ 409.700 acumulados).
+func TestSaldo_AvisoDoMes_AcumuladoComporta(t *testing.T) {
+	cacheSaldo = map[string]cacheSaldoItem{}
+	db, mock := newSQLMock(t)
+	orig := consultarSaldoSAP
+	t.Cleanup(func() { consultarSaldoSAP = orig })
+	consultarSaldoSAP = func(context.Context, sapodata.Config, string, string, string) (*sapodata.Saldo, error) {
+		var mes, acum [12]float64
+		mes[10], acum[10] = 7700, 409700
+		return &sapodata.Saldo{Encontrado: true, Disponivel: mes, DispAcum: acum}, nil
+	}
+	esperaBaseSaldo(mock, "true")
+	esperaCodigos(mock, sCC1, "10026040")
+	rec := httptest.NewRecorder()
+	SaldoOrcamentoHandler(db)(rec, reqSaldo(t, `{"lancamentos":[{"lado":"origem","centro_custo_id":"`+sCC1+`","conta_id":"`+sConta+`","mes":"2026-11-01","valor":8000}]}`))
+	l := decSaldo(t, rec)
+	if l[0].Excede || !l[0].ExcedeMes || *l[0].FaltaMes != 300 {
+		t.Errorf("deveria avisar só pelo mês (falta 300): %+v", l[0])
+	}
+}
