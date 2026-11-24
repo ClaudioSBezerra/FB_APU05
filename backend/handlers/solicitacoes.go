@@ -251,7 +251,7 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		// Anexo obrigatório em todos os tipos desde 11/11 (item 5 da lista do
 		// negócio; antes só Imobilizado exigia) — validação puramente
 		// estrutural, acima do tx.Begin().
-		anexosParaSalvar, msgErroAnexo := validarAnexos(req.Anexos, true)
+		anexosParaSalvar, msgErroAnexo := validarAnexosTipo(req.Anexos, true, req.TipoSolicitacao)
 		if msgErroAnexo != "" {
 			jsonErr(w, http.StatusBadRequest, msgErroAnexo)
 			return
@@ -283,6 +283,11 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		// é sempre 1 única linha, nenhum dos dois conceitos se aplica).
 		if req.TipoSolicitacao == "transferencia" {
 			if msgErro := validarBalanceamento(lancamentos); msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
+
+			if msgErro := validarTransferenciaPropria(lancamentos); msgErro != "" {
 				jsonErr(w, http.StatusBadRequest, msgErro)
 				return
 			}
@@ -712,9 +717,17 @@ var contentTypesPermitidos = map[string]bool{
 }
 
 func validarAnexos(itens []anexoRequest, obrigatorio bool) ([]anexos.ArquivoDecodificado, string) {
+	return validarAnexosTipo(itens, obrigatorio, "")
+}
+
+// validarAnexosTipo = validarAnexos com a mensagem de anexo faltando adequada ao tipo.
+func validarAnexosTipo(itens []anexoRequest, obrigatorio bool, tipo string) ([]anexos.ArquivoDecodificado, string) {
 	if len(itens) == 0 {
 		if obrigatorio {
-			return nil, "Imobilizado exige ao menos um anexo de cotação"
+			if tipo == "imobilizado" {
+				return nil, "Imobilizado exige ao menos um anexo de cotação"
+			}
+			return nil, "Anexe ao menos um documento (e-mail de autorização, cotação ou comprovante)."
 		}
 		return nil, ""
 	}
@@ -879,6 +892,22 @@ func validarDivisaoDerivadaDoCC(linhas []lancamentoValidado, ccDivisaoID string)
 	for i, l := range linhas {
 		if l.DivisaoID != ccDivisaoID {
 			return fmt.Sprintf("linha %d: campo 'divisao_id' diverge da divisão do centro de custo", i+1)
+		}
+	}
+	return ""
+}
+
+// validarTransferenciaPropria recusa origem e destino na mesma combinação CC + conta + mês:
+// a transferência não movimentaria nada (retorno da homologação, item 5).
+func validarTransferenciaPropria(linhas []lancamentoValidado) string {
+	for _, o := range linhas {
+		if o.Lado != "origem" {
+			continue
+		}
+		for _, d := range linhas {
+			if d.Lado == "destino" && d.CentroCustoID == o.CentroCustoID && d.ContaID == o.ContaID && d.Mes.Equal(o.Mes) {
+				return "A origem e o destino são o mesmo centro de custo, conta e mês: a transferência não movimenta nada. Altere o destino."
+			}
 		}
 	}
 	return ""

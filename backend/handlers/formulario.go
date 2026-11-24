@@ -151,7 +151,7 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		contas, err := listarOpcoes(db, "SELECT id, codigo, nome FROM contas WHERE plano = '"+sapodata.PlanoContas()+"' AND codigo LIKE '4%' ORDER BY codigo")
+		contas, err := listarOpcoes(db, "SELECT id, codigo, nome FROM contas WHERE plano = '"+sapodata.PlanoContas()+"' AND "+filtroContasDespesa+" ORDER BY codigo")
 		if err != nil {
 			log.Printf("[Formulario] Erro ao consultar contas: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -425,3 +425,9 @@ func FornecedoresHandler(db *sql.DB) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"items": itens})
 	}
 }
+
+// filtroContasDespesa: contas oferecidas em Transferência e Inclusão, por faixa (retorno da homologação, item 9).
+// Ficam 411 (custos), 421 (pessoal) e 422 (despesas gerais); saem as doações incentivadas 4229000004–008 e as
+// provisões/reversões 4229000011–022. Conta nova dentro de uma faixa que fica entra sozinha.
+const filtroContasDespesa = `(codigo LIKE '411%' OR codigo LIKE '421%' OR codigo LIKE '422%')
+ AND NOT (codigo BETWEEN '4229000004' AND '4229000008') AND NOT (codigo BETWEEN '4229000011' AND '4229000022')`
