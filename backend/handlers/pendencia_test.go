@@ -398,9 +398,9 @@ func TestObterSolicitacaoHandler_PorSolicitanteDono(t *testing.T) {
 			AddRow("transferencia", "pendente", 2, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil, nil, false, nil))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_comentarios")).
 		WithArgs(testPendenciaSolicitacaoID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "tipo", "texto", "created_at"}).
-			AddRow("c1111111-1111-1111-1111-111111111111", testPendenciaAdministradorID, "pendencia", "falta nota", testTimeFixo).
-			AddRow("c2222222-2222-2222-2222-222222222222", testPendenciaSolicitanteID, "comentario", "anexei", testTimeFixo.Add(1)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "nome", "tipo", "texto", "created_at"}).
+			AddRow("c1111111-1111-1111-1111-111111111111", testPendenciaAdministradorID, "Ana", "pendencia", "falta nota", testTimeFixo).
+			AddRow("c2222222-2222-2222-2222-222222222222", testPendenciaSolicitanteID, "Bia", "comentario", "anexei", testTimeFixo.Add(1)))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_anexos")).
 		WithArgs(testPendenciaSolicitacaoID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "nome_arquivo", "content_type", "tamanho_bytes", "created_at"}))
@@ -450,7 +450,7 @@ func TestObterSolicitacaoHandler_PorAdministradorDono(t *testing.T) {
 			AddRow("transferencia", "em_atendimento", 1, testPendenciaSolicitanteID, testPendenciaAdministradorID, nil, nil, nil, false, nil))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_comentarios")).
 		WithArgs(testPendenciaSolicitacaoID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "tipo", "texto", "created_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "nome", "tipo", "texto", "created_at"}))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_anexos")).
 		WithArgs(testPendenciaSolicitacaoID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "nome_arquivo", "content_type", "tamanho_bytes", "created_at"}))
@@ -638,7 +638,7 @@ func TestObterSolicitacaoHandler_AtendenteVeQualquerChamado(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"tipo_solicitacao", "status", "versao", "solicitante_id", "administrador_id", "fornecedor", "descricao", "fornecedor_cnpj", "fornecedor_nao_cadastrado", "quantidade_material"}).
 			AddRow("transferencia", "aberta", 1, testPendenciaSolicitanteID, nil, nil, nil, nil, false, nil))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_comentarios")).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "tipo", "texto", "created_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "autor_id", "nome", "tipo", "texto", "created_at"}))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacao_anexos")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "nome_arquivo", "content_type", "tamanho_bytes", "created_at"}))
 

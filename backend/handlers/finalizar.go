@@ -39,6 +39,42 @@ type finalizarRequest struct {
 	Versao        int                  `json:"versao"`
 	Resultado     string               `json:"resultado"`
 	OrdensCriadas []ordemCriadaRequest `json:"ordens_criadas"`
+	// Só no resultado "erro": categoria obrigatória (uma das categoriasErroFinalizacao) + observação livre.
+	CategoriaErro string `json:"categoria_erro"`
+	Observacao    string `json:"observacao"`
+}
+
+// categoriasErroFinalizacao: as categorias definidas pela Controladoria (homologação 24/11/2026, item 1).
+var categoriasErroFinalizacao = map[string]string{
+	"saldo_insuficiente":      "Saldo insuficiente na origem",
+	"conta_cc_invalido":       "Conta/CC inválido no SAP",
+	"divergencia_valores":     "Divergência de valores",
+	"fora_periodo":            "Fora do período orçamentário",
+	"documentacao_incompleta": "Documentação incompleta",
+	"outro":                   "Outro",
+}
+
+// notaEncerramento monta o texto do histórico; vazio para sucesso. Devolve msg de erro 400 quando inválido.
+func notaEncerramento(resultado, categoria, observacao string) (nota, msgErro string) {
+	observacao = strings.TrimSpace(observacao)
+	if len([]rune(observacao)) > 1000 {
+		return "", "A observação pode ter no máximo 1000 caracteres."
+	}
+	if resultado == "sucesso" {
+		return "Finalizada com sucesso." + map[bool]string{true: " " + observacao, false: ""}[observacao != ""], ""
+	}
+	rotulo, ok := categoriasErroFinalizacao[categoria]
+	if !ok {
+		return "", "Escolha a categoria do erro para finalizar com erro."
+	}
+	if categoria == "outro" && observacao == "" {
+		return "", "Descreva o motivo na observação quando a categoria for \"Outro\"."
+	}
+	nota = "Finalizada com erro — " + rotulo + "."
+	if observacao != "" {
+		nota += " " + observacao
+	}
+	return nota, ""
 }
 
 // lerFinalizarRequest lê e valida estruturalmente o corpo (Tasks da
@@ -51,33 +87,33 @@ type finalizarRequest struct {
 // de elegibilidade/negócio aqui (ex.: se `ordens_criadas` corresponde
 // mesmo às linhas 'CRIAR' da solicitação) — delegada inteiramente a
 // internal/exportacao.Finalizar.
-func lerFinalizarRequest(w http.ResponseWriter, r *http.Request) (versao int, resultado string, ordensCriadas []exportacao.OrdemCriada, ok bool) {
+func lerFinalizarRequest(w http.ResponseWriter, r *http.Request) (versao int, resultado string, ordensCriadas []exportacao.OrdemCriada, nota string, ok bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	corpo, err := io.ReadAll(r.Body)
 	if err != nil {
 		jsonErr(w, http.StatusBadRequest, "não foi possível ler o corpo da requisição")
-		return 0, "", nil, false
+		return 0, "", nil, "", false
 	}
 
 	var req finalizarRequest
 	if err := json.Unmarshal(corpo, &req); err != nil {
-		jsonErr(w, http.StatusBadRequest, "corpo da requisição inválido")
-		return 0, "", nil, false
+		jsonErr(w, http.StatusBadRequest, "Os dados enviados estão incompletos ou em formato inválido. Atualize a página e tente de novo.")
+		return 0, "", nil, "", false
 	}
 
 	if req.Versao < 1 {
 		jsonErr(w, http.StatusBadRequest, "campo 'versao' é obrigatório e deve ser >= 1")
-		return 0, "", nil, false
+		return 0, "", nil, "", false
 	}
 
 	if req.Resultado != "sucesso" && req.Resultado != "erro" {
 		jsonErr(w, http.StatusBadRequest, "campo 'resultado' deve ser 'sucesso' ou 'erro'")
-		return 0, "", nil, false
+		return 0, "", nil, "", false
 	}
 
 	if req.Resultado == "erro" && len(req.OrdensCriadas) > 0 {
 		jsonErr(w, http.StatusBadRequest, "campo 'ordens_criadas' não pode ser informado quando 'resultado' é 'erro'")
-		return 0, "", nil, false
+		return 0, "", nil, "", false
 	}
 
 	vistos := make(map[string]bool, len(req.OrdensCriadas))
@@ -85,31 +121,36 @@ func lerFinalizarRequest(w http.ResponseWriter, r *http.Request) (versao int, re
 	for _, oc := range req.OrdensCriadas {
 		if !uuidFormatRegexp.MatchString(oc.LinhaID) {
 			jsonErr(w, http.StatusBadRequest, "campo 'ordens_criadas' contém um 'linha_id' em formato inválido")
-			return 0, "", nil, false
+			return 0, "", nil, "", false
 		}
 		if vistos[oc.LinhaID] {
 			jsonErr(w, http.StatusBadRequest, "campo 'ordens_criadas' contém 'linha_id' duplicado")
-			return 0, "", nil, false
+			return 0, "", nil, "", false
 		}
 		vistos[oc.LinhaID] = true
 
 		numeroOrdem := strings.TrimSpace(oc.NumeroOrdem)
 		if numeroOrdem == "" {
 			jsonErr(w, http.StatusBadRequest, "campo 'ordens_criadas' contém 'numero_ordem' vazio")
-			return 0, "", nil, false
+			return 0, "", nil, "", false
 		}
 		if len(numeroOrdem) > 50 {
 			// `obra_ordens.numero_ordem` é VARCHAR(50) (migration 009) —
 			// sem este limite, um valor maior chegaria ao INSERT e viraria
 			// um erro opaco de Postgres (500) em vez de um 400 claro aqui.
 			jsonErr(w, http.StatusBadRequest, "campo 'ordens_criadas' contém 'numero_ordem' com mais de 50 caracteres")
-			return 0, "", nil, false
+			return 0, "", nil, "", false
 		}
 
 		ordens = append(ordens, exportacao.OrdemCriada{LinhaID: oc.LinhaID, NumeroOrdem: numeroOrdem})
 	}
 
-	return req.Versao, req.Resultado, ordens, true
+	nota, msg := notaEncerramento(req.Resultado, req.CategoriaErro, req.Observacao)
+	if msg != "" {
+		jsonErr(w, http.StatusBadRequest, msg)
+		return 0, "", nil, "", false
+	}
+	return req.Versao, req.Resultado, ordens, nota, true
 }
 
 // tratarErroFinalizar converte os sentinelas de
@@ -176,14 +217,14 @@ func finalizarHandler(db *sql.DB, dispensaExportacao func() bool) http.HandlerFu
 			return
 		}
 
-		versao, resultado, ordensCriadas, ok := lerFinalizarRequest(w, r)
+		versao, resultado, ordensCriadas, nota, ok := lerFinalizarRequest(w, r)
 		if !ok {
 			return
 		}
 
 		administradorID := GetUserIDFromContext(r)
 
-		exportador := exportacao.ExportadorVBA{DispensaExportacao: dispensaExportacao()}
+		exportador := exportacao.ExportadorVBA{DispensaExportacao: dispensaExportacao(), NotaEncerramento: nota}
 		resultadoFinal, err := exportador.Finalizar(db, id, versao, administradorID, resultado, ordensCriadas)
 		if err != nil {
 			if tratarErroFinalizar(w, err) {

@@ -58,6 +58,7 @@ func TestFinalizarSolicitacaoHandler_SucessoSemLinhaCriar(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, local_obra_id, subgrupo_despesa_id")).
 		WithArgs(testFinalizarHandlerSolicitacaoID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "local_obra_id", "subgrupo_despesa_id"}))
+	mock.ExpectExec("INSERT INTO solicitacao_comentarios").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	handler := FinalizarSolicitacaoHandler(db)
@@ -101,6 +102,7 @@ func TestFinalizarSolicitacaoHandler_SucessoComLinhaCriar(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE solicitacao_obras_linhas SET ordem_investimento")).
 		WithArgs("SAP-0001", testFinalizarHandlerLinhaCriarID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO solicitacao_comentarios").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	handler := FinalizarSolicitacaoHandler(db)
@@ -398,5 +400,24 @@ func TestFinalizarSolicitacaoHandler_NumeroOrdemJaExiste(t *testing.T) {
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, esperado 409 (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestNotaEncerramento_ErroExigeCategoria(t *testing.T) {
+	if _, m := notaEncerramento("erro", "", ""); m == "" {
+		t.Error("erro sem categoria deve ser recusado")
+	}
+	if _, m := notaEncerramento("erro", "inventada", "x"); m == "" {
+		t.Error("categoria inexistente deve ser recusada")
+	}
+	if _, m := notaEncerramento("erro", "outro", "  "); m == "" {
+		t.Error("'Outro' exige observação")
+	}
+	n, m := notaEncerramento("erro", "saldo_insuficiente", "faltou 300")
+	if m != "" || n != "Finalizada com erro — Saldo insuficiente na origem. faltou 300" {
+		t.Errorf("nota=%q msg=%q", n, m)
+	}
+	if n, m := notaEncerramento("sucesso", "", ""); m != "" || n == "" {
+		t.Errorf("sucesso não exige nada: %q %q", n, m)
 	}
 }

@@ -217,6 +217,7 @@ func ComentarSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 type comentarioDetalhe struct {
 	ID        string    `json:"id"`
 	AutorID   string    `json:"autor_id"`
+	AutorNome string    `json:"autor_nome"`
 	Tipo      string    `json:"tipo"`
 	Texto     string    `json:"texto"`
 	CreatedAt time.Time `json:"created_at"`
@@ -286,10 +287,10 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(`
-			SELECT id, autor_id, tipo, texto, created_at
-			FROM solicitacao_comentarios
-			WHERE solicitacao_id = $1
-			ORDER BY created_at ASC, id ASC
+			SELECT c.id, c.autor_id, COALESCE(u.nome, ''), c.tipo, c.texto, c.created_at
+			FROM solicitacao_comentarios c LEFT JOIN usuarios u ON u.id = c.autor_id
+			WHERE c.solicitacao_id = $1
+			ORDER BY c.created_at ASC, c.id ASC
 		`, id)
 		if err != nil {
 			log.Printf("[Fila] Erro ao buscar comentários de %s: %v", id, err)
@@ -301,7 +302,7 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		comentarios := make([]comentarioDetalhe, 0)
 		for rows.Next() {
 			var c comentarioDetalhe
-			if err := rows.Scan(&c.ID, &c.AutorID, &c.Tipo, &c.Texto, &c.CreatedAt); err != nil {
+			if err := rows.Scan(&c.ID, &c.AutorID, &c.AutorNome, &c.Tipo, &c.Texto, &c.CreatedAt); err != nil {
 				log.Printf("[Fila] Erro ao ler comentário de %s: %v", id, err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return

@@ -37,6 +37,8 @@ import (
 type ExportadorVBA struct {
 	// DispensaExportacao: permite finalizar com sucesso sem lote GERADO (robô SAP ainda não ligado).
 	DispensaExportacao bool
+	// NotaEncerramento vira um evento no histórico (solicitacao_comentarios, tipo 'encerramento') na transação de Finalizar.
+	NotaEncerramento string
 
 	TemplatePath     string
 	TemplatePathObra string

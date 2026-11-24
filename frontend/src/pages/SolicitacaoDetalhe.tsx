@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 
 // Página do chamado (substitui o pop-up "Ver e comentar"): quem abriu, como foi preenchido, aprovador,
@@ -35,9 +36,19 @@ interface Detalhe {
   quantidade_material?: number | null;
   descricao: string | null;
   anexos: { id: string; nome_arquivo: string; tamanho_bytes: number }[];
-  comentarios: { id: string; autor_id: string; tipo: string; texto: string; created_at: string }[];
+  comentarios: { id: string; autor_id: string; autor_nome?: string; tipo: string; texto: string; created_at: string }[];
   extras?: Extras;
 }
+
+const CATEGORIAS_ERRO: [string, string][] = [
+  ['saldo_insuficiente', 'Saldo insuficiente na origem'],
+  ['conta_cc_invalido', 'Conta/CC inválido no SAP'],
+  ['divergencia_valores', 'Divergência de valores'],
+  ['fora_periodo', 'Fora do período orçamentário'],
+  ['documentacao_incompleta', 'Documentação incompleta'],
+  ['outro', 'Outro'],
+];
+const TIPO_HISTORICO: Record<string, string> = { pendencia: 'Pendência', comentario: 'Comentário', encerramento: 'Encerramento' };
 
 const TIPO: Record<string, string> = { transferencia: 'Transferência', inclusao: 'Inclusão', inclusao_sfc: 'Inclusão SFC', imobilizado: 'Imobilizado', obras: 'Obras' };
 const STATUS: Record<string, string> = {
@@ -87,6 +98,9 @@ export default function SolicitacaoDetalhe() {
   const [comentario, setComentario] = useState('');
   const [pendencia, setPendencia] = useState('');
   const [resultado, setResultado] = useState<'sucesso' | 'erro'>('sucesso');
+  const [categoriaErro, setCategoriaErro] = useState('');
+  const [obsFinal, setObsFinal] = useState('');
+  const [confirmando, setConfirmando] = useState(false);
 
   const q = useQuery({ queryKey: ['solicitacao', id], queryFn: () => api<Detalhe>(`/api/solicitacoes/${id}`) });
   const d = q.data;
@@ -185,7 +199,7 @@ export default function SolicitacaoDetalhe() {
         {d.comentarios.length === 0 && <p className="text-sm text-muted-foreground">Nenhum comentário ainda.</p>}
         {d.comentarios.map((c) => (
           <div key={c.id} className="rounded-lg border border-border p-2 text-sm">
-            <p className="text-xs text-muted-foreground">{c.tipo} · {dataHora(c.created_at)}</p>
+            <p className="text-xs text-muted-foreground">{c.autor_nome || 'Usuário'} · {TIPO_HISTORICO[c.tipo] ?? c.tipo} · {dataHora(c.created_at)}</p>
             <p className="whitespace-pre-wrap">{c.texto}</p>
           </div>
         ))}
@@ -229,11 +243,25 @@ export default function SolicitacaoDetalhe() {
                     <SelectItem value="erro">Erro</SelectItem>
                   </SelectContent>
                 </Select>
+                {resultado === 'erro' && (
+                  <>
+                    <Label>Categoria do erro (obrigatória)</Label>
+                    <Select value={categoriaErro} onValueChange={setCategoriaErro}>
+                      <SelectTrigger><SelectValue placeholder="Escolha a categoria" /></SelectTrigger>
+                      <SelectContent>
+                        {CATEGORIAS_ERRO.map(([v, r]) => <SelectItem key={v} value={v}>{r}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Label htmlFor="obsfin">Observação{categoriaErro === 'outro' ? ' (obrigatória em "Outro")' : ' (opcional)'}</Label>
+                    <Textarea id="obsfin" maxLength={1000} value={obsFinal} onChange={(e) => setObsFinal(e.target.value)} />
+                  </>
+                )}
                 <div>
-                  <Button size="sm" disabled={mut.isPending}
-                    onClick={() => mut.mutate(() => post('finalizar', { versao: d.versao, resultado, ordens_criadas: [] }, 'Solicitação finalizada', () => navigate('/fila')))}>
+                  <Button size="sm" disabled={mut.isPending || (resultado === 'erro' && (!categoriaErro || (categoriaErro === 'outro' && !obsFinal.trim())))}
+                    onClick={() => setConfirmando(true)}>
                     Finalizar
                   </Button>
+                  {resultado === 'erro' && !categoriaErro && <p className="mt-1 text-xs text-fg-helper">Escolha a categoria do erro para finalizar.</p>}
                 </div>
               </div>
             </>
@@ -242,6 +270,30 @@ export default function SolicitacaoDetalhe() {
           {['finalizada', 'finalizada_sucesso', 'finalizada_erro', 'rejeitada', 'pendente'].includes(d.status) && <p className="text-sm text-muted-foreground">Sem ações disponíveis neste status.</p>}
         </section>
       )}
+      <Dialog open={confirmando} onOpenChange={setConfirmando}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Finalizar o chamado como {resultado === 'sucesso' ? 'Sucesso' : 'Erro'}?</DialogTitle>
+            <DialogDescription>
+              Esta ação encerra o atendimento.
+              {resultado === 'erro' && categoriaErro && <> Categoria: {CATEGORIAS_ERRO.find(([v]) => v === categoriaErro)?.[1]}.</>}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmando(false)}>Cancelar</Button>
+            <Button disabled={mut.isPending}
+              onClick={() => {
+                setConfirmando(false);
+                const corpo = resultado === 'erro'
+                  ? { versao: d.versao, resultado, ordens_criadas: [], categoria_erro: categoriaErro, observacao: obsFinal.trim() }
+                  : { versao: d.versao, resultado, ordens_criadas: [] };
+                mut.mutate(() => post('finalizar', corpo, 'Solicitação finalizada', () => navigate('/fila')));
+              }}>
+              Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

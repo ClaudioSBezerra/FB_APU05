@@ -110,6 +110,13 @@ func (e ExportadorVBA) Finalizar(db *sql.DB, solicitacaoID string, versaoLida in
 		}
 	}
 
+	if e.NotaEncerramento != "" {
+		if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'encerramento', $3)`,
+			solicitacaoID, administradorID, e.NotaEncerramento); err != nil {
+			return Solicitacao{}, fmt.Errorf("exportacao: registrar encerramento de %s no histórico: %w", solicitacaoID, err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return Solicitacao{}, fmt.Errorf("exportacao: confirmar transação de finalização de %s: %w", solicitacaoID, err)
 	}
