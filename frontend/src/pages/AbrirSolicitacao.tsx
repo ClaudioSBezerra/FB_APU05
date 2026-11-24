@@ -53,6 +53,9 @@ interface OpcoesFormulario {
   classes_imobilizado: OpcaoItem[];
   locais_obra: OpcaoItem[];
   subgrupos_despesa: OpcaoItem[];
+  // Regra do ano (data do SERVIDOR, fuso de Recife): só o corrente; em janeiro também o anterior.
+  ano_corrente?: number;
+  anos_permitidos?: number[];
 }
 
 // Saldo orçamentário do SAP (aviso, nunca trava): mostra o disponível ACUMULADO até o mês da linha.
@@ -695,6 +698,17 @@ const AbrirSolicitacao = () => {
     }
   }
 
+  // Ano único da solicitação (Transferência, Inclusão e Inclusão SFC). Fora de janeiro não há escolha.
+  const usaAnoUnico = tipo === 'transferencia' || tipo === 'inclusao' || tipo === 'inclusao_sfc';
+  const anosPermitidos = (opcoes?.anos_permitidos ?? []).map(String);
+  const [anoEscolhido, setAnoEscolhido] = useState('');
+  const anoOrcamento = anosPermitidos.includes(anoEscolhido) ? anoEscolhido : anosPermitidos[0] ?? '';
+  function escolherAno(novo: string) {
+    setAnoEscolhido(novo);
+    // todas as linhas passam para o novo ano (a solicitação inteira é de um único ano)
+    setLinhas((atual) => atual.map((l) => (l.mes ? { ...l, mes: `${novo}${l.mes.slice(4)}` } : l)));
+  }
+  const anoParaMes = usaAnoUnico && anoOrcamento ? anoOrcamento : undefined;
   const contasDisponiveis = opcoes?.contas ?? [];
   // Anexo obrigatório em todos os tipos desde 11/11 (item 5).
   const podeEnviar =
@@ -734,6 +748,32 @@ const AbrirSolicitacao = () => {
         </Select>
       </div>
 
+      {usaAnoUnico && anosPermitidos.length > 1 && (
+        <div className="grid gap-1.5">
+          <Label>Ano do orçamento</Label>
+          <Select value={anoOrcamento} onValueChange={escolherAno}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {anosPermitidos.map((a) => (
+                <SelectItem key={a} value={a}>
+                  {a}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-fg-helper">
+            O fechamento de janeiro ainda permite o ano anterior. A solicitação inteira, origem e destino, é de um único ano.
+          </p>
+        </div>
+      )}
+      {usaAnoUnico && anosPermitidos.length === 1 && (
+        <p className="text-sm text-fg-secondary">
+          Ano do orçamento: <span className="font-medium text-foreground">{anosPermitidos[0]}</span>
+        </p>
+      )}
+
       {tipo !== 'obras' && (
         <div className="grid gap-1.5">
           <Label>{tipo === 'transferencia' ? 'Centro de custo de origem' : 'Centro de custo'}</Label>
@@ -768,7 +808,7 @@ const AbrirSolicitacao = () => {
                   </div>
                   <div className="grid gap-1.5">
                     <Label>Mês</Label>
-                    <MesAno value={linha.mes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
+                    <MesAno value={linha.mes} ano={anoParaMes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
                   </div>
                   <div className="grid gap-1.5">
                     <Label>Valor (R$)</Label>
@@ -822,7 +862,7 @@ const AbrirSolicitacao = () => {
                   </div>
                   <div className="grid gap-1.5">
                     <Label>Mês</Label>
-                    <MesAno value={linha.mes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
+                    <MesAno value={linha.mes} ano={anoParaMes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
                   </div>
                   <div className="grid gap-1.5">
                     <Label>Valor (soma)</Label>
@@ -878,7 +918,7 @@ const AbrirSolicitacao = () => {
                 </div>
                 <div className="grid gap-1.5">
                   <Label>Mês de competência</Label>
-                  <MesAno value={linha.mes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
+                  <MesAno value={linha.mes} ano={anoParaMes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
                 </div>
               </>
             )}

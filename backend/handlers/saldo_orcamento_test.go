@@ -180,3 +180,25 @@ func TestSaldo_ValidacaoDeEntrada(t *testing.T) {
 		}
 	}
 }
+
+// A consulta ao SAP usa o ANO da linha (gjahr): 2026 e 2027 em janeiro consultam anos diferentes.
+func TestSaldo_UsaOAnoEscolhido(t *testing.T) {
+	for _, ano := range []string{"2026", "2027"} {
+		cacheSaldo = map[string]cacheSaldoItem{}
+		db, mock := newSQLMock(t)
+		orig := consultarSaldoSAP
+		var recebido string
+		consultarSaldoSAP = func(_ context.Context, _ sapodata.Config, _, _, gjahr string) (*sapodata.Saldo, error) {
+			recebido = gjahr
+			return &sapodata.Saldo{Encontrado: true}, nil
+		}
+		esperaBaseSaldo(mock, "true")
+		esperaCodigos(mock, sCC1, "10026040")
+		rec := httptest.NewRecorder()
+		SaldoOrcamentoHandler(db)(rec, reqSaldo(t, `{"lancamentos":[{"lado":"origem","centro_custo_id":"`+sCC1+`","conta_id":"`+sConta+`","mes":"`+ano+`-01-01","valor":50}]}`))
+		consultarSaldoSAP = orig
+		if rec.Code != http.StatusOK || recebido != ano {
+			t.Errorf("mês de %s: o SAP deveria ser consultado com gjahr=%s, recebeu %q (status %d)", ano, ano, recebido, rec.Code)
+		}
+	}
+}

@@ -202,6 +202,8 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 			"centros_custo_destino": centrosCustoDestino,
 			"centros_custo_origem":  centrosCustoOrigem,
 			"divisoes":              divisoes,
+			"ano_corrente":          agoraRecife().Year(),
+			"anos_permitidos":       anosPermitidosAgora(db),
 			"contas":                contas,
 			"classes_imobilizado":   classesImobilizado,
 			"locais_obra":           locaisObra,

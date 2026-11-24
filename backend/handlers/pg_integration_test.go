@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"fb_apu05/internal/aprovacao"
 	"fb_apu05/internal/exportacao"
@@ -572,5 +573,58 @@ func TestPG_FinalizarSucessoSemExportacao_ConformeConfiguracao(t *testing.T) {
 	}
 	if code, st := rodar("true"); code != http.StatusConflict || st != "em_atendimento" {
 		t.Errorf("chave ligada sem lote: esperado 409 e nada gravado, veio %d/%s", code, st)
+	}
+}
+
+// Ano do orçamento de ponta a ponta: criada em janeiro com o ano anterior, a solicitação segue o fluxo
+// (consulta, assumir) com o ano gravado mesmo depois da data-limite.
+func TestPG_AnoDoOrcamento_JaneiroEDepois(t *testing.T) {
+	e := pgSetup(t)
+	b := e.seed(t)
+	if _, err := e.admin.Exec(`UPDATE usuarios SET cc_proprio_id = $1 WHERE id = $2`, b.cc, b.usuario); err != nil {
+		t.Fatal(err)
+	}
+	e.cfg(t, "aprovacao_obrigatoria", "false")
+	e.cfg(t, "orcamento_ano_anterior_ate", "01-31")
+
+	abrir := func(mes string) (int, map[string]any) {
+		corpo := corpoTransferencia(
+			linhaJSON("origem", b.divisao, b.cc, b.conta4, mes, 1000) + "," + linhaJSON("destino", b.divisao, b.cc, b.conta5, mes, 1000))
+		req := httptest.NewRequest(http.MethodPost, "/api/solicitacoes", strings.NewReader(corpo))
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": b.usuario, "perfil": "solicitante"}))
+		rec := httptest.NewRecorder()
+		AbrirSolicitacaoHandler(e.app)(rec, req)
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+
+	comRelogio(t, recife(2027, time.January, 15, 9, 0, 0))
+	code, out := abrir("2026-12-01")
+	if code != http.StatusCreated {
+		t.Fatalf("janeiro com o ano anterior deveria abrir: %d %v", code, out)
+	}
+	id := out["id"].(string)
+	if code, _ := abrir("2027-02-01"); code != http.StatusCreated {
+		t.Errorf("janeiro com o ano corrente deveria abrir: %d", code)
+	}
+
+	// depois da data-limite: abrir com 2026 é recusado, mas a solicitação já criada continua seguindo o fluxo
+	comRelogio(t, recife(2027, time.February, 10, 12, 0, 0))
+	if code, out := abrir("2026-12-01"); code != http.StatusBadRequest {
+		t.Errorf("fevereiro com 2026 deveria ser recusado: %d %v", code, out)
+	}
+	var ano int
+	if err := e.admin.QueryRow(`SELECT EXTRACT(YEAR FROM mes)::int FROM solicitacao_lancamentos WHERE solicitacao_id = $1 LIMIT 1`, id).Scan(&ano); err != nil || ano != 2026 {
+		t.Fatalf("o ano gravado deveria continuar 2026: %d %v", ano, err)
+	}
+	if s, err := fila.Assumir(e.priv, id, 1, b.usuario); err != nil || s.Status != "em_atendimento" {
+		t.Fatalf("a solicitação de janeiro deveria seguir para o atendimento em fevereiro: %+v %v", s, err)
+	}
+
+	// o parâmetro vale sem deploy: estendendo a data-limite para 28/02, 2026 volta a ser aceito
+	e.cfg(t, "orcamento_ano_anterior_ate", "02-28")
+	if code, out := abrir("2026-12-01"); code != http.StatusCreated {
+		t.Errorf("com a data-limite em 28/02, 10/02 aceita o ano anterior: %d %v", code, out)
 	}
 }

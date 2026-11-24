@@ -306,7 +306,7 @@ func TestAbrirSolicitacaoHandler_MaisDeUmExercicio(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "mais de um exercício orçamentário") {
+	if !strings.Contains(rec.Body.String(), "mesmo ano") {
 		t.Fatalf("corpo não cita o erro esperado: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

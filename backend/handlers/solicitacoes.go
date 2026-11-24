@@ -293,6 +293,15 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
+		// Ano do orçamento (pedido do Wilker, 24/11/2026): data do SERVIDOR em Recife; só o ano corrente, ou
+		// também o anterior até a data-limite de janeiro. Vale para Transferência, Inclusão e Inclusão SFC.
+		if tipoUsaAnoUnico(req.TipoSolicitacao) {
+			if msgErro := validarAnoDoOrcamento(req.TipoSolicitacao, lancamentos, anosPermitidosAgora(db)); msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
+		}
+
 		solicitanteID := GetUserIDFromContext(r)
 
 		tx, err := db.Begin()
@@ -921,7 +930,7 @@ func validarExercicioUnico(linhas []lancamentoValidado) string {
 	ano := linhas[0].Mes.Year()
 	for _, l := range linhas {
 		if l.Mes.Year() != ano {
-			return "mais de um exercício orçamentário"
+			return "A origem e o destino da transferência precisam estar no mesmo ano; não é possível transferir de um ano para outro."
 		}
 	}
 	return ""

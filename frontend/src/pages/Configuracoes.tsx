@@ -33,6 +33,7 @@ interface Config {
   testes?: { origem_todos_cc: boolean };
   aprovacao?: { obrigatoria: boolean };
   exportacao?: { exigir_para_finalizar: boolean };
+  orcamento?: { ano_anterior_ate: string };
   sap: {
     horario: string;
     usuario: string;
@@ -103,6 +104,11 @@ function Formulario({ data }: { data: Config }) {
   const [ativos, setAtivos] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(data.sap.servicos.map((s) => [s.chave, s.ativo])),
   );
+
+  const [limiteAno, setLimiteAno] = useState(() => {
+    const v = data.orcamento?.ano_anterior_ate ?? '01-31';
+    return `${v.slice(3, 5)}/${v.slice(0, 2)}`;
+  });
 
   const salvar = useMutation({
     mutationFn: (corpo: object) =>
@@ -361,6 +367,31 @@ function Formulario({ data }: { data: Config }) {
               aprovação por link no e-mail antes de entrar na fila.
             </p>
           </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="cfg-ano" className="grid gap-3 rounded-lg border bg-card p-5">
+        <h2 id="cfg-ano" className="text-base font-semibold text-foreground">Ano do orçamento</h2>
+        <p className="text-xs text-muted-foreground">
+          Não se movimenta orçamento entre anos. Só no fechamento de janeiro ainda se aceita o ano anterior, até o último dia
+          abaixo (inclusive, 23:59 no horário de Recife). Depois disso, só o ano corrente.
+        </p>
+        <div className="flex items-end gap-2">
+          <div className="grid gap-1.5">
+            <Label htmlFor="ano-limite">Último dia para o ano anterior (DD/MM)</Label>
+            <Input id="ano-limite" className="w-32" placeholder="31/01" value={limiteAno} onChange={(e) => setLimiteAno(e.target.value)} />
+          </div>
+          <Button
+            size="sm"
+            disabled={salvar.isPending}
+            onClick={() => {
+              const m = /^(\d{2})\/(\d{2})$/.exec(limiteAno.trim());
+              if (!m) return toast.error('Use o formato DD/MM, por exemplo 31/01');
+              salvar.mutate({ orcamento: { ano_anterior_ate: `${m[2]}-${m[1]}` } });
+            }}
+          >
+            Salvar
+          </Button>
         </div>
       </section>
 

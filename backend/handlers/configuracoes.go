@@ -42,6 +42,7 @@ const (
 	cfgTesteOrigemTodosCC       = "teste_origem_todos_cc"
 	cfgAprovacaoObrigatoria     = "aprovacao_obrigatoria"
 	cfgFinalizarExigeExportacao = "finalizar_exige_exportacao"
+	cfgAnoAnteriorAte           = "orcamento_ano_anterior_ate"
 )
 
 var clientRegexp = regexp.MustCompile(`^\d{1,3}$`)
@@ -107,6 +108,9 @@ type configuracoesResposta struct {
 	Exportacao struct {
 		ExigirParaFinalizar bool `json:"exigir_para_finalizar"`
 	} `json:"exportacao"`
+	Orcamento struct {
+		AnoAnteriorAte string `json:"ano_anterior_ate"` // MM-DD
+	} `json:"orcamento"`
 }
 
 func montarResposta(m map[string]string) configuracoesResposta {
@@ -120,6 +124,10 @@ func montarResposta(m map[string]string) configuracoesResposta {
 	r.Testes.OrigemTodosCC = m[cfgTesteOrigemTodosCC] == "true"
 	r.Aprovacao.Obrigatoria = m[cfgAprovacaoObrigatoria] == "true"
 	r.Exportacao.ExigirParaFinalizar = m[cfgFinalizarExigeExportacao] == "true"
+	r.Orcamento.AnoAnteriorAte = m[cfgAnoAnteriorAte]
+	if r.Orcamento.AnoAnteriorAte == "" {
+		r.Orcamento.AnoAnteriorAte = limiteAnoAnteriorPadrao
+	}
 	for _, sv := range sapodata.Todos {
 		sc := servicoConfig{
 			Chave: sv.Chave, Nome: sv.Nome, Diaria: sv.Diaria,
@@ -193,6 +201,9 @@ type configuracoesEntrada struct {
 	Exportacao *struct {
 		ExigirParaFinalizar *bool `json:"exigir_para_finalizar"`
 	} `json:"exportacao"`
+	Orcamento *struct {
+		AnoAnteriorAte *string `json:"ano_anterior_ate"`
+	} `json:"orcamento"`
 }
 
 // validarEntrada transforma a entrada em pares chave→valor a gravar (a senha já cifrada), ou erro de validação.
@@ -200,6 +211,13 @@ func validarEntrada(in configuracoesEntrada, atual map[string]string) (map[strin
 	grava := map[string]string{}
 	if in.Testes != nil && in.Testes.OrigemTodosCC != nil {
 		grava[cfgTesteOrigemTodosCC] = strconv.FormatBool(*in.Testes.OrigemTodosCC)
+	}
+	if in.Orcamento != nil && in.Orcamento.AnoAnteriorAte != nil {
+		v := strings.TrimSpace(*in.Orcamento.AnoAnteriorAte)
+		if !limiteAnoAnteriorValido(v) {
+			return nil, errors.New("data-limite inválida: use um dia e mês existentes, no formato DD/MM (ex.: 31/01)")
+		}
+		grava[cfgAnoAnteriorAte] = v
 	}
 	if in.Exportacao != nil && in.Exportacao.ExigirParaFinalizar != nil {
 		grava[cfgFinalizarExigeExportacao] = strconv.FormatBool(*in.Exportacao.ExigirParaFinalizar)
