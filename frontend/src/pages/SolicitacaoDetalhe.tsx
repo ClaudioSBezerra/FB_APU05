@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
+import { CompartilharChamado } from '@/components/CompartilharChamado';
 
 // Página do chamado (substitui o pop-up "Ver e comentar"): quem abriu, como foi preenchido, aprovador,
 // anexos, histórico e as ações do atendimento (assumir, pendência, comentar, finalizar).
@@ -118,6 +119,9 @@ export default function SolicitacaoDetalhe() {
   const x = d?.extras;
   const atende = user?.perfil === 'administrador' || user?.perfil === 'atendente';
   const meu = !!d && d.administrador_id === user?.id;
+  const dono = !!d && d.solicitante_id === user?.id;
+  // quem só recebeu o compartilhamento acompanha, sem comentar nem agir
+  const somenteLeitura = !!d && !dono && !atende;
 
   function refrescar() {
     qc.invalidateQueries({ queryKey: ['solicitacao', id] });
@@ -238,7 +242,8 @@ export default function SolicitacaoDetalhe() {
             <p className="whitespace-pre-wrap">{c.texto}</p>
           </div>
         ))}
-        <div className="grid gap-1.5">
+        {somenteLeitura && <p className="text-xs text-muted-foreground">Este chamado foi compartilhado com você para acompanhamento (somente leitura).</p>}
+        {!somenteLeitura && <div className="grid gap-1.5">
           <Label htmlFor="coment">Novo comentário</Label>
           <Textarea id="coment" value={comentario} onChange={(e) => setComentario(e.target.value)} />
           <div>
@@ -247,8 +252,10 @@ export default function SolicitacaoDetalhe() {
               Comentar
             </Button>
           </div>
-        </div>
+        </div>}
       </section>
+
+      {dono && <CompartilharChamado solicitacaoId={d.id} />}
 
       {atende && (
         <section className="grid gap-4 rounded-lg border border-border bg-card p-4">

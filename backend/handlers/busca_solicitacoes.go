@@ -49,7 +49,8 @@ func BuscarSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 		arg := func(v any) string { args = append(args, v); return "$" + strconv.Itoa(len(args)) }
 
 		if !perfilAtende(GetPerfilFromContext(r)) {
-			onde = append(onde, "s.solicitante_id = "+arg(GetUserIDFromContext(r)))
+			quem := arg(GetUserIDFromContext(r))
+			onde = append(onde, "(s.solicitante_id = "+quem+" OR EXISTS (SELECT 1 FROM solicitacao_compartilhamentos sc WHERE sc.solicitacao_id = s.id AND sc.usuario_id = "+quem+"))")
 		}
 		if st := qs.Get("status"); st != "" {
 			if !statusBusca[st] {
@@ -106,6 +107,7 @@ func BuscarSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 		consulta := fmt.Sprintf(`
 			SELECT s.id, s.numero, s.tipo_solicitacao, s.status, s.created_at, cc.codigo, cc.nome, u.nome, a.nome,
 			       (SELECT lo.nome FROM solicitacao_obras_linhas ol JOIN locais_obra lo ON lo.id = ol.local_obra_id WHERE ol.solicitacao_id = s.id ORDER BY ol.created_at LIMIT 1),
+			       (SELECT cu.nome FROM solicitacao_compartilhamentos sc JOIN usuarios cu ON cu.id = sc.compartilhado_por WHERE sc.solicitacao_id = s.id AND sc.usuario_id = %s),
 			       COALESCE((SELECT SUM(l.valor) FROM solicitacao_lancamentos l WHERE l.solicitacao_id = s.id AND l.lado <> 'destino'), 0)::float8
 			       + COALESCE((SELECT SUM(ol.valor) FROM solicitacao_obras_linhas ol WHERE ol.solicitacao_id = s.id AND ol.lado IS DISTINCT FROM 'inclusao'), 0)::float8
 			FROM solicitacoes s
@@ -114,7 +116,7 @@ func BuscarSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 			LEFT JOIN usuarios a ON a.id = s.administrador_id
 			%s
 			ORDER BY s.numero DESC
-			LIMIT %s OFFSET %s`, filtro, arg(tamanho+1), arg((pagina-1)*tamanho))
+			LIMIT %s OFFSET %s`, arg(GetUserIDFromContext(r)), filtro, arg(tamanho+1), arg((pagina-1)*tamanho))
 		rows, err := db.Query(consulta, args...)
 		if err != nil {
 			log.Printf("[Busca] erro: %v", err)
@@ -128,9 +130,9 @@ func BuscarSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 			var id, tipo, status string
 			var numero int64
 			var criada time.Time
-			var ccCod, ccNome, solNome, atNome, local sql.NullString
+			var ccCod, ccNome, solNome, atNome, local, compartilhadoPor sql.NullString
 			var valor float64
-			if err := rows.Scan(&id, &numero, &tipo, &status, &criada, &ccCod, &ccNome, &solNome, &atNome, &local, &valor); err != nil {
+			if err := rows.Scan(&id, &numero, &tipo, &status, &criada, &ccCod, &ccNome, &solNome, &atNome, &local, &compartilhadoPor, &valor); err != nil {
 				log.Printf("[Busca] leitura: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
@@ -139,7 +141,7 @@ func BuscarSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 				"id": id, "codigo": CodigoChamado(numero), "tipo_solicitacao": tipo, "status": status, "created_at": criada,
 				"centro_custo_codigo": nullStringOuNil(ccCod), "centro_custo_nome": nullStringOuNil(ccNome),
 				"solicitante_nome": nullStringOuNil(solNome), "atendente_nome": nullStringOuNil(atNome),
-				"local_obra": nullStringOuNil(local), "valor": valor,
+				"local_obra": nullStringOuNil(local), "valor": valor, "compartilhado_por": nullStringOuNil(compartilhadoPor),
 			})
 		}
 		if err := rows.Err(); err != nil {

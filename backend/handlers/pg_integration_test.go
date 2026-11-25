@@ -722,3 +722,106 @@ func TestPG_PrazoComRegrasDeFeriado(t *testing.T) {
 		t.Errorf("prazo = %s, esperado %s", got, want)
 	}
 }
+
+// Compartilhar chamado (somente leitura): só o dono compartilha; quem recebe vê o chamado, o anexo e a lista; terceiro não.
+func TestPG_CompartilharChamado(t *testing.T) {
+	e := pgSetup(t)
+	b := e.seed(t)
+	id := e.solicitacao(t, b, "aberta")
+	suf := fmt.Sprintf("%d", os.Getpid())
+	novoUsuario := func(prefixo string) string {
+		var uid string
+		if err := e.admin.QueryRow(`INSERT INTO usuarios (email, nome, perfil) VALUES ($1||$2||'@teste.local', $1||' Teste', 'solicitante') ON CONFLICT (LOWER(email)) DO UPDATE SET nome = EXCLUDED.nome RETURNING id`, prefixo, suf).Scan(&uid); err != nil {
+			t.Fatal(err)
+		}
+		return uid
+	}
+	amigo, estranho := novoUsuario("amigo"), novoUsuario("estranho")
+	enviados := make(chan string, 4)
+	orig := enviarEmailCompartilhamento
+	enviarEmailCompartilhamento = func(to []string, assunto, corpo string) error { enviados <- to[0] + "|" + assunto; return nil }
+	defer func() { enviarEmailCompartilhamento = orig }()
+
+	chamar := func(h http.HandlerFunc, metodo, caminho, usuario, corpo string, valores map[string]string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(metodo, caminho, strings.NewReader(corpo))
+		for k, v := range valores {
+			req.SetPathValue(k, v)
+		}
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": usuario, "perfil": "solicitante"}))
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		return rec
+	}
+	pv := map[string]string{"id": id}
+
+	// antes de compartilhar, o amigo não vê o chamado
+	if rec := chamar(ObterSolicitacaoHandler(e.app), "GET", "/", amigo, "", pv); rec.Code != 403 {
+		t.Fatalf("sem compartilhar deveria ser 403, veio %d", rec.Code)
+	}
+	// quem não é dono não compartilha
+	if rec := chamar(CompartilharHandler(e.app), "POST", "/", estranho, `{"usuario_id":"`+amigo+`"}`, pv); rec.Code != 403 {
+		t.Errorf("não-dono compartilhando deveria ser 403, veio %d", rec.Code)
+	}
+	// o dono compartilha (e não consigo mesmo)
+	if rec := chamar(CompartilharHandler(e.app), "POST", "/", b.usuario, `{"usuario_id":"`+b.usuario+`"}`, pv); rec.Code != 400 {
+		t.Errorf("compartilhar consigo mesmo deveria ser 400, veio %d", rec.Code)
+	}
+	if rec := chamar(CompartilharHandler(e.app), "POST", "/", b.usuario, `{"usuario_id":"`+amigo+`"}`, pv); rec.Code != 200 {
+		t.Fatalf("dono compartilhando: %d %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case m := <-enviados:
+		if !strings.Contains(m, "amigo") || !strings.Contains(m, "GO-") {
+			t.Errorf("e-mail inesperado: %s", m)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("o aviso por e-mail deveria ser enviado")
+	}
+	// compartilhar de novo não duplica nem reenvia
+	if rec := chamar(CompartilharHandler(e.app), "POST", "/", b.usuario, `{"usuario_id":"`+amigo+`"}`, pv); rec.Code != 200 {
+		t.Fatalf("repetir: %d", rec.Code)
+	}
+	select {
+	case m := <-enviados:
+		t.Errorf("não deveria reenviar o e-mail: %s", m)
+	case <-time.After(300 * time.Millisecond):
+	}
+	// agora o amigo vê, o estranho continua sem ver, e a lista de compartilhamentos é só do dono
+	if rec := chamar(ObterSolicitacaoHandler(e.app), "GET", "/", amigo, "", pv); rec.Code != 200 {
+		t.Errorf("compartilhado deveria ver: %d", rec.Code)
+	}
+	if rec := chamar(ObterSolicitacaoHandler(e.app), "GET", "/", estranho, "", pv); rec.Code != 403 {
+		t.Errorf("terceiro deveria continuar sem ver: %d", rec.Code)
+	}
+	if rec := chamar(CompartilhamentosHandler(e.app), "GET", "/", amigo, "", pv); rec.Code != 403 {
+		t.Errorf("quem recebeu não lista os compartilhamentos: %d", rec.Code)
+	}
+	// aparece na busca do amigo (e só nela), como compartilhado
+	reqB := httptest.NewRequest("GET", "/api/solicitacoes/busca", nil)
+	reqB = reqB.WithContext(context.WithValue(reqB.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": amigo, "perfil": "solicitante"}))
+	recB := httptest.NewRecorder()
+	BuscarSolicitacoesHandler(e.app)(recB, reqB)
+	if !strings.Contains(recB.Body.String(), id) || !strings.Contains(recB.Body.String(), "Solicitante Teste") {
+		t.Errorf("o chamado deveria aparecer na lista do amigo, com quem compartilhou: %s", recB.Body.String())
+	}
+	// quem recebeu NÃO comenta (comentar é do dono)
+	if rec := chamar(ComentarSolicitacaoHandler(e.priv), "POST", "/", amigo, `{"versao":1,"comentario":"oi"}`, pv); rec.Code == 200 {
+		t.Errorf("compartilhado não pode comentar")
+	}
+	// retirar o acesso
+	if rec := chamar(RemoverCompartilhamentoHandler(e.app), "DELETE", "/", b.usuario, "", map[string]string{"id": id, "usuarioId": amigo}); rec.Code != 200 {
+		t.Fatalf("remover: %d", rec.Code)
+	}
+	if rec := chamar(ObterSolicitacaoHandler(e.app), "GET", "/", amigo, "", pv); rec.Code != 403 {
+		t.Errorf("depois de retirar, deveria voltar a 403: %d", rec.Code)
+	}
+	// busca de usuários: mínimo de 3 letras e não devolve a si mesmo
+	rec := chamar(BuscarUsuariosHandler(e.app), "GET", "/api/usuarios/busca?q=am", b.usuario, "", nil)
+	if strings.Contains(rec.Body.String(), "amigo") {
+		t.Errorf("busca com menos de 3 caracteres não deveria devolver ninguém")
+	}
+	rec = chamar(BuscarUsuariosHandler(e.app), "GET", "/api/usuarios/busca?q=amigo", b.usuario, "", nil)
+	if !strings.Contains(rec.Body.String(), "amigo") {
+		t.Errorf("busca deveria achar o amigo: %s", rec.Body.String())
+	}
+}

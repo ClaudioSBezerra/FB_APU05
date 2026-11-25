@@ -22,6 +22,7 @@ interface Item {
   atendente_nome?: string | null;
   local_obra?: string | null;
   valor: number;
+  compartilhado_por?: string | null;
 }
 interface Resposta { items: Item[]; pagina: number; tamanho: number; tem_mais: boolean }
 
@@ -157,7 +158,7 @@ const Solicitacoes = () => {
                   {atende && <td className="p-2">{i.solicitante_nome ?? '—'}</td>}
                   <td className="p-2 tabular-nums">{dataHora(i.created_at)}</td>
                   <td className="p-2 text-right tabular-nums">{moeda.format(i.valor)}</td>
-                  <td className="p-2"><Badge variant={variante(i.status)}>{STATUS[i.status] ?? i.status}</Badge></td>
+                  <td className="p-2"><Badge variant={variante(i.status)}>{STATUS[i.status] ?? i.status}</Badge>{i.compartilhado_por && <span className="mt-1 block text-xs text-fg-helper">Compartilhado por {i.compartilhado_por}</span>}</td>
                 </tr>
               ))}
             </tbody>

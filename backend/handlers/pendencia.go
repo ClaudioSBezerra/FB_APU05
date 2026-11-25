@@ -278,7 +278,7 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		chamadorID := GetUserIDFromContext(r)
 		souAdministrador := administradorID.Valid && administradorID.String == chamadorID
-		if chamadorID != solicitanteID && !souAdministrador && !perfilAtende(GetPerfilFromContext(r)) {
+		if chamadorID != solicitanteID && !souAdministrador && !perfilAtende(GetPerfilFromContext(r)) && !compartilhadoCom(db, id, chamadorID) {
 			// Mesmo padrão de jsonErr(w, http.StatusForbidden, ...) de
 			// handlers/solicitacoes.go:289 — terceiro sem relação com a
 			// solicitação nunca vê nem o histórico.
@@ -397,7 +397,9 @@ func BaixarAnexoHandler(db *sql.DB) http.HandlerFunc {
 
 		chamadorID := GetUserIDFromContext(r)
 		souAdministrador := administradorID.Valid && administradorID.String == chamadorID
-		if chamadorID != solicitanteID && !souAdministrador && !perfilAtende(GetPerfilFromContext(r)) {
+		var solicitacaoDoAnexo string
+		_ = db.QueryRow(`SELECT solicitacao_id FROM solicitacao_anexos WHERE id = $1`, anexoID).Scan(&solicitacaoDoAnexo)
+		if chamadorID != solicitanteID && !souAdministrador && !perfilAtende(GetPerfilFromContext(r)) && !compartilhadoCom(db, solicitacaoDoAnexo, chamadorID) {
 			jsonErr(w, http.StatusForbidden, "você não tem permissão para baixar este anexo")
 			return
 		}

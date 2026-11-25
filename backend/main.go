@@ -502,6 +502,10 @@ func main() {
 
 	// tela "Solicitações": todos os chamados para quem atende; só os próprios para o solicitante (precisa vir antes de {id})
 	http.HandleFunc("GET /api/solicitacoes/busca", handlers.RequireAuth(withDB(handlers.BuscarSolicitacoesHandler), ""))
+	http.HandleFunc("GET /api/usuarios/busca", handlers.RequireAuth(withDB(handlers.BuscarUsuariosHandler), ""))
+	http.HandleFunc("GET /api/solicitacoes/{id}/compartilhamentos", handlers.RequireAuth(withDB(handlers.CompartilhamentosHandler), ""))
+	http.HandleFunc("POST /api/solicitacoes/{id}/compartilhamentos", handlers.RequireAuth(withDB(handlers.CompartilharHandler), ""))
+	http.HandleFunc("DELETE /api/solicitacoes/{id}/compartilhamentos/{usuarioId}", handlers.RequireAuth(withDB(handlers.RemoverCompartilhamentoHandler), ""))
 	http.HandleFunc("GET /api/solicitacoes/{id}", handlers.RequireAuth(withDB(handlers.ObterSolicitacaoHandler), ""))
 	http.HandleFunc("GET /api/solicitacoes/anexos/{anexoId}", handlers.RequireAuth(withDB(handlers.BaixarAnexoHandler), ""))
 
