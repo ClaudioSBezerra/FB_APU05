@@ -144,6 +144,19 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
     ],
   },
   {
+    tipo: 'feriados-regras',
+    label: 'Regras de feriado (todo ano)',
+    csvCabecalho: 'descricao;tipo;dia;mes;deslocamento_dias;ativo',
+    campos: [
+      { nome: 'descricao', label: 'Descrição', kind: 'texto' },
+      { nome: 'tipo', label: 'Tipo da regra', kind: 'texto', ajuda: '"fixo" (dia e mês, ex.: 25/12) ou "pascoa" (dias a partir da Páscoa)' },
+      { nome: 'dia', label: 'Dia (regra fixa)', kind: 'numero', ajuda: 'só para "fixo"; use 0 em "pascoa"' },
+      { nome: 'mes', label: 'Mês (regra fixa)', kind: 'numero', ajuda: 'só para "fixo"; use 0 em "pascoa"' },
+      { nome: 'deslocamento_dias', label: 'Dias a partir da Páscoa', kind: 'numero', ajuda: 'só para "pascoa": Carnaval terça = -47, Sexta-feira Santa = -2, Corpus Christi = 60' },
+      { nome: 'ativo', label: 'Ativo', kind: 'booleano' },
+    ],
+  },
+  {
     tipo: 'cc-excecao',
     label: 'Exceção de Centro de Custo',
     csvCabecalho: 'colaborador_email;centro_custo_codigo',

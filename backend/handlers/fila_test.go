@@ -238,6 +238,8 @@ func TestListarFilaHandler_DecoraComSLA(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT data FROM feriados")).
 		WillReturnRows(sqlmock.NewRows([]string{"data"}))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM feriados_regras")).
+		WillReturnRows(sqlmock.NewRows([]string{"tipo", "dia", "mes", "deslocamento_dias"}))
 
 	antiga := time.Now().Add(-15 * 24 * time.Hour)
 	recente := time.Now().Add(-1 * time.Hour)
@@ -298,6 +300,8 @@ func TestMinhasSolicitacoesHandler_FiltraPorAdministradorLogado(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT data FROM feriados")).
 		WillReturnRows(sqlmock.NewRows([]string{"data"}))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM feriados_regras")).
+		WillReturnRows(sqlmock.NewRows([]string{"tipo", "dia", "mes", "deslocamento_dias"}))
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacoes")).
 		WithArgs(testFilaHandlerAdministradorID, 20, 0).

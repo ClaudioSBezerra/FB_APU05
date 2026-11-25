@@ -30,6 +30,7 @@ func newCalendarioSQLMock(t *testing.T, feriados ...string) *Calendario {
 		rows.AddRow(d)
 	}
 	mock.ExpectQuery("SELECT data FROM feriados").WillReturnRows(rows)
+	mock.ExpectQuery("FROM feriados_regras").WillReturnRows(sqlmock.NewRows([]string{"tipo", "dia", "mes", "deslocamento_dias"}))
 
 	cal, err := NovoCalendario(db)
 	if err != nil {
@@ -156,5 +157,41 @@ func TestEstaAtrasado_CruzaFimDeSemana(t *testing.T) {
 	criadoEm := time.Now().Add(-15 * 24 * time.Hour)
 	if !cal.EstaAtrasado(criadoEm) {
 		t.Fatalf("EstaAtrasado = false para uma solicitação criada há 15 dias")
+	}
+}
+
+func TestPascoa_AnosConhecidos(t *testing.T) {
+	loc := recife(t)
+	for ano, esperado := range map[int]string{2024: "2024-03-31", 2025: "2025-04-20", 2026: "2026-04-05", 2027: "2027-03-28"} {
+		if got := Pascoa(ano, loc).Format("2006-01-02"); got != esperado {
+			t.Errorf("Páscoa de %d = %s, esperado %s", ano, got, esperado)
+		}
+	}
+}
+
+// Regras fixas e móveis pausam o prazo sem recadastrar a cada ano (item 27 da homologação).
+func TestDiaUtil_RegrasFixaEMovel(t *testing.T) {
+	loc := recife(t)
+	cal := &Calendario{fuso: loc, feriados: map[string]bool{}, regras: []regraFeriado{
+		{tipo: "fixo", dia: 25, mes: 12},
+		{tipo: "pascoa", deslocamento: -47}, // terça de Carnaval
+		{tipo: "pascoa", deslocamento: 60},  // Corpus Christi
+	}}
+	casos := map[string]bool{
+		"2026-12-25": false, // fixo (sexta)
+		"2027-12-25": false, // fixo (sábado: já não era útil)
+		"2026-12-24": true,
+		"2026-02-17": false, // Carnaval 2026 (Páscoa 05/04 - 47)
+		"2027-02-09": false, // Carnaval 2027 (Páscoa 28/03 - 47): a regra vale em todo ano
+		"2026-02-18": true,
+		"2026-06-04": false, // Corpus Christi 2026
+		"2027-05-27": false, // Corpus Christi 2027
+		"2026-06-05": true,
+	}
+	for dia, util := range casos {
+		d, _ := time.ParseInLocation("2006-01-02", dia, loc)
+		if got := cal.diaUtil(d); got != util {
+			t.Errorf("%s: diaUtil=%v, esperado %v", dia, got, util)
+		}
 	}
 }

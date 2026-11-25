@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"fb_apu05/internal/sla"
+
 	"fb_apu05/internal/aprovacao"
 	"fb_apu05/internal/exportacao"
 	"fb_apu05/internal/fila"
@@ -703,5 +705,20 @@ func TestPG_BuscaSolicitacoes(t *testing.T) {
 	}
 	if res := busca(b.usuario, "atendente", "de=2999-01-01"); len(res) != 0 {
 		t.Errorf("período futuro não deveria achar nada")
+	}
+}
+
+// Regras de feriado (item 27) lidas pelo cálculo de prazo com o papel da aplicação, usando a carga inicial da migration.
+func TestPG_PrazoComRegrasDeFeriado(t *testing.T) {
+	e := pgSetup(t)
+	cal, err := sla.NovoCalendario(e.app)
+	if err != nil {
+		t.Fatalf("calendário com regras: %v", err)
+	}
+	loc, _ := time.LoadLocation("America/Recife")
+	// sexta 13/02/2026 10:00: o Carnaval (16 e 17/02) e o fim de semana não contam → 48h úteis terminam quinta 19/02 10:00
+	got := cal.PrazoLimite(time.Date(2026, 2, 13, 10, 0, 0, 0, loc))
+	if want := time.Date(2026, 2, 19, 10, 0, 0, 0, loc); !got.Equal(want) {
+		t.Errorf("prazo = %s, esperado %s", got, want)
 	}
 }

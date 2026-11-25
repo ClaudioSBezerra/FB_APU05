@@ -154,6 +154,20 @@ var cadastroRegistry = map[string]cadastroTipo{
 		DecodeCSV:  decodeCSVFeriados,
 		DecodeJSON: decodeJSONFeriados,
 	},
+	"feriados-regras": {
+		Tabela:       "feriados_regras",
+		CSVCabecalho: []string{"descricao", "tipo", "dia", "mes", "deslocamento_dias", "ativo"},
+		Colunas: []colunaDef{
+			{Nome: "descricao", Kind: colString},
+			{Nome: "tipo", Kind: colString},
+			{Nome: "dia", Kind: colNumerico},
+			{Nome: "mes", Kind: colNumerico},
+			{Nome: "deslocamento_dias", Kind: colNumerico},
+			{Nome: "ativo", Kind: colBool},
+		},
+		DecodeCSV:  decodeCSVFeriadosRegras,
+		DecodeJSON: decodeJSONFeriadosRegras,
+	},
 	"cc-excecao": {
 		Tabela:       "cc_excecao",
 		CSVCabecalho: []string{"colaborador_email", "centro_custo_codigo"},
@@ -1759,4 +1773,65 @@ func RestaurarCadastroHandler(db *sql.DB) http.HandlerFunc {
 
 		escreverRegistroJSON(w, id, dados)
 	}
+}
+
+// validarRegraFeriado confere a regra antes de gravar: "fixo" precisa de dia/mês que existam no calendário
+// (29/02 aceito: só conta nos anos bissextos) e "pascoa" de um deslocamento de -60 a 70 dias.
+func validarRegraFeriado(descricao, tipo string, dia, mes, desloc float64) ([]interface{}, error) {
+	for _, n := range []float64{dia, mes, desloc} {
+		if n != float64(int(n)) {
+			return nil, fmt.Errorf("dia, mês e deslocamento devem ser números inteiros")
+		}
+	}
+	switch tipo {
+	case "fixo":
+		if mes < 1 || mes > 12 {
+			return nil, fmt.Errorf("regra fixa: informe o mês de 1 a 12")
+		}
+		limite := map[int]int{1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30, 7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}[int(mes)]
+		if dia < 1 || int(dia) > limite {
+			return nil, fmt.Errorf("regra fixa: o mês %d não tem o dia %d", int(mes), int(dia))
+		}
+		desloc = 0
+	case "pascoa":
+		if desloc < -60 || desloc > 70 {
+			return nil, fmt.Errorf("regra de Páscoa: o deslocamento deve estar entre -60 e 70 dias (ex.: Carnaval terça = -47, Sexta-feira Santa = -2, Corpus Christi = 60)")
+		}
+		dia, mes = 0, 0
+	default:
+		return nil, fmt.Errorf("campo 'tipo' deve ser 'fixo' ou 'pascoa'")
+	}
+	return []interface{}{descricao, tipo, dia, mes, desloc}, nil
+}
+
+func decodeJSONFeriadosRegras(corpo map[string]interface{}) ([]interface{}, error) {
+	descricao, err := extractString(corpo, "descricao")
+	if err != nil {
+		return nil, err
+	}
+	tipo, err := extractString(corpo, "tipo")
+	if err != nil {
+		return nil, err
+	}
+	dia, err := extractFloat(corpo, "dia")
+	if err != nil {
+		return nil, err
+	}
+	mes, err := extractFloat(corpo, "mes")
+	if err != nil {
+		return nil, err
+	}
+	desloc, err := extractFloat(corpo, "deslocamento_dias")
+	if err != nil {
+		return nil, err
+	}
+	ativo, err := extractBool(corpo, "ativo")
+	if err != nil {
+		return nil, err
+	}
+	v, err := validarRegraFeriado(descricao, tipo, dia, mes, desloc)
+	if err != nil {
+		return nil, err
+	}
+	return append(v, ativo), nil
 }

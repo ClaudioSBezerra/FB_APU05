@@ -31,3 +31,23 @@ func TestAnexoFaltando_MensagemPorTipo(t *testing.T) {
 		t.Errorf("imobilizado mantém a mensagem: %q", m)
 	}
 }
+
+func TestValidarRegraFeriado(t *testing.T) {
+	if _, err := validarRegraFeriado("Natal", "fixo", 25, 12, 0); err != nil {
+		t.Errorf("25/12 deveria valer: %v", err)
+	}
+	for _, c := range []struct {
+		tipo           string
+		dia, mes, desl float64
+	}{
+		{"fixo", 31, 4, 0}, {"fixo", 0, 5, 0}, {"fixo", 10, 13, 0}, {"pascoa", 0, 0, 100}, {"pascoa", 0, 0, -61}, {"outro", 1, 1, 0}, {"fixo", 1.5, 1, 0},
+	} {
+		if _, err := validarRegraFeriado("x", c.tipo, c.dia, c.mes, c.desl); err == nil {
+			t.Errorf("%+v deveria ser recusada", c)
+		}
+	}
+	v, err := validarRegraFeriado("Carnaval", "pascoa", 7, 7, -47)
+	if err != nil || v[2] != float64(0) || v[3] != float64(0) || v[4] != float64(-47) {
+		t.Errorf("em 'pascoa' dia/mês são zerados: %v %v", v, err)
+	}
+}

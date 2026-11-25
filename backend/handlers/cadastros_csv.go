@@ -719,3 +719,46 @@ func decodeCSVAprovadoresObra(tx *sql.Tx, linha []string) ([]interface{}, error)
 	}
 	return []interface{}{colaboradorID, teto, ativo}, nil
 }
+
+func decodeCSVFeriadosRegras(_ *sql.Tx, linha []string) ([]interface{}, error) {
+	descricao, err := campoObrigatorio(linha[0], "descricao")
+	if err != nil {
+		return nil, err
+	}
+	tipo, err := campoObrigatorio(linha[1], "tipo")
+	if err != nil {
+		return nil, err
+	}
+	num := func(v, nome string) (float64, error) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return 0, nil
+		}
+		n, e := strconv.ParseFloat(strings.ReplaceAll(v, ",", "."), 64)
+		if e != nil {
+			return 0, fmt.Errorf("campo '%s' deve ser um número inteiro", nome)
+		}
+		return n, nil
+	}
+	dia, err := num(linha[2], "dia")
+	if err != nil {
+		return nil, err
+	}
+	mes, err := num(linha[3], "mes")
+	if err != nil {
+		return nil, err
+	}
+	desloc, err := num(linha[4], "deslocamento_dias")
+	if err != nil {
+		return nil, err
+	}
+	ativo, err := parseBoolCSV(linha[5])
+	if err != nil {
+		return nil, err
+	}
+	v, err := validarRegraFeriado(descricao, tipo, dia, mes, desloc)
+	if err != nil {
+		return nil, err
+	}
+	return append(v, ativo), nil
+}

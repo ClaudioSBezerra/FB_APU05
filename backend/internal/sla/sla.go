@@ -45,7 +45,31 @@ type DBTX interface {
 // cada chamada.
 type Calendario struct {
 	feriados map[string]bool // chave "YYYY-MM-DD" no fuso America/Recife
+	regras   []regraFeriado  // feriados que se repetem todo ano (fixos e relativos à Páscoa)
 	fuso     *time.Location
+}
+
+// regraFeriado: tipo "fixo" (dia/mês) ou "pascoa" (deslocamento em dias a partir do domingo de Páscoa).
+type regraFeriado struct {
+	tipo         string
+	dia, mes     int
+	deslocamento int
+}
+
+// Pascoa devolve o domingo de Páscoa do ano (algoritmo de Meeus/Jones/Butcher), à meia-noite em `fuso`.
+func Pascoa(ano int, fuso *time.Location) time.Time {
+	a := ano % 19
+	b, c := ano/100, ano%100
+	d, e := b/4, b%4
+	f := (b + 8) / 25
+	g := (b - f + 1) / 3
+	h := (19*a + b - d - g + 15) % 30
+	i, k := c/4, c%4
+	l := (32 + 2*e + 2*i - h - k) % 7
+	m := (a + 11*h + 22*l) / 451
+	mes := (h + l - 7*m + 114) / 31
+	dia := (h+l-7*m+114)%31 + 1
+	return time.Date(ano, time.Month(mes), dia, 0, 0, 0, 0, fuso)
 }
 
 // NovoCalendario carrega todos os feriados cadastrados e resolve o fuso
@@ -76,7 +100,24 @@ func NovoCalendario(db DBTX) (*Calendario, error) {
 		return nil, fmt.Errorf("iterar feriados: %w", err)
 	}
 
-	return &Calendario{feriados: feriados, fuso: fuso}, nil
+	var regras []regraFeriado
+	rr, err := db.Query(`SELECT tipo, dia, mes, deslocamento_dias FROM feriados_regras WHERE ativo`)
+	if err != nil {
+		return nil, fmt.Errorf("consultar regras de feriado: %w", err)
+	}
+	defer rr.Close()
+	for rr.Next() {
+		var r regraFeriado
+		if err := rr.Scan(&r.tipo, &r.dia, &r.mes, &r.deslocamento); err != nil {
+			return nil, fmt.Errorf("ler regra de feriado: %w", err)
+		}
+		regras = append(regras, r)
+	}
+	if err := rr.Err(); err != nil {
+		return nil, fmt.Errorf("iterar regras de feriado: %w", err)
+	}
+
+	return &Calendario{feriados: feriados, regras: regras, fuso: fuso}, nil
 }
 
 // PrazoLimite calcula o fim do prazo de SLA a partir de `criadoEm`: 48h
@@ -125,5 +166,34 @@ func (c *Calendario) diaUtil(t time.Time) bool {
 	case time.Saturday, time.Sunday:
 		return false
 	}
-	return !c.feriados[t.Format("2006-01-02")]
+	if c.feriados[t.Format("2006-01-02")] {
+		return false
+	}
+	return !c.feriadoPorRegra(t)
+}
+
+// feriadoPorRegra: o dia cai numa regra fixa (dia/mês) ou móvel (Páscoa + deslocamento).
+func (c *Calendario) feriadoPorRegra(t time.Time) bool {
+	if len(c.regras) == 0 {
+		return false
+	}
+	ano, mes, dia := t.Date()
+	var pascoa time.Time
+	for _, r := range c.regras {
+		switch r.tipo {
+		case "fixo":
+			if int(mes) == r.mes && dia == r.dia {
+				return true
+			}
+		case "pascoa":
+			if pascoa.IsZero() {
+				pascoa = Pascoa(ano, c.fuso)
+			}
+			a, m, d := pascoa.AddDate(0, 0, r.deslocamento).Date()
+			if a == ano && m == mes && d == dia {
+				return true
+			}
+		}
+	}
+	return false
 }
