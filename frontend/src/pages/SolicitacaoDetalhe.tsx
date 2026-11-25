@@ -164,7 +164,8 @@ export default function SolicitacaoDetalhe() {
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <Link to="/fila" className="text-xs text-link underline underline-offset-2">← Fila de atendimento</Link>
+          <Link to={atende ? '/fila' : '/solicitacoes'} className="text-xs text-link underline underline-offset-2">{atende ? '← Fila de atendimento' : '← Minhas solicitações'}</Link>
+          {atende && <Link to="/solicitacoes" className="ml-3 text-xs text-link underline underline-offset-2">Todas as solicitações</Link>}
           <h1 className="text-lg font-semibold text-foreground">{x?.codigo && <span className="mr-2 tabular-nums text-fg-helper">{x.codigo}</span>}{TIPO[d.tipo_solicitacao] ?? d.tipo_solicitacao}</h1>
         </div>
         <Badge variant="default">{STATUS[d.status] ?? d.status}</Badge>

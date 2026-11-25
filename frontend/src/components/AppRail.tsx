@@ -45,6 +45,8 @@ const mainItems = [
 ];
 
 function getActiveId(pathname: string): string {
+  if (pathname.startsWith('/solicitacoes/nova')) return 'nova-solicitacao';
+  if (pathname.startsWith('/solicitacoes')) return 'solicitacoes';
   if (pathname.startsWith('/admin/usuarios')) return 'usuarios';
   if (pathname.startsWith('/admin/configuracoes')) return 'configuracoes';
   if (pathname.startsWith('/admin/cadastros')) return 'cadastros';
@@ -52,7 +54,6 @@ function getActiveId(pathname: string): string {
   if (pathname.startsWith('/controle-ti')) return 'controle-ti';
   if (pathname.startsWith('/fila')) return 'fila';
   if (pathname.startsWith('/painel')) return 'painel';
-  if (pathname.startsWith('/solicitacoes/nova')) return 'nova-solicitacao';
   return '';
 }
 
@@ -160,8 +161,10 @@ export function AppRail() {
   const { data: permissoes } = usePermissoes();
   // Atendente: só Nova solicitação e Fila de atendimento (sem Painel). Administrador: tudo.
   const filaItem = { id: 'fila', icon: ListChecks, label: 'Fila de atendimento', path: '/fila' };
+  const consultaItem = { id: 'solicitacoes', icon: ListChecks, label: podeAtender(user?.perfil) ? 'Solicitações' : 'Minhas solicitações', path: '/solicitacoes' };
   const items = [
     ...(user?.perfil === 'atendente' ? mainItems.filter((i) => i.id === 'nova-solicitacao') : mainItems),
+    consultaItem,
     ...(permissoes?.controle_ti ? [{ id: 'controle-ti', icon: Cpu, label: 'Controle de Despesas', path: '/controle-ti' }] : []),
     ...(podeAtender(user?.perfil) ? [filaItem] : []),
     ...(user?.perfil === 'administrador'

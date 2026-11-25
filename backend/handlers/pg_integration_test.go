@@ -633,3 +633,75 @@ func TestPG_AnoDoOrcamento_JaneiroEDepois(t *testing.T) {
 		t.Errorf("com a data-limite em 28/02, 10/02 aceita o ano anterior: %d %v", code, out)
 	}
 }
+
+// Tela "Solicitações" (itens 20 e 21): atendente vê tudo e acha por código/CC/conta; solicitante vê só os próprios.
+func TestPG_BuscaSolicitacoes(t *testing.T) {
+	e := pgSetup(t)
+	b := e.seed(t)
+	idMeu := e.solicitacao(t, b, "finalizada_sucesso")
+	var outroUsuario string
+	if err := e.admin.QueryRow(`INSERT INTO usuarios (email, nome, perfil) VALUES ('outro'||$1||'@teste.local', 'Outra Pessoa', 'solicitante') ON CONFLICT (LOWER(email)) DO UPDATE SET nome = EXCLUDED.nome RETURNING id`, fmt.Sprintf("%d", os.Getpid())).Scan(&outroUsuario); err != nil {
+		t.Fatal(err)
+	}
+	b2 := b
+	b2.usuario = outroUsuario
+	idDeOutro := e.solicitacao(t, b2, "aberta")
+
+	busca := func(usuario, perfil, query string) []map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/solicitacoes/busca?"+query, nil)
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": usuario, "perfil": perfil}))
+		rec := httptest.NewRecorder()
+		BuscarSolicitacoesHandler(e.app)(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("busca %q: %d %s", query, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Items []map[string]any `json:"items"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out.Items
+	}
+	tem := func(itens []map[string]any, id string) bool {
+		for _, i := range itens {
+			if i["id"] == id {
+				return true
+			}
+		}
+		return false
+	}
+	// solicitante: só o que abriu (inclusive finalizado)
+	r := busca(b.usuario, "solicitante", "")
+	if !tem(r, idMeu) || tem(r, idDeOutro) {
+		t.Errorf("solicitante deveria ver só os próprios chamados")
+	}
+	// atendente: todos, e acha pelo código (GO-n e só o número), pela conta e pelo status
+	r = busca(b.usuario, "atendente", "")
+	if !tem(r, idMeu) || !tem(r, idDeOutro) {
+		t.Errorf("atendente deveria ver todos")
+	}
+	codigo := ""
+	for _, i := range r {
+		if i["id"] == idDeOutro {
+			codigo = i["codigo"].(string)
+		}
+	}
+	for _, q := range []string{"q=" + codigo, "q=" + strings.TrimPrefix(codigo, "GO-"), "q=" + strings.ToLower(codigo)} {
+		if res := busca(b.usuario, "atendente", q); len(res) != 1 || res[0]["id"] != idDeOutro {
+			t.Errorf("%s deveria achar só o chamado de código %s: %d resultados", q, codigo, len(res))
+		}
+	}
+	if res := busca(b.usuario, "atendente", "q=T4"+fmt.Sprintf("%d", os.Getpid())); !tem(res, idMeu) {
+		t.Errorf("busca pelo código da conta deveria achar o chamado")
+	}
+	if res := busca(b.usuario, "atendente", "status=finalizada_sucesso&q=Solicitante+Teste"); !tem(res, idMeu) || tem(res, idDeOutro) {
+		t.Errorf("filtro de status + nome do solicitante")
+	}
+	if res := busca(b.usuario, "atendente", "q=%25"); len(res) != 0 && tem(res, idMeu) && tem(res, idDeOutro) && len(res) > 2 {
+		// '%' é tratado como texto, não como curinga
+		t.Errorf("curinga não pode casar tudo")
+	}
+	if res := busca(b.usuario, "atendente", "de=2999-01-01"); len(res) != 0 {
+		t.Errorf("período futuro não deveria achar nada")
+	}
+}

@@ -6,6 +6,7 @@ import { WORKSPACE } from '@/lib/workspace';
 // ("Business › Página"), separador › (U+203A). Prefixo mais longo vence.
 const titles: [prefix: string, title: string][] = [
   ['/solicitacoes/nova', 'Nova solicitação'],
+  ['/solicitacoes', 'Solicitações'],
   ['/admin/usuarios', 'Gestão de usuários'],
   ['/admin/cadastros', 'Cadastros mestres'],
   ['/admin/configuracoes', 'Configurações'],
