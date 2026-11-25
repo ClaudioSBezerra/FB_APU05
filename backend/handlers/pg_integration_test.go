@@ -199,8 +199,8 @@ func TestPG_FilaAssumirPendenciaReabertura(t *testing.T) {
 	}
 	var n int
 	_ = e.admin.QueryRow(`SELECT count(*) FROM solicitacao_comentarios WHERE solicitacao_id = $1`, id).Scan(&n)
-	if n != 2 {
-		t.Errorf("esperava 2 comentários (pendência + resposta), há %d", n)
+	if n != 4 { // assumiu (evento) + pendência + resposta + reabertura (evento)
+		t.Errorf("esperava 4 registros no histórico, há %d", n)
 	}
 }
 
@@ -390,10 +390,15 @@ func TestPG_OpcoesFormularioSoContasDeDespesa(t *testing.T) {
 	e := pgSetup(t)
 	b := e.seed(t)
 	var id string
-	if err := e.admin.QueryRow(`INSERT INTO contas (plano, codigo, nome) VALUES ($1, '4'||$2, 'Despesa real') RETURNING id`, sapodata.PlanoContas(), fmt.Sprintf("%d", os.Getpid())).Scan(&id); err != nil {
+	if err := e.admin.QueryRow(`INSERT INTO contas (plano, codigo, nome) VALUES ($1, '4221'||$2, 'Despesa real') RETURNING id`, sapodata.PlanoContas(), fmt.Sprintf("%d", os.Getpid())).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	defer e.admin.Exec(`DELETE FROM contas WHERE id = $1`, id)
+	var idFora string
+	if err := e.admin.QueryRow(`INSERT INTO contas (plano, codigo, nome) VALUES ($1, '4251'||$2, 'Despesa financeira') RETURNING id`, sapodata.PlanoContas(), fmt.Sprintf("%d", os.Getpid())).Scan(&idFora); err != nil {
+		t.Fatal(err)
+	}
+	defer e.admin.Exec(`DELETE FROM contas WHERE id = $1`, idFora)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/formulario/opcoes", nil)
 	req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": b.usuario, "perfil": "solicitante"}))
@@ -410,10 +415,10 @@ func TestPG_OpcoesFormularioSoContasDeDespesa(t *testing.T) {
 	}
 	achou := false
 	for _, c := range out.Contas {
-		if !strings.HasPrefix(c.Codigo, "4") {
-			t.Errorf("conta fora do filtro de despesa: %s", c.Codigo)
+		if !strings.HasPrefix(c.Codigo, "411") && !strings.HasPrefix(c.Codigo, "421") && !strings.HasPrefix(c.Codigo, "422") {
+			t.Errorf("conta fora da faixa de despesa (411/421/422): %s", c.Codigo)
 		}
-		if strings.HasPrefix(c.Codigo, "4"+fmt.Sprintf("%d", os.Getpid())) {
+		if strings.HasPrefix(c.Codigo, "4221"+fmt.Sprintf("%d", os.Getpid())) {
 			achou = true
 		}
 	}

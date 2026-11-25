@@ -24,6 +24,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -65,7 +66,8 @@ func ListarFilaHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(`
-			SELECT s.id, s.tipo_solicitacao, s.centro_custo_id, cc.codigo, cc.nome, s.status, s.versao, s.created_at
+			SELECT s.id, s.tipo_solicitacao, s.centro_custo_id, cc.codigo, cc.nome, s.status, s.versao, s.created_at, s.numero,
+			       (SELECT lo.nome FROM solicitacao_obras_linhas ol JOIN locais_obra lo ON lo.id = ol.local_obra_id WHERE ol.solicitacao_id = s.id ORDER BY ol.created_at LIMIT 1)
 			FROM solicitacoes s
 			LEFT JOIN centros_custo cc ON cc.id = s.centro_custo_id
 			WHERE s.status = $3
@@ -87,7 +89,9 @@ func ListarFilaHandler(db *sql.DB) http.HandlerFunc {
 			var centroCustoID, centroCustoCodigo, centroCustoNome sql.NullString
 			var versao int
 			var criadoEm time.Time
-			if err := rows.Scan(&id, &tipoSolicitacao, &centroCustoID, &centroCustoCodigo, &centroCustoNome, &status, &versao, &criadoEm); err != nil {
+			var numero int64
+			var localObra sql.NullString
+			if err := rows.Scan(&id, &tipoSolicitacao, &centroCustoID, &centroCustoCodigo, &centroCustoNome, &status, &versao, &criadoEm, &numero, &localObra); err != nil {
 				log.Printf("[Fila] Erro ao ler linha da fila: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
@@ -95,6 +99,8 @@ func ListarFilaHandler(db *sql.DB) http.HandlerFunc {
 
 			items = append(items, map[string]interface{}{
 				"id":                  id,
+				"codigo":              CodigoChamado(numero),
+				"local_obra":          nullStringOuNil(localObra),
 				"tipo_solicitacao":    tipoSolicitacao,
 				"centro_custo_id":     nullStringOuNil(centroCustoID),
 				"centro_custo_codigo": nullStringOuNil(centroCustoCodigo),
@@ -242,7 +248,8 @@ func MinhasSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(`
-			SELECT s.id, s.tipo_solicitacao, s.centro_custo_id, cc.codigo, cc.nome, s.status, s.versao, s.created_at
+			SELECT s.id, s.tipo_solicitacao, s.centro_custo_id, cc.codigo, cc.nome, s.status, s.versao, s.created_at, s.numero,
+			       (SELECT lo.nome FROM solicitacao_obras_linhas ol JOIN locais_obra lo ON lo.id = ol.local_obra_id WHERE ol.solicitacao_id = s.id ORDER BY ol.created_at LIMIT 1)
 			FROM solicitacoes s
 			LEFT JOIN centros_custo cc ON cc.id = s.centro_custo_id
 			WHERE s.status = 'em_atendimento' AND s.administrador_id = $1
@@ -264,7 +271,9 @@ func MinhasSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 			var centroCustoID, centroCustoCodigo, centroCustoNome sql.NullString
 			var versao int
 			var criadoEm time.Time
-			if err := rows.Scan(&id, &tipoSolicitacao, &centroCustoID, &centroCustoCodigo, &centroCustoNome, &status, &versao, &criadoEm); err != nil {
+			var numero int64
+			var localObra sql.NullString
+			if err := rows.Scan(&id, &tipoSolicitacao, &centroCustoID, &centroCustoCodigo, &centroCustoNome, &status, &versao, &criadoEm, &numero, &localObra); err != nil {
 				log.Printf("[Fila] Erro ao ler linha de minhas solicitações: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
@@ -272,6 +281,8 @@ func MinhasSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 
 			items = append(items, map[string]interface{}{
 				"id":                  id,
+				"codigo":              CodigoChamado(numero),
+				"local_obra":          nullStringOuNil(localObra),
 				"tipo_solicitacao":    tipoSolicitacao,
 				"centro_custo_id":     nullStringOuNil(centroCustoID),
 				"centro_custo_codigo": nullStringOuNil(centroCustoCodigo),
@@ -295,3 +306,6 @@ func MinhasSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 		})
 	}
 }
+
+// CodigoChamado é o código legível do chamado (GO-1, GO-2, ...), gerado pelo banco (solicitacoes.numero).
+func CodigoChamado(numero int64) string { return fmt.Sprintf("GO-%d", numero) }

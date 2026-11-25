@@ -13,7 +13,11 @@ import { useAuth } from '@/contexts/AuthContext';
 // Página do chamado (substitui o pop-up "Ver e comentar"): quem abriu, como foi preenchido, aprovador,
 // anexos, histórico e as ações do atendimento (assumir, pendência, comentar, finalizar).
 interface Lanc { lado: string; centro_custo: string; conta: string; conta_nome: string; classe_imobilizado: string; mes: string; valor: number }
+interface LinhaObra { lado: string; local: string; subgrupo: string; ordem: string; valor: number }
 interface Extras {
+  codigo?: string;
+  classificacao?: string | null;
+  obras_linhas?: LinhaObra[];
   solicitante_nome?: string | null;
   solicitante_email?: string | null;
   atendente_nome?: string | null;
@@ -161,7 +165,7 @@ export default function SolicitacaoDetalhe() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <Link to="/fila" className="text-xs text-link underline underline-offset-2">← Fila de atendimento</Link>
-          <h1 className="text-lg font-semibold text-foreground">{TIPO[d.tipo_solicitacao] ?? d.tipo_solicitacao}</h1>
+          <h1 className="text-lg font-semibold text-foreground">{x?.codigo && <span className="mr-2 tabular-nums text-fg-helper">{x.codigo}</span>}{TIPO[d.tipo_solicitacao] ?? d.tipo_solicitacao}</h1>
         </div>
         <Badge variant="default">{STATUS[d.status] ?? d.status}</Badge>
       </div>
@@ -187,7 +191,30 @@ export default function SolicitacaoDetalhe() {
         {tabela(origem, 'Origem')}
         {tabela(destino, mesmoCC ? 'Destino (mesmo centro de custo da origem)' : 'Destino')}
         {tabela((x?.lancamentos ?? []).filter((l) => l.lado !== 'origem' && l.lado !== 'destino'), 'Lançamentos')}
-        {(x?.lancamentos ?? []).length === 0 && <p className="text-sm text-muted-foreground">Sem lançamentos para exibir.</p>}
+        {(x?.obras_linhas ?? []).length > 0 && (
+          <div className="grid gap-1">
+            <h3 className="text-sm font-semibold">Linhas da obra{x?.classificacao ? ` · ${x.classificacao.replace(/_/g, ' ')}` : ''}</h3>
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-muted/50 text-xs text-muted-foreground">
+                  <tr><th className="p-2">Lado</th><th className="p-2">Local</th><th className="p-2">Subgrupo</th><th className="p-2">Ordem</th><th className="p-2 text-right">Valor</th></tr>
+                </thead>
+                <tbody>
+                  {(x?.obras_linhas ?? []).map((l, i) => (
+                    <tr key={i} className="border-t border-border">
+                      <td className="p-2">{l.lado === 'retirada' ? 'Retirada' : l.lado === 'inclusao' ? 'Inclusão' : '—'}</td>
+                      <td className="p-2">{l.local}</td>
+                      <td className="p-2">{l.subgrupo}</td>
+                      <td className="p-2 tabular-nums">{l.ordem}</td>
+                      <td className="p-2 text-right tabular-nums">{moeda.format(l.valor)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+        {(x?.lancamentos ?? []).length === 0 && (x?.obras_linhas ?? []).length === 0 && <p className="text-sm text-muted-foreground">Sem lançamentos para exibir.</p>}
       </section>
 
       <section className="grid gap-2 rounded-lg border border-border bg-card p-4">

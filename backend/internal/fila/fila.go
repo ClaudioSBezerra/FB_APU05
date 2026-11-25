@@ -62,15 +62,28 @@ var ErrNaoAutorizado = errors.New("não autorizado")
 // princípio de internal/aprovacao).
 func Assumir(db *sql.DB, id string, versaoLida int, administradorID string) (Solicitacao, error) {
 	var s Solicitacao
-	err := db.QueryRow(`
+	tx, err := db.Begin()
+	if err != nil {
+		return Solicitacao{}, fmt.Errorf("iniciar transação para assumir %s: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	err = tx.QueryRow(`
 		UPDATE solicitacoes
 		SET status = 'em_atendimento', administrador_id = $1, versao = versao + 1
 		WHERE id = $2 AND versao = $3 AND status = 'aberta'
 		RETURNING id, tipo_solicitacao, status, versao, administrador_id
 	`, administradorID, id, versaoLida).Scan(&s.ID, &s.TipoSolicitacao, &s.Status, &s.Versao, &s.AdministradorID)
 	if err == nil {
+		// evento no histórico (item 16): quem assumiu e quando (a data é a do registro)
+		if _, e := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'evento', 'Assumiu o atendimento.')`, id, administradorID); e != nil {
+			return Solicitacao{}, fmt.Errorf("registrar assunção de %s no histórico: %w", id, e)
+		}
+		if e := tx.Commit(); e != nil {
+			return Solicitacao{}, fmt.Errorf("confirmar assunção de %s: %w", id, e)
+		}
 		return s, nil
 	}
+	_ = tx.Rollback()
 	if err != sql.ErrNoRows {
 		return Solicitacao{}, fmt.Errorf("assumir solicitação %s: %w", id, err)
 	}
@@ -208,13 +221,15 @@ func Comentar(db *sql.DB, id string, versaoLida int, solicitanteID string, comen
 	// "converting NULL to string is unsupported" nesse caso.
 	var s Solicitacao
 	var administradorID sql.NullString
+	var statusAnterior string
 	err = tx.QueryRow(`
 		UPDATE solicitacoes
 		SET status = CASE WHEN status IN ('aberta', 'em_atendimento') THEN status ELSE 'em_atendimento' END,
 		    versao = versao + 1
 		WHERE id = $1 AND versao = $2 AND solicitante_id = $3
-		RETURNING id, tipo_solicitacao, status, versao, administrador_id
-	`, id, versaoLida, solicitanteID).Scan(&s.ID, &s.TipoSolicitacao, &s.Status, &s.Versao, &administradorID)
+		RETURNING id, tipo_solicitacao, status, versao, administrador_id,
+		          (SELECT status FROM solicitacoes WHERE id = $1)
+	`, id, versaoLida, solicitanteID).Scan(&s.ID, &s.TipoSolicitacao, &s.Status, &s.Versao, &administradorID, &statusAnterior)
 	s.AdministradorID = administradorID.String
 	if err != nil {
 		if err != sql.ErrNoRows {
@@ -231,6 +246,12 @@ func Comentar(db *sql.DB, id string, versaoLida int, solicitanteID string, comen
 		VALUES ($1, $2, 'comentario', $3)
 	`, id, solicitanteID, comentario); err != nil {
 		return Solicitacao{}, fmt.Errorf("inserir comentário em %s: %w", id, err)
+	}
+	// reabertura (resposta à pendência ou comentário em chamado finalizado) vira evento no histórico (item 16)
+	if statusAnterior != "aberta" && statusAnterior != "em_atendimento" {
+		if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'evento', 'Chamado reaberto pelo solicitante.')`, id, solicitanteID); err != nil {
+			return Solicitacao{}, fmt.Errorf("registrar reabertura de %s no histórico: %w", id, err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

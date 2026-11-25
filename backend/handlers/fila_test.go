@@ -58,10 +58,13 @@ func newFilaListRequest(query string) *http.Request {
 func TestAssumirSolicitacaoHandler_Sucesso(t *testing.T) {
 	db, mock := newSQLMock(t)
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE solicitacoes")).
 		WithArgs(testFilaHandlerAdministradorID, testFilaHandlerSolicitacaoID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "status", "versao", "administrador_id"}).
 			AddRow(testFilaHandlerSolicitacaoID, "transferencia", "em_atendimento", 2, testFilaHandlerAdministradorID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_comentarios")).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	handler := AssumirSolicitacaoHandler(db)
 	req := newAssumirRequest(testFilaHandlerSolicitacaoID, `{"versao":1}`)
@@ -97,9 +100,11 @@ func TestAssumirSolicitacaoHandler_Sucesso(t *testing.T) {
 func TestAssumirSolicitacaoHandler_ConflitoVersao(t *testing.T) {
 	db, mock := newSQLMock(t)
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE solicitacoes")).
 		WithArgs(testFilaHandlerAdministradorID, testFilaHandlerSolicitacaoID, 1).
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT versao FROM solicitacoes WHERE id = $1")).
 		WithArgs(testFilaHandlerSolicitacaoID).
 		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(2))
@@ -135,9 +140,11 @@ func TestAssumirSolicitacaoHandler_ConflitoVersao(t *testing.T) {
 func TestAssumirSolicitacaoHandler_NaoEncontrada(t *testing.T) {
 	db, mock := newSQLMock(t)
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE solicitacoes")).
 		WithArgs(testFilaHandlerAdministradorID, testFilaHandlerSolicitacaoID, 1).
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT versao FROM solicitacoes WHERE id = $1")).
 		WithArgs(testFilaHandlerSolicitacaoID).
 		WillReturnError(sql.ErrNoRows)
@@ -237,9 +244,9 @@ func TestListarFilaHandler_DecoraComSLA(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacoes")).
 		WithArgs(20, 0, "aberta").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "centro_custo_id", "codigo", "nome", "status", "versao", "created_at"}).
-			AddRow("aaaaaaaa-0000-0000-0000-000000000001", "transferencia", "cc00000-0000-0000-0000-000000000001", "CC101", "Controladoria", "aberta", 1, antiga).
-			AddRow("bbbbbbbb-0000-0000-0000-000000000002", "obras", nil, nil, nil, "aberta", 1, recente))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "centro_custo_id", "codigo", "nome", "status", "versao", "created_at", "numero", "local_obra"}).
+			AddRow("aaaaaaaa-0000-0000-0000-000000000001", "transferencia", "cc00000-0000-0000-0000-000000000001", "CC101", "Controladoria", "aberta", 1, antiga, 7, nil).
+			AddRow("bbbbbbbb-0000-0000-0000-000000000002", "obras", nil, nil, nil, "aberta", 1, recente, 8, "CD Recife"))
 
 	handler := ListarFilaHandler(db)
 	req := newFilaListRequest("")
@@ -294,8 +301,8 @@ func TestMinhasSolicitacoesHandler_FiltraPorAdministradorLogado(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM solicitacoes")).
 		WithArgs(testFilaHandlerAdministradorID, 20, 0).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "centro_custo_id", "codigo", "nome", "status", "versao", "created_at"}).
-			AddRow(testFilaHandlerSolicitacaoID, "inclusao", "cc0000-0000-0000-0000-000000000001", "CC101", "Controladoria", "em_atendimento", 2, time.Now()))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "centro_custo_id", "codigo", "nome", "status", "versao", "created_at", "numero", "local_obra"}).
+			AddRow(testFilaHandlerSolicitacaoID, "inclusao", "cc0000-0000-0000-0000-000000000001", "CC101", "Controladoria", "em_atendimento", 2, time.Now(), 9, nil))
 
 	handler := MinhasSolicitacoesHandler(db)
 	req := newFilaListRequest("")

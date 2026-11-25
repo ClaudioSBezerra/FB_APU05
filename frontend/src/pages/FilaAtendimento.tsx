@@ -38,6 +38,8 @@ import {
 
 interface ItemFila {
   id: string;
+  codigo?: string;
+  local_obra?: string | null;
   tipo_solicitacao: string;
   centro_custo_id: string | null;
   centro_custo_codigo?: string | null;
@@ -114,7 +116,8 @@ function CentroCustoCell({ item }: { item: ItemFila }) {
       </span>
     );
   }
-  // Obras não tem CC (migration 009) — o travessão é dado, não ausência de dado.
+  // Obras não tem CC (migration 009): mostra o local da obra.
+  if (item.local_obra) return <span className="truncate" title="Local da obra">{item.local_obra}</span>;
   return <span className="text-fg-muted">—</span>;
 }
 
@@ -372,7 +375,7 @@ const FilaAtendimento = () => {
             <TableBody>
               {(aguardandoQuery.data ?? []).map((item) => (
                 <TableRow key={item.id}>
-                  <TableCell className="font-medium">{rotuloTipo(item.tipo_solicitacao)}</TableCell>
+                  <TableCell className="font-medium"><span className="block text-xs tabular-nums text-fg-helper">{item.codigo}</span>{rotuloTipo(item.tipo_solicitacao)}</TableCell>
                   <TableCell><CentroCustoCell item={item} /></TableCell>
                   <TableCell className="tabular-nums text-fg-secondary">{dataHora(item.created_at)}</TableCell>
                   <TableCell className="flex gap-2">
@@ -428,7 +431,7 @@ const FilaAtendimento = () => {
           <TableBody>
             {(filaQuery.data ?? []).map((item) => (
               <TableRow key={item.id}>
-                <TableCell className="font-medium">{rotuloTipo(item.tipo_solicitacao)}</TableCell>
+                <TableCell className="font-medium"><span className="block text-xs tabular-nums text-fg-helper">{item.codigo}</span>{rotuloTipo(item.tipo_solicitacao)}</TableCell>
                 <TableCell><CentroCustoCell item={item} /></TableCell>
                 <TableCell className="tabular-nums text-fg-secondary">{dataHora(item.created_at)}</TableCell>
                 <TableCell><PrazoCell atrasada={item.atrasada} prazo={item.prazo_limite} /></TableCell>
@@ -512,7 +515,7 @@ const FilaAtendimento = () => {
                     onChange={() => toggleSelecionado(item.id)}
                   />
                 </TableCell>
-                <TableCell className="font-medium">{rotuloTipo(item.tipo_solicitacao)}</TableCell>
+                <TableCell className="font-medium"><span className="block text-xs tabular-nums text-fg-helper">{item.codigo}</span>{rotuloTipo(item.tipo_solicitacao)}</TableCell>
                 <TableCell><CentroCustoCell item={item} /></TableCell>
                 <TableCell className="tabular-nums text-fg-secondary">{dataHora(item.created_at)}</TableCell>
                 <TableCell><PrazoCell atrasada={item.atrasada} prazo={item.prazo_limite} /></TableCell>

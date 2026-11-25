@@ -32,10 +32,13 @@ func TestAssumir_Sucesso(t *testing.T) {
 	}
 	defer db.Close()
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE solicitacoes`)).
 		WithArgs(testFilaAdministradorID, testFilaSolicitacaoID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "status", "versao", "administrador_id"}).
 			AddRow(testFilaSolicitacaoID, "transferencia", "em_atendimento", 2, testFilaAdministradorID))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_comentarios")).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	resultado, err := Assumir(db, testFilaSolicitacaoID, 1, testFilaAdministradorID)
 	if err != nil {
@@ -60,9 +63,11 @@ func TestAssumir_ConflitoVersao(t *testing.T) {
 	}
 	defer db.Close()
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE solicitacoes`)).
 		WithArgs(testFilaAdministradorID, testFilaSolicitacaoID, 1).
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT versao FROM solicitacoes WHERE id = $1`)).
 		WithArgs(testFilaSolicitacaoID).
 		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(2))
@@ -91,9 +96,11 @@ func TestAssumir_JaEmAtendimento(t *testing.T) {
 	}
 	defer db.Close()
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE solicitacoes`)).
 		WithArgs(testFilaAdministradorID, testFilaSolicitacaoID, 2).
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT versao FROM solicitacoes WHERE id = $1`)).
 		WithArgs(testFilaSolicitacaoID).
 		WillReturnRows(sqlmock.NewRows([]string{"versao"}).AddRow(2))
@@ -118,9 +125,11 @@ func TestAssumir_NaoEncontrada(t *testing.T) {
 	}
 	defer db.Close()
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE solicitacoes`)).
 		WithArgs(testFilaAdministradorID, testFilaSolicitacaoID, 1).
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT versao FROM solicitacoes WHERE id = $1`)).
 		WithArgs(testFilaSolicitacaoID).
 		WillReturnError(sql.ErrNoRows)
@@ -299,11 +308,12 @@ func TestComentar_ReabreDePendente(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE solicitacoes")).
 		WithArgs(testFilaSolicitacaoID, 1, testFilaSolicitanteID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "status", "versao", "administrador_id"}).
-			AddRow(testFilaSolicitacaoID, "transferencia", "em_atendimento", 2, testFilaAdministradorID))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "status", "versao", "administrador_id", "status_anterior"}).
+			AddRow(testFilaSolicitacaoID, "transferencia", "em_atendimento", 2, testFilaAdministradorID, "pendente"))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_comentarios")).
 		WithArgs(testFilaSolicitacaoID, testFilaSolicitanteID, "ja resolvi").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_comentarios")).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	resultado, err := Comentar(db, testFilaSolicitacaoID, 1, testFilaSolicitanteID, "ja resolvi")
@@ -334,8 +344,8 @@ func TestComentar_StatusJaAtivoPermanece(t *testing.T) {
 	// não exige nenhum administrador específico).
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE solicitacoes")).
 		WithArgs(testFilaSolicitacaoID, 1, testFilaSolicitanteID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "status", "versao", "administrador_id"}).
-			AddRow(testFilaSolicitacaoID, "transferencia", "aberta", 2, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "status", "versao", "administrador_id", "status_anterior"}).
+			AddRow(testFilaSolicitacaoID, "transferencia", "aberta", 2, nil, "aberta"))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_comentarios")).
 		WithArgs(testFilaSolicitacaoID, testFilaSolicitanteID, "so um aviso").
 		WillReturnResult(sqlmock.NewResult(0, 1))

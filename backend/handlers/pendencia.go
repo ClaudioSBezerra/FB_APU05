@@ -431,16 +431,18 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 	var solNome, solEmail, admNome, ccCod, ccNome sql.NullString
 	var criada sql.NullTime
 	var snap []byte
+	var numero int64
 	if err := db.QueryRow(`
-		SELECT u.nome, u.email, a.nome, cc.codigo, cc.nome, s.created_at, s.aprovador_snapshot
+		SELECT u.nome, u.email, a.nome, cc.codigo, cc.nome, s.created_at, s.aprovador_snapshot, s.numero
 		FROM solicitacoes s
 		LEFT JOIN usuarios u ON u.id = s.solicitante_id
 		LEFT JOIN usuarios a ON a.id = s.administrador_id
 		LEFT JOIN centros_custo cc ON cc.id = s.centro_custo_id
-		WHERE s.id = $1`, id).Scan(&solNome, &solEmail, &admNome, &ccCod, &ccNome, &criada, &snap); err != nil {
+		WHERE s.id = $1`, id).Scan(&solNome, &solEmail, &admNome, &ccCod, &ccNome, &criada, &snap, &numero); err != nil {
 		log.Printf("[Fila] detalhe da solicitação %s: dados do cabeçalho indisponíveis: %v", id, err)
 		return out
 	}
+	out["codigo"] = CodigoChamado(numero)
 	out["solicitante_nome"] = nullStringOuNil(solNome)
 	out["solicitante_email"] = nullStringOuNil(solEmail)
 	out["atendente_nome"] = nullStringOuNil(admNome)
@@ -483,5 +485,33 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 		})
 	}
 	out["lancamentos"] = lanc
+
+	// Obras: as linhas ficam em outra tabela (local, subgrupo, ordem, lado, valor) e a classificação no cabeçalho.
+	var classificacao sql.NullString
+	_ = db.QueryRow(`SELECT classificacao FROM solicitacoes WHERE id = $1`, id).Scan(&classificacao)
+	out["classificacao"] = nullStringOuNil(classificacao)
+	orows, err := db.Query(`
+		SELECT COALESCE(ol.lado, ''), lo.nome, sg.nome, ol.ordem_investimento, ol.valor::float8
+		FROM solicitacao_obras_linhas ol
+		JOIN locais_obra lo ON lo.id = ol.local_obra_id
+		JOIN subgrupos_despesa sg ON sg.id = ol.subgrupo_despesa_id
+		WHERE ol.solicitacao_id = $1
+		ORDER BY ol.lado, ol.created_at`, id)
+	if err != nil {
+		log.Printf("[Fila] detalhe da solicitação %s: linhas de obra indisponíveis: %v", id, err)
+		return out
+	}
+	defer orows.Close()
+	obras := make([]map[string]interface{}, 0)
+	for orows.Next() {
+		var lado, local, subgrupo, ordem string
+		var valor float64
+		if err := orows.Scan(&lado, &local, &subgrupo, &ordem, &valor); err != nil {
+			log.Printf("[Fila] detalhe da solicitação %s: linha de obra ilegível: %v", id, err)
+			break
+		}
+		obras = append(obras, map[string]interface{}{"lado": lado, "local": local, "subgrupo": subgrupo, "ordem": ordem, "valor": valor})
+	}
+	out["obras_linhas"] = obras
 	return out
 }

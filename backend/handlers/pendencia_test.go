@@ -247,11 +247,12 @@ func TestComentarSolicitacaoHandler_ReabreDePendente(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE solicitacoes")).
 		WithArgs(testPendenciaSolicitacaoID, 1, testPendenciaSolicitanteID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "status", "versao", "administrador_id"}).
-			AddRow(testPendenciaSolicitacaoID, "transferencia", "em_atendimento", 2, testPendenciaAdministradorID))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "status", "versao", "administrador_id", "anterior"}).
+			AddRow(testPendenciaSolicitacaoID, "transferencia", "em_atendimento", 2, testPendenciaAdministradorID, "pendente"))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_comentarios")).
 		WithArgs(testPendenciaSolicitacaoID, testPendenciaSolicitanteID, "ja resolvi").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_comentarios")).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	handler := ComentarSolicitacaoHandler(db)
@@ -288,11 +289,12 @@ func TestComentarSolicitacaoHandler_ReabreDeEncerradoSimulado(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE solicitacoes")).
 		WithArgs(testPendenciaSolicitacaoID, 5, testPendenciaSolicitanteID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "status", "versao", "administrador_id"}).
-			AddRow(testPendenciaSolicitacaoID, "transferencia", "em_atendimento", 6, testPendenciaAdministradorID))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tipo_solicitacao", "status", "versao", "administrador_id", "anterior"}).
+			AddRow(testPendenciaSolicitacaoID, "transferencia", "em_atendimento", 6, testPendenciaAdministradorID, "finalizada_sucesso"))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_comentarios")).
 		WithArgs(testPendenciaSolicitacaoID, testPendenciaSolicitanteID, "reabrindo").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_comentarios")).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	handler := ComentarSolicitacaoHandler(db)
