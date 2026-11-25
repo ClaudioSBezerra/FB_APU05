@@ -744,16 +744,17 @@ func validarAnexosTipo(itens []anexoRequest, obrigatorio bool, tipo string) ([]a
 		if utf8.RuneCountInString(a.ContentType) > 100 {
 			return nil, fmt.Sprintf("anexo %d: campo 'content_type' excede 100 caracteres", n)
 		}
-		if !contentTypesPermitidos[strings.ToLower(strings.TrimSpace(a.ContentType))] {
-			return nil, fmt.Sprintf("anexo %d: tipo de arquivo '%s' não permitido (aceito: PDF, imagem, Word, Excel)", n, a.ContentType)
-		}
 		dados, err := base64.StdEncoding.DecodeString(a.ConteudoBase64)
 		if err != nil || len(dados) == 0 {
 			return nil, fmt.Sprintf("anexo %d: conteúdo não é base64 válido", n)
 		}
+		ct, ok := tipoDoAnexo(a.NomeArquivo, dados)
+		if !ok {
+			return nil, fmt.Sprintf("anexo %d (%s): o arquivo não é de um tipo aceito ou o conteúdo não corresponde à extensão. Aceitos: %s.", n, a.NomeArquivo, tiposAnexoAceitos)
+		}
 		decodificados = append(decodificados, anexos.ArquivoDecodificado{
 			NomeArquivo: a.NomeArquivo,
-			ContentType: a.ContentType,
+			ContentType: ct,
 			Dados:       dados,
 		})
 	}

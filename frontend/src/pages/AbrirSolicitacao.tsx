@@ -196,6 +196,8 @@ function OrdemInvestimentoSelect({
 // Busca sem acento/caixa: "manutencao" acha "Manutenção".
 const normalizar = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
+const EXTENSOES_ANEXO = /\.(pdf|jpe?g|png|docx?|xlsx?|msg|eml)$/i;
+
 const reais = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
 // ContaCombobox (11/11, item 1) — escolha de conta com busca por qualquer
@@ -617,6 +619,12 @@ const AbrirSolicitacao = () => {
   async function handleAnexoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Avisa já na escolha (o servidor confere de novo pelo conteúdo do arquivo).
+    if (!EXTENSOES_ANEXO.test(file.name)) {
+      toast.error(`"${file.name}" não é um tipo aceito. Aceitos: PDF, imagem (JPG/PNG), Word, Excel e e-mail (.msg ou .eml).`);
+      setAnexo(null);
+      return;
+    }
     const base64 = await fileParaBase64(file);
     setAnexo({ nome: file.name, contentType: file.type || 'application/octet-stream', base64 });
   }
@@ -1094,7 +1102,8 @@ const AbrirSolicitacao = () => {
         <Label>
           Anexo <span className="text-destructive" aria-hidden>*</span>
         </Label>
-        <Input key={anexoKey} type="file" onChange={handleAnexoChange} />
+        <Input key={anexoKey} type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.msg,.eml" onChange={handleAnexoChange} />
+        <p className="text-xs text-fg-helper">Aceitos: PDF, imagem (JPG/PNG), Word, Excel e e-mail (.msg ou .eml).</p>
         {anexo && <p className="text-xs text-muted-foreground">Selecionado: {anexo.nome}</p>}
       </div>
 

@@ -147,7 +147,7 @@ func anexoJSON(nomeArquivo, contentType, conteudoBase64 string) string {
 // de Imobilizado abaixo — conteúdo fixo "cotação de teste" (nunca dado real
 // de pessoa/fornecedor, Epic 3 context).
 var (
-	testAnexoConteudo       = []byte("cotação de teste — anexo válido")
+	testAnexoConteudo       = []byte("%PDF-1.4 cotação de teste — anexo válido")
 	testAnexoConteudoBase64 = base64.StdEncoding.EncodeToString(testAnexoConteudo)
 )
 
@@ -2041,8 +2041,8 @@ func TestValidarAnexos_ContentTypeExcede100(t *testing.T) {
 // cobre a allowlist — antes QUALQUER content_type era aceito.
 func TestValidarAnexos_ContentTypeNaoPermitido(t *testing.T) {
 	_, msg := validarAnexos([]anexoRequest{{NomeArquivo: "script.sh", ContentType: "application/x-sh", ConteudoBase64: testAnexoConteudoBase64}}, true)
-	if !strings.Contains(msg, "não permitido") {
-		t.Fatalf("esperada mensagem de content_type não permitido, obtido: %q", msg)
+	if !strings.Contains(msg, "não é de um tipo aceito") {
+		t.Fatalf("esperada mensagem de tipo não aceito, obtido: %q", msg)
 	}
 }
 
@@ -2062,7 +2062,7 @@ func TestValidarAnexos_ContentTypePermitidoCaseInsensitive(t *testing.T) {
 // Achado de revisão (pass de acompanhamento 2026-10-08): `len()` em Go mede
 // bytes, não runas.
 func TestValidarAnexos_NomeArquivoComAcentosDentroDoLimite(t *testing.T) {
-	nome255Runas := strings.Repeat("ç", 255)
+	nome255Runas := strings.Repeat("ç", 251) + ".pdf"
 	if len(nome255Runas) <= 255 {
 		t.Fatalf("pré-condição do teste inválida: nome deveria exceder 255 bytes (tem %d)", len(nome255Runas))
 	}
