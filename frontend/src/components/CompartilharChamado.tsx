@@ -26,7 +26,7 @@ export function CompartilharChamado({ solicitacaoId }: { solicitacaoId: string }
 
   const lista = useQuery({
     queryKey: ['compartilhamentos', solicitacaoId],
-    queryFn: () => api<{ items: Pessoa[] }>(`/api/solicitacoes/${solicitacaoId}/compartilhamentos`),
+    queryFn: () => api<{ items: Pessoa[] }>(`/api/compartilhamentos/${solicitacaoId}`),
   });
   const sugestoes = useQuery({
     queryKey: ['usuarios-busca', termo],
@@ -37,14 +37,14 @@ export function CompartilharChamado({ solicitacaoId }: { solicitacaoId: string }
   const atualizar = (dados: { items: Pessoa[] }) => qc.setQueryData(['compartilhamentos', solicitacaoId], dados);
   const compartilhar = useMutation({
     mutationFn: (p: Pessoa) =>
-      api<{ items: Pessoa[] }>(`/api/solicitacoes/${solicitacaoId}/compartilhamentos`, {
+      api<{ items: Pessoa[] }>(`/api/compartilhamentos/${solicitacaoId}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usuario_id: p.id }),
       }).then((d) => ({ d, p })),
     onSuccess: ({ d, p }) => { atualizar(d); setBusca(''); toast.success(`Chamado compartilhado com ${p.nome}. A pessoa recebe um e-mail com o link.`); qc.invalidateQueries({ queryKey: ['solicitacao', solicitacaoId] }); },
     onError: (e: Error) => toast.error(e.message),
   });
   const retirar = useMutation({
-    mutationFn: (p: Pessoa) => api<{ items: Pessoa[] }>(`/api/solicitacoes/${solicitacaoId}/compartilhamentos/${p.id}`, { method: 'DELETE' }),
+    mutationFn: (p: Pessoa) => api<{ items: Pessoa[] }>(`/api/compartilhamentos/${solicitacaoId}/${p.id}`, { method: 'DELETE' }),
     onSuccess: (d) => { atualizar(d); toast.success('Acesso retirado'); qc.invalidateQueries({ queryKey: ['solicitacao', solicitacaoId] }); },
     onError: (e: Error) => toast.error(e.message),
   });
