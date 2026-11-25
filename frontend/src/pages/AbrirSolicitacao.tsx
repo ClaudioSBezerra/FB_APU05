@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { Search } from 'lucide-react';
 import { MesAno } from '@/components/MesAno';
+import { ValorInput } from '@/components/ValorInput';
 import { useSaldoOrcamento, type SaldoLinha } from '@/hooks/useSaldoOrcamento';
 
 // Tela de abertura de solicitação (Epic 3 — Stories 3.1 a 3.5). Cobre os 5
@@ -265,7 +266,7 @@ function ContaCombobox({
   }
 
   return (
-    <div ref={raiz} className="relative">
+    <div ref={raiz} className="relative min-w-0">
       {aberto ? (
         <Input
           autoFocus
@@ -498,7 +499,13 @@ const AbrirSolicitacao = () => {
     novaLinhaLancamento('destino'),
   ]);
   const [autorizadorId, setAutorizadorId] = useState('');
-  const [anexo, setAnexo] = useState<{ nome: string; contentType: string; base64: string } | null>(null);
+  const [anexo, setAnexoEstado] = useState<{ nome: string; contentType: string; base64: string } | null>(null);
+  // muda a cada limpeza do anexo: recria o campo de arquivo para ele não continuar mostrando o nome antigo
+  const [anexoKey, setAnexoKey] = useState(0);
+  const setAnexo = (a: { nome: string; contentType: string; base64: string } | null) => {
+    setAnexoEstado(a);
+    if (a === null) setAnexoKey((k) => k + 1);
+  };
   // Fornecedor/Descrição (20/10) — paridade com o formulário legado (Jira):
   // texto livre, opcionais para todos os tipos, inclusive Obras.
   const [fornecedor, setFornecedor] = useState('');
@@ -723,15 +730,37 @@ const AbrirSolicitacao = () => {
   const podeEnviar =
     Boolean(anexo) &&
     (tipo === 'obras'
-      ? Boolean(autorizadorId) && Boolean(obraLocalId) && obrasLinhas.every((l) => l.subgrupoDespesaId && l.ordemInvestimento && l.valor)
+      ? Boolean(autorizadorId) && Boolean(obraLocalId) && obrasLinhas.every((l) => l.subgrupoDespesaId && l.ordemInvestimento && parseFloat(l.valor) > 0)
       : tipo === 'transferencia'
         ? Boolean(centroCustoId) &&
           linhas.every((l) => l.contaId && l.mes && (l.lado === 'destino' || parseFloat(l.valor) > 0)) &&
           somaOrigens > 0
         : Boolean(centroCustoId) &&
-          linhas.every((l) => l.valor && (tipo === 'imobilizado' ? l.classeImobilizadoId : l.contaId && l.mes)) &&
+          linhas.every((l) => parseFloat(l.valor) > 0 && (tipo === 'imobilizado' ? l.classeImobilizadoId : l.contaId && l.mes)) &&
           (tipo !== 'inclusao' && tipo !== 'imobilizado' ? true : Boolean(autorizadorId)) &&
           (tipo !== 'imobilizado' || parseInt(quantidadeMaterial, 10) > 0));
+
+  // O que ainda falta para liberar o botão (mostrado ao usuário em vez de deixar o botão cinza sem explicação).
+  const faltando: string[] = [];
+  if (tipo === 'obras') {
+    if (!autorizadorId) faltando.push('Autorizador');
+    if (!obraLocalId) faltando.push('Local de obra');
+    if (obrasLinhas.some((l) => !l.subgrupoDespesaId || !l.ordemInvestimento)) faltando.push('Subgrupo e ordem de investimento de todas as linhas');
+    if (obrasLinhas.some((l) => !(parseFloat(l.valor) > 0))) faltando.push('Valor maior que zero em todas as linhas');
+  } else {
+    if (!centroCustoId) faltando.push('Centro de custo');
+    if (tipo === 'imobilizado') {
+      if (linhas.some((l) => !l.classeImobilizadoId)) faltando.push('Classe de imobilizado');
+      if (!(parseInt(quantidadeMaterial, 10) > 0)) faltando.push('Quantidade do material');
+    } else {
+      if (linhas.some((l) => !l.contaId)) faltando.push('Conta de todas as linhas');
+      if (linhas.some((l) => !l.mes)) faltando.push('Mês de todas as linhas');
+    }
+    const linhasValor = tipo === 'transferencia' ? linhas.filter((l) => l.lado === 'origem') : linhas;
+    if (linhasValor.some((l) => !(parseFloat(l.valor) > 0))) faltando.push('Valor maior que zero');
+    if ((tipo === 'inclusao' || tipo === 'imobilizado') && !autorizadorId) faltando.push('Autorizador');
+  }
+  if (!anexo) faltando.push('Anexo');
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
@@ -784,7 +813,7 @@ const AbrirSolicitacao = () => {
       )}
 
       {tipo !== 'obras' && (
-        <div className="grid gap-1.5">
+        <div className="grid min-w-0 gap-1.5">
           <Label>{tipo === 'transferencia' ? 'Centro de custo de origem' : 'Centro de custo'}</Label>
           <ContaCombobox
             value={centroCustoId}
@@ -811,7 +840,7 @@ const AbrirSolicitacao = () => {
             {linhas.map((linha, i) =>
               linha.lado !== 'origem' ? null : (
                 <div key={i} className="grid grid-cols-1 gap-3 border-t border-border pt-3 first-of-type:border-0 sm:grid-cols-[17rem_9rem_auto] sm:items-end">
-                  <div className="grid gap-1.5 sm:col-span-3">
+                  <div className="grid min-w-0 gap-1.5 sm:col-span-3">
                     <Label>Conta</Label>
                     <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
                   </div>
@@ -821,7 +850,7 @@ const AbrirSolicitacao = () => {
                   </div>
                   <div className="grid gap-1.5">
                     <Label>Valor (R$)</Label>
-                    <Input type="number" step="0.01" min="0" value={linha.valor} onChange={(e) => atualizarLinha(i, 'valor', e.target.value)} />
+                    <ValorInput value={linha.valor} onChange={(v) => atualizarLinha(i, 'valor', v)} />
                   </div>
                   <Button
                     type="button"
@@ -851,7 +880,7 @@ const AbrirSolicitacao = () => {
 
           <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
             <h2 className="text-sm font-semibold text-foreground">Destino</h2>
-            <div className="grid gap-1.5">
+            <div className="grid min-w-0 gap-1.5">
               <Label>Centro de custo de destino</Label>
               <ContaCombobox
                 value={ccDestinoId}
@@ -865,7 +894,7 @@ const AbrirSolicitacao = () => {
             {linhas.map((linha, i) =>
               linha.lado !== 'destino' ? null : (
                 <div key={i} className="grid grid-cols-1 gap-3 sm:grid-cols-[17rem_9rem] sm:items-end">
-                  <div className="grid gap-1.5 sm:col-span-2">
+                  <div className="grid min-w-0 gap-1.5 sm:col-span-2">
                     <Label>Conta</Label>
                     <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
                   </div>
@@ -921,7 +950,7 @@ const AbrirSolicitacao = () => {
               </>
             ) : (
               <>
-                <div className="grid gap-1.5">
+                <div className="grid min-w-0 gap-1.5">
                   <Label>Conta</Label>
                   <ContaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} />
                 </div>
@@ -933,13 +962,7 @@ const AbrirSolicitacao = () => {
             )}
             <div className="grid gap-1.5">
               <Label>Valor (R$)</Label>
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                value={linha.valor}
-                onChange={(e) => atualizarLinha(i, 'valor', e.target.value)}
-              />
+              <ValorInput value={linha.valor} onChange={(v) => atualizarLinha(i, 'valor', v)} />
             </div>
           </div>
         ))}
@@ -1028,13 +1051,7 @@ const AbrirSolicitacao = () => {
               </div>
               <div className="grid gap-1.5">
                 <Label>Valor (R$)</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={linha.valor}
-                  onChange={(e) => atualizarLinhaObra(i, 'valor', e.target.value)}
-                />
+                <ValorInput value={linha.valor} onChange={(v) => atualizarLinhaObra(i, 'valor', v)} />
               </div>
               {classificacao === 'transferencia_saldo' && (
                 <div className="grid gap-1.5">
@@ -1077,7 +1094,7 @@ const AbrirSolicitacao = () => {
         <Label>
           Anexo <span className="text-destructive" aria-hidden>*</span>
         </Label>
-        <Input type="file" onChange={handleAnexoChange} />
+        <Input key={anexoKey} type="file" onChange={handleAnexoChange} />
         {anexo && <p className="text-xs text-muted-foreground">Selecionado: {anexo.nome}</p>}
       </div>
 
@@ -1107,6 +1124,11 @@ const AbrirSolicitacao = () => {
       <Button onClick={handleSubmit} disabled={!podeEnviar || enviando}>
         {enviando ? 'Enviando...' : 'Abrir solicitação'}
       </Button>
+      {!podeEnviar && faltando.length > 0 && (
+        <p className="-mt-3 text-xs text-fg-helper" role="status">
+          Para abrir a solicitação falta: {faltando.join(' · ')}.
+        </p>
+      )}
     </div>
   );
 };

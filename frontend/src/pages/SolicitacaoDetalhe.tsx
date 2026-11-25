@@ -57,6 +57,12 @@ const STATUS: Record<string, string> = {
   finalizada: 'Finalizada', rejeitada: 'Rejeitada',
 };
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const MESES_ABREV = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+// "2026-11" ou "2026-11-01" → "Nov/2026"
+const mesAno = (m?: string) => {
+  const x = /^(\d{4})-(\d{2})/.exec(m ?? '');
+  return x ? `${MESES_ABREV[Number(x[2]) - 1]}/${x[1]}` : m || '—';
+};
 const dataHora = (iso?: string) => (iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -140,7 +146,7 @@ export default function SolicitacaoDetalhe() {
                 <tr key={i} className="border-t border-border">
                   <td className="p-2">{l.centro_custo}</td>
                   <td className="p-2">{l.conta ? `${l.conta} — ${l.conta_nome}` : l.classe_imobilizado || '—'}</td>
-                  <td className="p-2 tabular-nums">{l.mes || '—'}</td>
+                  <td className="p-2 tabular-nums">{mesAno(l.mes)}</td>
                   <td className="p-2 text-right tabular-nums">{moeda.format(l.valor)}</td>
                 </tr>
               ))}
