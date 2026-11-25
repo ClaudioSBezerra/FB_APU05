@@ -107,6 +107,9 @@ type abrirSolicitacaoRequest struct {
 	// obrigatório exclusivamente para tipo_solicitacao="obras". Ignorado
 	// para os demais tipos, mesmo precedente de Anexos.
 	Classificacao string `json:"classificacao"`
+	// AnoOrcamento (homologação 25/11, item 7): só Obras em retirada_saldo e transferencia_saldo — ano anterior ou
+	// atual (padrão: o atual). Ignorado nas demais classificações e tipos.
+	AnoOrcamento int `json:"ano_orcamento"`
 	// ObrasLinhas (Story 3.5) é a lista de linhas de Obras — local de obra +
 	// subgrupo de despesa + ordem de investimento + valor, exigida
 	// (len>=1) exclusivamente para tipo_solicitacao="obras". Ignorado para
@@ -514,6 +517,7 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			var contaID, mes, classeImobilizadoID sql.NullString
 			if req.TipoSolicitacao == "imobilizado" {
 				classeImobilizadoID = sql.NullString{String: l.ClasseImobilizadoID, Valid: true}
+				mes = sql.NullString{String: l.Mes.Format(dataISOFormato), Valid: true}
 			} else {
 				contaID = sql.NullString{String: l.ContaID, Valid: true}
 				mes = sql.NullString{String: l.Mes.Format(dataISOFormato), Valid: true}
@@ -610,6 +614,12 @@ func validarLancamentosEstrutura(linhas []lancamentoRequest, tipo string) ([]lan
 				return nil, fmt.Sprintf("linha %d: campo 'classe_imobilizado_id' inválido", n)
 			}
 			validada.ClasseImobilizadoID = l.ClasseImobilizadoID
+			// Imobilizado passa a exigir o mês de competência (retorno da homologação, item 8)
+			mes, err := parseMesCompetencia(l.Mes)
+			if err != nil {
+				return nil, fmt.Sprintf("linha %d: informe o mês de competência do imobilizado", n)
+			}
+			validada.Mes = mes
 		} else {
 			if !uuidFormatRegexp.MatchString(l.ContaID) {
 				return nil, fmt.Sprintf("linha %d: campo 'conta_id' inválido", n)
@@ -1148,14 +1158,24 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 	fornecedor := stringOuNulo(req.Fornecedor)
 	descricao := stringOuNulo(req.Descricao)
 
+	var anoObras sql.NullInt64
+	if classificacaoUsaAno(req.Classificacao) {
+		ano, msg := resolverAnoObras(req.AnoOrcamento, agoraRecife().Year())
+		if msg != "" {
+			jsonErr(w, http.StatusBadRequest, msg)
+			return
+		}
+		anoObras = sql.NullInt64{Int64: int64(ano), Valid: true}
+	}
+
 	// centro_custo_id fica NULL para obras (migration 009: CHECK XOR com
 	// classificacao torna essa relação um invariante de schema).
 	var solicitacaoID string
 	err = tx.QueryRow(`
-		INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, classificacao, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado)
-		VALUES ('obras', $1, NULL, 'aberta', $2, 1, $3, $4, $5, $6, $7)
+		INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, classificacao, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, ano_orcamento)
+		VALUES ('obras', $1, NULL, 'aberta', $2, 1, $3, $4, $5, $6, $7, $8)
 		RETURNING id
-	`, solicitanteID, string(snapshotJSON), req.Classificacao, fornecedor, descricao, fornecedorCNPJ, req.FornecedorNaoCadastrado).Scan(&solicitacaoID)
+	`, solicitanteID, string(snapshotJSON), req.Classificacao, fornecedor, descricao, fornecedorCNPJ, req.FornecedorNaoCadastrado, anoObras).Scan(&solicitacaoID)
 	if err != nil {
 		log.Printf("[Solicitacoes] Erro ao inserir solicitacao (obras): %v", err)
 		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")

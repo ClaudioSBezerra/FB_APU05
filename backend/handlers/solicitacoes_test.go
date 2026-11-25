@@ -103,7 +103,7 @@ func corpoImobilizado(autorizadorID, lancamentosJSON, anexosJSON string) string 
 // 3.4: nenhum campo de fornecedor/mês é exposto para este tipo).
 func linhaImobilizadoJSON(lado, divisaoID, centroCustoID, classeImobilizadoID string, valor float64) string {
 	return fmt.Sprintf(
-		`{"lado":"%s","divisao_id":"%s","centro_custo_id":"%s","classe_imobilizado_id":"%s","valor":%g}`,
+		`{"lado":"%s","divisao_id":"%s","centro_custo_id":"%s","classe_imobilizado_id":"%s","mes":"2026-11-01","valor":%g}`,
 		lado, divisaoID, centroCustoID, classeImobilizadoID, valor,
 	)
 }
@@ -1491,7 +1491,7 @@ func TestAbrirSolicitacaoHandler_Imobilizado_Success(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
-		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, nil, nil, testSolicitacaoClasseImobilizadoID, 1000.0).
+		WithArgs(solicitacaoID, "destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, nil, "2026-11-01", testSolicitacaoClasseImobilizadoID, 1000.0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacao_anexos")).
 		WithArgs(solicitacaoID, "cotacao.pdf", "application/pdf", len(testAnexoConteudo), sha256HexDeTeste(testAnexoConteudo), testAnexoConteudo).
@@ -1825,7 +1825,7 @@ func TestAbrirSolicitacaoHandler_Obras_OrdemCasaLocalSubgrupoCaseInsensitive(t *
 		WithArgs(testSolicitacaoAutorizadorID).
 		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Aprovador de Obras"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao", sqlmock.AnyArg(), sqlmock.AnyArg(), nil, false).
+		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao", sqlmock.AnyArg(), sqlmock.AnyArg(), nil, false, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
 		WithArgs(solicitacaoID, nil, testObraLocalObraID, testObraSubgrupoDespesaID, "OI-001", 1000.0).
@@ -1920,7 +1920,7 @@ func TestAbrirSolicitacaoHandler_Obras_Success(t *testing.T) {
 		WithArgs(testSolicitacaoAutorizadorID).
 		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Aprovador de Obras"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao", sqlmock.AnyArg(), sqlmock.AnyArg(), nil, false).
+		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao", sqlmock.AnyArg(), sqlmock.AnyArg(), nil, false, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
 		WithArgs(solicitacaoID, nil, testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).
@@ -1991,7 +1991,7 @@ func TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoBalanceada_Success(t *t
 		WithArgs(testSolicitacaoAutorizadorID).
 		WillReturnRows(sqlmock.NewRows([]string{"nome"}).AddRow("Aprovador de Obras"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs(testAtorID, sqlmock.AnyArg(), classificacaoTransferenciaSaldo, sqlmock.AnyArg(), sqlmock.AnyArg(), nil, false).
+		WithArgs(testAtorID, sqlmock.AnyArg(), classificacaoTransferenciaSaldo, sqlmock.AnyArg(), sqlmock.AnyArg(), nil, false, int64(2026)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
 		WithArgs(solicitacaoID, "retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).
@@ -2094,33 +2094,25 @@ func TestValidarLancamentosEstrutura_ValorAntesDeMesParaTiposNaoImobilizado(t *t
 	}
 }
 
-// TestValidarLancamentosEstrutura_Imobilizado_ContaIDEMesIgnorados cobre o
-// Boundary "Never" da spec 3.4 (nenhum campo de fornecedor/mês é exigido ou
-// validado para Imobilizado): mesmo que `conta_id`/`mes` venham preenchidos
-// no corpo (campos compartilhados pela mesma struct, precedente de
-// `autorizador_id` na Story 3.3), eles são ignorados — não bloqueiam a
-// validação nem são propostos para a linha validada.
-func TestValidarLancamentosEstrutura_Imobilizado_ContaIDEMesIgnorados(t *testing.T) {
-	linhas := []lancamentoRequest{{
+// Imobilizado exige o mês de competência (retorno da homologação, item 8); conta_id continua ignorada.
+func TestValidarLancamentosEstrutura_Imobilizado_ExigeMesEIgnoraConta(t *testing.T) {
+	base := lancamentoRequest{
 		Lado:                "destino",
 		DivisaoID:           testSolicitacaoDivisaoID,
 		CentroCustoID:       testSolicitacaoCentroCustoID,
 		ContaID:             "nao-e-um-uuid-e-nem-deveria-importar",
-		Mes:                 "nao-e-uma-data-e-nem-deveria-importar",
 		ClasseImobilizadoID: testSolicitacaoClasseImobilizadoID,
 		Valor:               1000,
-	}}
-	validadas, msg := validarLancamentosEstrutura(linhas, "imobilizado")
+	}
+	if _, msg := validarLancamentosEstrutura([]lancamentoRequest{base}, "imobilizado"); !strings.Contains(msg, "mês de competência") {
+		t.Fatalf("sem mês deveria ser recusado pedindo o mês, obtido %q", msg)
+	}
+	base.Mes = "2026-11-01"
+	validadas, msg := validarLancamentosEstrutura([]lancamentoRequest{base}, "imobilizado")
 	if msg != "" {
-		t.Fatalf("conta_id/mes malformados não deveriam bloquear Imobilizado, obtido erro: %q", msg)
+		t.Fatalf("com mês deveria passar, obtido erro: %q", msg)
 	}
-	if len(validadas) != 1 {
-		t.Fatalf("esperada 1 linha validada, obtido %d", len(validadas))
-	}
-	if validadas[0].ContaID != "" || !validadas[0].Mes.IsZero() {
-		t.Fatalf("conta_id/mes deveriam ser ignorados para Imobilizado, obtido ContaID=%q Mes=%v", validadas[0].ContaID, validadas[0].Mes)
-	}
-	if validadas[0].ClasseImobilizadoID != testSolicitacaoClasseImobilizadoID {
-		t.Fatalf("classe_imobilizado_id esperado preservado, obtido %q", validadas[0].ClasseImobilizadoID)
+	if validadas[0].ContaID != "" || validadas[0].Mes.Format("2006-01") != "2026-11" || validadas[0].ClasseImobilizadoID != testSolicitacaoClasseImobilizadoID {
+		t.Fatalf("linha validada inesperada: %+v", validadas[0])
 	}
 }

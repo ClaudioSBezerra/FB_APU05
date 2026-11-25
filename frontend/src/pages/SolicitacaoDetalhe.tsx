@@ -17,6 +17,7 @@ interface LinhaObra { lado: string; local: string; subgrupo: string; ordem: stri
 interface Extras {
   codigo?: string;
   classificacao?: string | null;
+  ano_orcamento?: number;
   obras_linhas?: LinhaObra[];
   solicitante_nome?: string | null;
   solicitante_email?: string | null;
@@ -194,7 +195,7 @@ export default function SolicitacaoDetalhe() {
         {tabela((x?.lancamentos ?? []).filter((l) => l.lado !== 'origem' && l.lado !== 'destino'), 'Lançamentos')}
         {(x?.obras_linhas ?? []).length > 0 && (
           <div className="grid gap-1">
-            <h3 className="text-sm font-semibold">Linhas da obra{x?.classificacao ? ` · ${x.classificacao.replace(/_/g, ' ')}` : ''}</h3>
+            <h3 className="text-sm font-semibold">Linhas da obra{x?.classificacao ? ` · ${x.classificacao.replace(/_/g, ' ')}` : ''}{x?.ano_orcamento ? ` · ano ${x.ano_orcamento}` : ''}</h3>
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-left text-sm">
                 <thead className="bg-muted/50 text-xs text-muted-foreground">

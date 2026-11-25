@@ -488,8 +488,12 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 
 	// Obras: as linhas ficam em outra tabela (local, subgrupo, ordem, lado, valor) e a classificação no cabeçalho.
 	var classificacao sql.NullString
-	_ = db.QueryRow(`SELECT classificacao FROM solicitacoes WHERE id = $1`, id).Scan(&classificacao)
+	var anoOrcamento sql.NullInt64
+	_ = db.QueryRow(`SELECT classificacao, ano_orcamento FROM solicitacoes WHERE id = $1`, id).Scan(&classificacao, &anoOrcamento)
 	out["classificacao"] = nullStringOuNil(classificacao)
+	if anoOrcamento.Valid {
+		out["ano_orcamento"] = anoOrcamento.Int64
+	}
 	orows, err := db.Query(`
 		SELECT COALESCE(ol.lado, ''), lo.nome, sg.nome, ol.ordem_investimento, ol.valor::float8
 		FROM solicitacao_obras_linhas ol

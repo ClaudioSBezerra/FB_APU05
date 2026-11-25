@@ -57,6 +57,8 @@ interface OpcoesFormulario {
   // Regra do ano (data do SERVIDOR, fuso de Recife): só o corrente; em janeiro também o anterior.
   ano_corrente?: number;
   anos_permitidos?: number[];
+  // Obras (retirada e transferência de saldo): ano anterior e atual.
+  anos_obras?: number[];
 }
 
 // Saldo orçamentário do SAP (aviso, nunca trava): mostra o disponível ACUMULADO até o mês da linha.
@@ -519,6 +521,7 @@ const AbrirSolicitacao = () => {
   // Imobilizado (11/11, item 8).
   const [quantidadeMaterial, setQuantidadeMaterial] = useState('');
   const [classificacao, setClassificacao] = useState('inclusao');
+  const [anoObras, setAnoObras] = useState(''); // '' = ano atual (padrão do servidor)
   const [obrasLinhas, setObrasLinhas] = useState<LinhaObra[]>([novaLinhaObra()]);
   const [obraLocalId, setObraLocalId] = useState('');
   const [enviando, setEnviando] = useState(false);
@@ -643,6 +646,7 @@ const AbrirSolicitacao = () => {
       setLinhas([novaLinhaLancamento('origem'), novaLinhaLancamento('destino')]);
     } else if (tipo === 'obras') {
       setClassificacao('inclusao');
+      setAnoObras('');
       setObrasLinhas([novaLinhaObra()]);
       setObraLocalId('');
     } else {
@@ -671,6 +675,7 @@ const AbrirSolicitacao = () => {
         payload = {
           tipo_solicitacao: 'obras',
           classificacao,
+          ...(classificacao === 'retirada_saldo' || classificacao === 'transferencia_saldo' ? { ano_orcamento: Number(anoObras || opcoes?.ano_corrente || 0) || undefined } : {}),
           autorizador_id: autorizadorId,
           ...camposComuns,
           obras_linhas: obrasLinhas.map((l) => ({
@@ -698,6 +703,7 @@ const AbrirSolicitacao = () => {
             ...(tipo === 'imobilizado'
               ? { classe_imobilizado_id: l.classeImobilizadoId }
               : { conta_id: l.contaId, mes: l.mes ? `${l.mes}-01` : '' }),
+            ...(tipo === 'imobilizado' ? { mes: l.mes ? `${l.mes}-01` : '' } : {}),
           })),
         };
       }
@@ -744,7 +750,7 @@ const AbrirSolicitacao = () => {
           linhas.every((l) => l.contaId && l.mes && (l.lado === 'destino' || parseFloat(l.valor) > 0)) &&
           somaOrigens > 0
         : Boolean(centroCustoId) &&
-          linhas.every((l) => parseFloat(l.valor) > 0 && (tipo === 'imobilizado' ? l.classeImobilizadoId : l.contaId && l.mes)) &&
+          linhas.every((l) => parseFloat(l.valor) > 0 && (tipo === 'imobilizado' ? l.classeImobilizadoId && l.mes : l.contaId && l.mes)) &&
           (tipo !== 'inclusao' && tipo !== 'imobilizado' ? true : Boolean(autorizadorId)) &&
           (tipo !== 'imobilizado' || parseInt(quantidadeMaterial, 10) > 0 && !/[.,]/.test(quantidadeMaterial)));
 
@@ -759,6 +765,7 @@ const AbrirSolicitacao = () => {
     if (!centroCustoId) faltando.push('Centro de custo');
     if (tipo === 'imobilizado') {
       if (linhas.some((l) => !l.classeImobilizadoId)) faltando.push('Classe de imobilizado');
+      if (linhas.some((l) => !l.mes)) faltando.push('Mês de competência');
       if (!(parseInt(quantidadeMaterial, 10) > 0) || /[.,]/.test(quantidadeMaterial)) faltando.push('Quantidade do material (número inteiro)');
     } else {
       if (linhas.some((l) => !l.contaId)) faltando.push('Conta de todas as linhas');
@@ -945,6 +952,10 @@ const AbrirSolicitacao = () => {
                   </Select>
                 </div>
                 <div className="grid gap-1.5">
+                  <Label>Mês de competência</Label>
+                  <MesAno value={linha.mes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
+                </div>
+                <div className="grid gap-1.5">
                   <Label>Quantidade do material</Label>
                   <Input
                     inputMode="numeric"
@@ -993,6 +1004,18 @@ const AbrirSolicitacao = () => {
               </SelectContent>
             </Select>
           </div>
+
+          {(classificacao === 'retirada_saldo' || classificacao === 'transferencia_saldo') && (
+            <div className="grid max-w-[10rem] gap-1.5">
+              <Label>Ano do orçamento</Label>
+              <Select value={anoObras || String(opcoes?.ano_corrente ?? '')} onValueChange={setAnoObras}>
+                <SelectTrigger><SelectValue placeholder="Ano" /></SelectTrigger>
+                <SelectContent>
+                  {(opcoes?.anos_obras ?? []).map((a) => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="grid gap-1.5">
             <Label>Local de obra</Label>

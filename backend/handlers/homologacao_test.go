@@ -51,3 +51,23 @@ func TestValidarRegraFeriado(t *testing.T) {
 		t.Errorf("em 'pascoa' dia/mês são zerados: %v %v", v, err)
 	}
 }
+
+// Obras (item 7): retirada e transferência de saldo aceitam o ano anterior e o atual.
+func TestResolverAnoObras(t *testing.T) {
+	if a, m := resolverAnoObras(0, 2026); a != 2026 || m != "" {
+		t.Errorf("sem ano = atual: %d %q", a, m)
+	}
+	for _, ok := range []int{2025, 2026} {
+		if a, m := resolverAnoObras(ok, 2026); a != ok || m != "" {
+			t.Errorf("%d deveria valer: %q", ok, m)
+		}
+	}
+	for _, ruim := range []int{2024, 2027} {
+		if _, m := resolverAnoObras(ruim, 2026); !strings.Contains(m, "2025 ou 2026") {
+			t.Errorf("%d deveria ser recusado citando 2025 ou 2026: %q", ruim, m)
+		}
+	}
+	if !classificacaoUsaAno("retirada_saldo") || !classificacaoUsaAno("transferencia_saldo") || classificacaoUsaAno("inclusao") || classificacaoUsaAno("fl") {
+		t.Error("só retirada e transferência de saldo usam ano")
+	}
+}

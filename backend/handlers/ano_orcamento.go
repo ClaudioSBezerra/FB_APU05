@@ -118,3 +118,23 @@ func validarAnoDoOrcamento(tipo string, linhas []lancamentoValidado, permitidos 
 	}
 	return fmt.Sprintf("O ano %d não é permitido para movimentar o orçamento. Neste momento só é possível usar %s.", ano, listaAnos(permitidos))
 }
+
+// Obras (retorno da homologação, item 7): retirada e transferência de saldo aceitam o ano ANTERIOR e o atual
+// (diferente da regra de janeiro dos formulários de verba). Inclusão e FL não têm ano.
+func classificacaoUsaAno(c string) bool { return c == "retirada_saldo" || c == "transferencia_saldo" }
+
+// anosObras devolve [ano anterior, ano atual].
+func anosObras(anoCorrente int) []int { return []int{anoCorrente - 1, anoCorrente} }
+
+// resolverAnoObras: 0 = ano atual; fora de {anterior, atual} é recusado com mensagem clara.
+func resolverAnoObras(pedido, anoCorrente int) (int, string) {
+	if pedido == 0 {
+		return anoCorrente, ""
+	}
+	for _, a := range anosObras(anoCorrente) {
+		if pedido == a {
+			return pedido, ""
+		}
+	}
+	return 0, fmt.Sprintf("O ano %d não é permitido para Obras. Escolha %d ou %d.", pedido, anoCorrente-1, anoCorrente)
+}
