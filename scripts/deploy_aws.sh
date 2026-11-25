@@ -11,7 +11,7 @@
 # Uso:
 #   ./scripts/deploy_aws.sh --check   # só valida pré-requisitos, não muda nada
 #   ./scripts/deploy_aws.sh --init    # 1ª vez: cria /opt/apps/fbtax/orcamento/.env com segredos novos
-#   ./scripts/deploy_aws.sh           # build, envio e subida do HEAD (== origin/main)
+#   ./scripts/deploy_aws.sh           # build, teste de fumaça (scripts/smoke_api.sh), envio e subida do HEAD
 #
 # Layout no servidor:
 #   /opt/apps/fbtax/orcamento/.env                 segredos (chmod 600, gerados no servidor, nunca no git)
@@ -88,6 +88,9 @@ git archive --format=tar HEAD | tar -x -C "$TMP"
 info "build das imagens (linux/amd64)"
 docker build -q -f "$TMP/backend/Dockerfile" -t "orcamento-api:$SHA" "$TMP" >/dev/null
 docker build -q -t "orcamento-web:$SHA" "$TMP/frontend" >/dev/null
+
+info "teste de fumaça da API (sobe a imagem sem banco e confere o registro de rotas)"
+"$(dirname "$0")/smoke_api.sh" "orcamento-api:$SHA" || die "a imagem da API não sobe — nada foi enviado ao servidor"
 
 info "enviando imagens para $HOST"
 docker save "orcamento-api:$SHA" "orcamento-web:$SHA" | gzip | ssh "$HOST" "gunzip | docker load" >/dev/null
