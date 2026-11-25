@@ -67,15 +67,6 @@ function PaginaInicial() {
   return <Navigate to={paginaInicial(user?.perfil)} replace />
 }
 
-// PainelRoute — atendente não usa o Painel (só Nova solicitação e Fila de atendimento).
-function PainelRoute({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth()
-  if (user?.perfil === 'atendente') {
-    return <Navigate to="/fila" replace />
-  }
-  return <>{children}</>
-}
-
 // ControleTIRoute — só entra quem tem o interruptor "Controle TI" ligado
 // (permissão lida do servidor). Enquanto a permissão carrega, não renderiza
 // nada (evita piscar o redirecionamento).
@@ -106,7 +97,7 @@ function App() {
               <Layout>
                 <Routes>
                   <Route path="/" element={<PaginaInicial />} />
-                  <Route path="/painel" element={<PainelRoute><PainelConsolidado /></PainelRoute>} />
+                  <Route path="/painel" element={<PainelConsolidado />} />
                   <Route path="/solicitacoes/nova" element={<AbrirSolicitacao />} />
                   <Route path="/solicitacoes/:id" element={<SolicitacaoDetalhe />} />
                   <Route path="/solicitacoes" element={<Solicitacoes />} />

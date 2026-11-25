@@ -159,11 +159,10 @@ export function AppRail() {
   // Módulo Controle TI: o menu só aparece para quem tem o interruptor ligado
   // em Gestão de Usuários (lido do servidor, ver usePermissoes).
   const { data: permissoes } = usePermissoes();
-  // Atendente: só Nova solicitação e Fila de atendimento (sem Painel). Administrador: tudo.
   const filaItem = { id: 'fila', icon: ListChecks, label: 'Fila de atendimento', path: '/fila' };
   const consultaItem = { id: 'solicitacoes', icon: ListChecks, label: podeAtender(user?.perfil) ? 'Solicitações' : 'Minhas solicitações', path: '/solicitacoes' };
   const items = [
-    ...(user?.perfil === 'atendente' ? mainItems.filter((i) => i.id === 'nova-solicitacao') : mainItems),
+    ...mainItems,
     consultaItem,
     ...(permissoes?.controle_ti ? [{ id: 'controle-ti', icon: Cpu, label: 'Controle de Despesas', path: '/controle-ti' }] : []),
     ...(podeAtender(user?.perfil) ? [filaItem] : []),

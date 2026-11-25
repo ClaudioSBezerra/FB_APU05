@@ -1,6 +1,6 @@
 // Perfis do sistema (iguais aos do backend, usuarios.perfil):
 //   administrador — administrador do ambiente: tudo (usuários, cadastros, integrações, fila…)
-//   atendente     — só Nova solicitação e Fila de atendimento
+//   atendente     — Nova solicitação, Painel, Solicitações e Fila de atendimento
 //   solicitante   — abre solicitações e acompanha (Nova solicitação e Painel)
 export type Perfil = 'solicitante' | 'atendente' | 'administrador';
 
