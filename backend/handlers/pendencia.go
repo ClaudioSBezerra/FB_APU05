@@ -52,7 +52,7 @@ func lerPendenciaOuComentarioRequest(w http.ResponseWriter, r *http.Request) (ve
 
 	var req pendenciaOuComentarioRequest
 	if err := json.Unmarshal(corpo, &req); err != nil {
-		jsonErr(w, http.StatusBadRequest, "corpo da requisição inválido")
+		jsonErr(w, http.StatusBadRequest, "Os dados enviados estão incompletos ou em formato inválido. Atualize a página e tente de novo.")
 		return 0, "", false
 	}
 

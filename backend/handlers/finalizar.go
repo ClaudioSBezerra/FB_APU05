@@ -173,7 +173,7 @@ func tratarErroFinalizar(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, exportacao.ErrNaoExportada):
 		jsonErr(w, http.StatusConflict, "a solicitação ainda não foi exportada")
 	case errors.Is(err, exportacao.ErrOrdensCriadasInvalidas):
-		jsonErr(w, http.StatusBadRequest, "campo 'ordens_criadas' não corresponde às linhas 'CRIAR' desta solicitação")
+		jsonErr(w, http.StatusBadRequest, "Informe a nova ordem de investimento e o imobilizado (IEA) de cada linha marcada como CRIAR para finalizar com sucesso.")
 	case errors.Is(err, exportacao.ErrOrdemJaExiste):
 		jsonErr(w, http.StatusConflict, "o número de ordem informado já existe")
 	default:

@@ -746,7 +746,7 @@ const AbrirSolicitacao = () => {
         : Boolean(centroCustoId) &&
           linhas.every((l) => parseFloat(l.valor) > 0 && (tipo === 'imobilizado' ? l.classeImobilizadoId : l.contaId && l.mes)) &&
           (tipo !== 'inclusao' && tipo !== 'imobilizado' ? true : Boolean(autorizadorId)) &&
-          (tipo !== 'imobilizado' || parseInt(quantidadeMaterial, 10) > 0));
+          (tipo !== 'imobilizado' || parseInt(quantidadeMaterial, 10) > 0 && !/[.,]/.test(quantidadeMaterial)));
 
   // O que ainda falta para liberar o botão (mostrado ao usuário em vez de deixar o botão cinza sem explicação).
   const faltando: string[] = [];
@@ -759,7 +759,7 @@ const AbrirSolicitacao = () => {
     if (!centroCustoId) faltando.push('Centro de custo');
     if (tipo === 'imobilizado') {
       if (linhas.some((l) => !l.classeImobilizadoId)) faltando.push('Classe de imobilizado');
-      if (!(parseInt(quantidadeMaterial, 10) > 0)) faltando.push('Quantidade do material');
+      if (!(parseInt(quantidadeMaterial, 10) > 0) || /[.,]/.test(quantidadeMaterial)) faltando.push('Quantidade do material (número inteiro)');
     } else {
       if (linhas.some((l) => !l.contaId)) faltando.push('Conta de todas as linhas');
       if (linhas.some((l) => !l.mes)) faltando.push('Mês de todas as linhas');
@@ -947,13 +947,14 @@ const AbrirSolicitacao = () => {
                 <div className="grid gap-1.5">
                   <Label>Quantidade do material</Label>
                   <Input
-                    type="number"
-                    min="1"
-                    step="1"
                     inputMode="numeric"
                     value={quantidadeMaterial}
-                    onChange={(e) => setQuantidadeMaterial(e.target.value.replace(/\D/g, ''))}
+                    aria-invalid={/[.,]/.test(quantidadeMaterial)}
+                    onChange={(e) => setQuantidadeMaterial(e.target.value.replace(/[^\d.,]/g, ''))}
                   />
+                  {/[.,]/.test(quantidadeMaterial) && (
+                    <p className="text-xs text-destructive" role="alert">A quantidade deve ser um número inteiro (sem vírgula nem ponto).</p>
+                  )}
                 </div>
               </>
             ) : (

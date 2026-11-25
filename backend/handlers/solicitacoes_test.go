@@ -905,7 +905,7 @@ func TestAbrirSolicitacaoHandler_Inclusao_AutorizadorIDAusente(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "campo 'autorizador_id' inválido") {
+	if !strings.Contains(rec.Body.String(), "Escolha o autorizador da solicitação.") {
 		t.Fatalf("corpo não cita a validação esperada: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -928,7 +928,7 @@ func TestAbrirSolicitacaoHandler_Inclusao_AutorizadorIDMalformado(t *testing.T) 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "campo 'autorizador_id' inválido") {
+	if !strings.Contains(rec.Body.String(), "Escolha o autorizador da solicitação.") {
 		t.Fatalf("corpo não cita a validação esperada: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -1291,7 +1291,7 @@ func TestAbrirSolicitacaoHandler_Imobilizado_AutorizadorIDMalformado(t *testing.
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "campo 'autorizador_id' inválido") {
+	if !strings.Contains(rec.Body.String(), "Escolha o autorizador da solicitação.") {
 		t.Fatalf("corpo não cita a validação esperada: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -1534,7 +1534,7 @@ func TestAbrirSolicitacaoHandler_Obras_AutorizadorIDMalformado(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "campo 'autorizador_id' inválido") {
+	if !strings.Contains(rec.Body.String(), "Escolha o autorizador da solicitação.") {
 		t.Fatalf("corpo não cita a mensagem esperada: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

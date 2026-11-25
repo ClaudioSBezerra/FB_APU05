@@ -203,7 +203,7 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		var req abrirSolicitacaoRequest
 		if err := json.Unmarshal(corpo, &req); err != nil {
-			jsonErr(w, http.StatusBadRequest, "corpo da requisição inválido")
+			jsonErr(w, http.StatusBadRequest, "Os dados enviados estão incompletos ou em formato inválido. Atualize a página e tente de novo.")
 			return
 		}
 
@@ -243,7 +243,7 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		// (nunca aqui — este handler só checa o FORMATO do campo).
 		if req.TipoSolicitacao == "inclusao" || req.TipoSolicitacao == "imobilizado" {
 			if !uuidFormatRegexp.MatchString(req.AutorizadorID) {
-				jsonErr(w, http.StatusBadRequest, "campo 'autorizador_id' inválido")
+				jsonErr(w, http.StatusBadRequest, "Escolha o autorizador da solicitação.")
 				return
 			}
 		}
@@ -1042,7 +1042,7 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 	// validado contra aprovadores_obra mais adiante, via AutorizadorNominal
 	// (nunca aqui — este handler só checa o FORMATO do campo).
 	if !uuidFormatRegexp.MatchString(req.AutorizadorID) {
-		jsonErr(w, http.StatusBadRequest, "campo 'autorizador_id' inválido")
+		jsonErr(w, http.StatusBadRequest, "Escolha o autorizador da solicitação.")
 		return
 	}
 
