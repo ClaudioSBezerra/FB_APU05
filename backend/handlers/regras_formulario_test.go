@@ -15,7 +15,7 @@ import (
 
 // Os testes do handler de abertura usam sqlmock sem simular o SAP: a conferência de saldo é testada aqui.
 func init() {
-	conferirSaldoOrigem = func(context.Context, *sql.DB, []lancamentoValidado) (string, error) { return "", nil }
+	conferirSaldoOrigem = func(context.Context, *sql.DB, *sql.Tx, []lancamentoValidado, string) (string, error) { return "", nil }
 }
 
 func mesT(a, m int) time.Time { return time.Date(a, time.Month(m), 1, 0, 0, 0, 0, time.UTC) }
@@ -35,7 +35,7 @@ func TestPodeRemanejar_MenorEntreMesEAcumulado_NuncaNegativo(t *testing.T) {
 	}
 }
 
-func TestVerificarSaldoOrigem_BloqueiaMesNegativoMesmoComAcumulado(t *testing.T) {
+func TestVerificarSaldoOrigem_BloqueiaMesNegativoMesmoComAcumuladoEReserva(t *testing.T) {
 	cacheSaldo = map[string]cacheSaldoItem{}
 	db, mock := newSQLMock(t)
 	orig := consultarSaldoSAP
@@ -46,32 +46,48 @@ func TestVerificarSaldoOrigem_BloqueiaMesNegativoMesmoComAcumulado(t *testing.T)
 	consultarSaldoSAP = func(context.Context, sapodata.Config, string, string, string) (*sapodata.Saldo, error) {
 		return &sapodata.Saldo{Encontrado: true, Disponivel: disp, DispAcum: acum}, nil
 	}
-	prep := func() {
+	// reservas: cada linha = (mês, valor, número do chamado)
+	rodar := func(reservas [][3]any, linhas ...lancamentoValidado) string {
+		t.Helper()
+		mock.ExpectBegin()
+		tx, err := db.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
 		esperaBaseSaldo2(mock)
+		mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock")).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo FROM centros_custo WHERE id = $1")).WillReturnRows(sqlmock.NewRows([]string{"codigo"}).AddRow("10026040"))
 		mock.ExpectQuery(regexp.QuoteMeta("SELECT codigo FROM contas WHERE id = $1")).WillReturnRows(sqlmock.NewRows([]string{"codigo"}).AddRow("4210100001"))
+		rs := sqlmock.NewRows([]string{"m", "v", "n"})
+		for _, r := range reservas {
+			rs.AddRow(r[0], r[1], r[2])
+		}
+		mock.ExpectQuery("FROM solicitacao_lancamentos l JOIN solicitacoes s").WillReturnRows(rs)
+		msg, err := verificarSaldoOrigem(context.Background(), db, tx, linhas, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mock.ExpectRollback()
+		_ = tx.Rollback()
+		return msg
 	}
-	prep()
-	msg, err := verificarSaldoOrigem(context.Background(), db, []lancamentoValidado{
-		{Lado: "origem", CentroCustoID: sCC1, ContaID: sConta, Mes: mesT(2026, 6), Valor: 100},
-		{Lado: "destino", CentroCustoID: sCC2, ContaID: sConta, Mes: mesT(2026, 6), Valor: 100},
-	})
-	if err != nil || !strings.Contains(msg, "jun/2026") {
-		t.Fatalf("junho sem disponível no mês deve ser recusado: %q %v", msg, err)
+	if msg := rodar(nil, lancamentoValidado{Lado: "origem", CentroCustoID: sCC1, ContaID: sConta, Mes: mesT(2026, 6), Valor: 100},
+		lancamentoValidado{Lado: "destino", CentroCustoID: sCC2, ContaID: sConta, Mes: mesT(2026, 6), Valor: 100}); !strings.Contains(msg, "jun/2026") {
+		t.Fatalf("junho sem disponível no mês deve ser recusado: %q", msg)
 	}
-	prep()
-	msg, err = verificarSaldoOrigem(context.Background(), db, []lancamentoValidado{
-		{Lado: "origem", CentroCustoID: sCC1, ContaID: sConta, Mes: mesT(2026, 5), Valor: 5000},
-	})
-	if err != nil || msg != "" {
-		t.Fatalf("maio até 5 mil passa: %q %v", msg, err)
+	if msg := rodar(nil, lancamentoValidado{Lado: "origem", CentroCustoID: sCC1, ContaID: sConta, Mes: mesT(2026, 5), Valor: 5000}); msg != "" {
+		t.Fatalf("maio até 5 mil passa: %q", msg)
 	}
-	prep()
-	msg, _ = verificarSaldoOrigem(context.Background(), db, []lancamentoValidado{
-		{Lado: "origem", CentroCustoID: sCC1, ContaID: sConta, Mes: mesT(2026, 5), Valor: 5000.02},
-	})
-	if !strings.Contains(msg, "mai/2026") {
+	if msg := rodar(nil, lancamentoValidado{Lado: "origem", CentroCustoID: sCC1, ContaID: sConta, Mes: mesT(2026, 5), Valor: 5000.02}); !strings.Contains(msg, "mai/2026") {
 		t.Fatalf("maio acima de 5 mil é recusado: %q", msg)
+	}
+	// F3: GO-34 já reserva 4.900 em maio → sobram 100; um novo chamado de 200 é recusado citando o GO-34
+	msg := rodar([][3]any{{5, 4900.0, int64(34)}}, lancamentoValidado{Lado: "origem", CentroCustoID: sCC1, ContaID: sConta, Mes: mesT(2026, 5), Valor: 200})
+	if !strings.Contains(msg, "GO-34") || !strings.Contains(msg, "R$ 100,00") {
+		t.Fatalf("a reserva do GO-34 deveria segurar o saldo: %q", msg)
+	}
+	if msg := rodar([][3]any{{5, 4900.0, int64(34)}}, lancamentoValidado{Lado: "origem", CentroCustoID: sCC1, ContaID: sConta, Mes: mesT(2026, 5), Valor: 100}); msg != "" {
+		t.Fatalf("100 cabe no que sobra: %q", msg)
 	}
 }
 
@@ -98,7 +114,7 @@ func TestTransferencia_UmaContaPorLado(t *testing.T) {
 	}
 	dest := append([]lancamentoValidado{}, base...)
 	dest[3].ContaID = "c9"
-	if m := validarTransferenciaUmaContaPorLado(dest); !strings.Contains(m, "única conta no destino") && !strings.Contains(m, "única conta na destino") {
+	if m := validarTransferenciaUmaContaPorLado(dest); !strings.Contains(m, "única conta no destino") {
 		t.Fatalf("2 contas no destino: %q", m)
 	}
 	rep := append([]lancamentoValidado{}, base...)
@@ -157,6 +173,8 @@ func TestTotalImobilizado(t *testing.T) {
 }
 
 func init() {
+	conferirGraoObras = func(*sql.Tx, string, []obraLinhaValidado) (string, error) { return "", nil }
+	conferirTipoDestino = func(consultaRowCtx, []lancamentoValidado, string) (string, error) { return "", nil }
 	avisarAcompanhantes = func(*sql.DB, string, string, string, string) {}
 }
 

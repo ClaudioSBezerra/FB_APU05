@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"fb_apu05/internal/anexos"
+	"fb_apu05/internal/exportacao"
 	"fb_apu05/internal/fila"
 )
 
@@ -504,9 +505,12 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 	out["lancamentos"] = lanc
 
 	// Imobilizado (26/11, A1/A4): tipo de compra e valor unitário; o total é o valor da linha.
-	var tipoCompra sql.NullString
+	var tipoCompra, tipoTransf sql.NullString
 	var valorUnit sql.NullFloat64
-	if err := db.QueryRow(`SELECT tipo_compra, valor_unitario::float8 FROM solicitacoes WHERE id = $1`, id).Scan(&tipoCompra, &valorUnit); err == nil {
+	if err := db.QueryRow(`SELECT tipo_compra, valor_unitario::float8, tipo_transferencia FROM solicitacoes WHERE id = $1`, id).Scan(&tipoCompra, &valorUnit, &tipoTransf); err == nil {
+		if tipoTransf.Valid {
+			out["tipo_transferencia"] = tipoTransf.String
+		}
 		if tipoCompra.Valid {
 			out["tipo_compra"] = tipoCompra.String
 		}
@@ -524,8 +528,10 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 		out["ano_orcamento"] = anoOrcamento.Int64
 	}
 	orows, err := db.Query(`
-		SELECT ol.id, COALESCE(ol.lado, ''), lo.nome, sg.nome, ol.ordem_investimento, COALESCE(ol.imobilizado_iea, ''), ol.valor::float8
+		SELECT ol.id, COALESCE(ol.lado, ''), lo.nome, sg.nome, ol.ordem_investimento, COALESCE(ol.imobilizado_iea, ''), ol.valor::float8,
+		       ol.local_obra_id, ol.subgrupo_despesa_id, COALESCE(oo.tipo_faturamento, '')
 		FROM solicitacao_obras_linhas ol
+		LEFT JOIN obra_ordens oo ON oo.numero_ordem = ol.ordem_investimento
 		JOIN locais_obra lo ON lo.id = ol.local_obra_id
 		JOIN subgrupos_despesa sg ON sg.id = ol.subgrupo_despesa_id
 		WHERE ol.solicitacao_id = $1
@@ -537,13 +543,22 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 	defer orows.Close()
 	obras := make([]map[string]interface{}, 0)
 	for orows.Next() {
-		var linhaID, lado, local, subgrupo, ordem, iea string
+		var linhaID, lado, local, subgrupo, ordem, iea, localID, subgrupoID, fat string
 		var valor float64
-		if err := orows.Scan(&linhaID, &lado, &local, &subgrupo, &ordem, &iea, &valor); err != nil {
+		if err := orows.Scan(&linhaID, &lado, &local, &subgrupo, &ordem, &iea, &valor, &localID, &subgrupoID, &fat); err != nil {
 			log.Printf("[Fila] detalhe da solicitação %s: linha de obra ilegível: %v", id, err)
 			break
 		}
-		obras = append(obras, map[string]interface{}{"id": linhaID, "lado": lado, "local": local, "subgrupo": subgrupo, "ordem": ordem, "iea": iea, "valor": valor})
+		despesa := exportacao.DespesaDaClassificacao(classificacao.String)
+		if ordem == "CRIAR" {
+			fat = exportacao.FaturamentoDerivado(db, localID, subgrupoID, despesa)
+		}
+		// F8 (26/11): tipo de despesa e bloco de colunas da planilha, como na referência
+		tipos := exportacao.RotuloDespesa(despesa)
+		if fat != "" {
+			tipos += " · " + exportacao.RotuloFaturamento(fat)
+		}
+		obras = append(obras, map[string]interface{}{"id": linhaID, "lado": lado, "local": local, "subgrupo": subgrupo, "ordem": ordem, "iea": iea, "valor": valor, "tipos": tipos})
 	}
 	out["obras_linhas"] = obras
 	return out

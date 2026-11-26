@@ -916,3 +916,139 @@ func TestPG_EdicaoPelaControladoriaENotaInterna(t *testing.T) {
 		t.Errorf("o atendimento vê a nota interna: %s", rec.Body.String())
 	}
 }
+
+// Segunda leva (26/11): F6 escopo de CC do grupo, F3 cancelar, F5 filtro "Quem abriu" e visibilidade do painel,
+// F4 marcas FL/Externo do destino, F7/F8 grão de Obras.
+func TestPG_SegundaLeva(t *testing.T) {
+	e := pgSetup(t)
+	b := e.seed(t)
+	suf := fmt.Sprint(os.Getpid())
+	novoUsuario := func(nome string) string {
+		var id string
+		if err := e.admin.QueryRow(`INSERT INTO usuarios (email, nome, perfil) VALUES ($1, $2, 'solicitante')
+			ON CONFLICT (LOWER(email)) DO UPDATE SET nome = EXCLUDED.nome RETURNING id`, nome+suf+"@teste.local", nome).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	colega := novoUsuario("Colega")
+	// CC com código de 8 dígitos (divisão 9001 + CC 6120) para o escopo do grupo
+	var div, cc string
+	if err := e.admin.QueryRow(`INSERT INTO divisoes (codigo, nome) VALUES ('9001', '9001') ON CONFLICT (codigo) DO UPDATE SET nome = EXCLUDED.nome RETURNING id`).Scan(&div); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.admin.QueryRow(`INSERT INTO centros_custo (codigo, nome, divisao_id) VALUES ('90016120', 'CC escopo', $1) ON CONFLICT (codigo) DO UPDATE SET nome = EXCLUDED.nome RETURNING id`, div).Scan(&cc); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	if err := e.app.QueryRow(`INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot)
+		VALUES ('inclusao', $1, $2, 'aberta', '{}') RETURNING id`, b.usuario, cc).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	ver := func(usuario, perfil string) int {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.SetPathValue("id", id)
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": usuario, "perfil": perfil}))
+		rec := httptest.NewRecorder()
+		ObterSolicitacaoHandler(e.app)(rec, req)
+		return rec.Code
+	}
+	if c := ver(colega, "solicitante"); c != 403 {
+		t.Fatalf("sem grupo o colega não vê: %d", c)
+	}
+	var gid string
+	if err := e.app.QueryRow(`INSERT INTO grupos (nome, gestor_id, criado_por) VALUES ('Grupo Escopo', $1, $1) RETURNING id`, b.usuario).Scan(&gid); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = e.app.Exec(`INSERT INTO grupo_membros (grupo_id, usuario_id) VALUES ($1, $2)`, gid, colega)
+	// F6: CC 6120 limitado à divisão 0101 → não vê; CC 6120 sem divisão → vê
+	_, _ = e.app.Exec(`INSERT INTO grupo_escopo (grupo_id, cc, divisao) VALUES ($1, '6120', '0101')`, gid)
+	if c := ver(colega, "solicitante"); c != 403 {
+		t.Fatalf("escopo em outra divisão não dá acesso: %d", c)
+	}
+	_, _ = e.app.Exec(`INSERT INTO grupo_escopo (grupo_id, cc, divisao) VALUES ($1, '6120', '9001')`, gid)
+	if c := ver(colega, "solicitante"); c != 200 {
+		t.Fatalf("escopo com a divisão do chamado dá acesso: %d", c)
+	}
+	// F5: no painel do colega aparece o filtro com "Você" e o solicitante do chamado
+	req := httptest.NewRequest("GET", "/api/paineis/consolidado", nil)
+	req.SetPathValue("painel", "consolidado")
+	req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": colega, "perfil": "solicitante"}))
+	rec := httptest.NewRecorder()
+	ObterPainelHandler(e.app)(rec, req)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"nome":"Você"`) || !strings.Contains(rec.Body.String(), "Solicitante Teste") {
+		t.Fatalf("painel do colega: %d %s", rec.Code, rec.Body.String())
+	}
+	// F3: cancelar (dono, chamado aberto) → cancelada; de novo → recusado
+	cancelar := func(usuario, perfil string, versao int) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/", strings.NewReader(fmt.Sprintf(`{"versao":%d,"motivo":"teste"}`, versao)))
+		req.SetPathValue("id", id)
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": usuario, "perfil": perfil}))
+		rec := httptest.NewRecorder()
+		CancelarChamadoHandler(e.priv)(rec, req)
+		return rec
+	}
+	if rec := cancelar(colega, "solicitante", 1); rec.Code != 409 {
+		t.Fatalf("quem só acompanha não cancela: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := cancelar(b.usuario, "solicitante", 1); rec.Code != 200 {
+		t.Fatalf("dono cancela: %d %s", rec.Code, rec.Body.String())
+	}
+	if s, _ := statusDe(t, e.admin, id); s != "cancelada" {
+		t.Fatalf("status: %s", s)
+	}
+	// F4: marcas — divisão só FL recusa destino Externo
+	if _, err := e.admin.Exec(`UPDATE divisoes SET faz_fl = true, faz_externo = false WHERE id = $1`, div); err != nil {
+		t.Fatal(err)
+	}
+	tx, _ := e.app.Begin()
+	msg, err := verificarTipoDestino(tx, []lancamentoValidado{{Lado: "destino", DivisaoID: div}}, "Externo")
+	_ = tx.Rollback()
+	if err != nil || !strings.Contains(msg, "não faz compra externa") {
+		t.Fatalf("tipo do destino: %q %v", msg, err)
+	}
+	// F7/F8: obra com estrutura "Anexo Central", subgrupo F1.1 com ordem externa e FL
+	var loc, sub, subFora string
+	_ = e.admin.QueryRow(`INSERT INTO locais_obra (codigo, nome, tipo_estrutura) VALUES ('T91.3'||$1, 'Anexo teste', 'Anexo Central') RETURNING id`, suf).Scan(&loc)
+	_ = e.admin.QueryRow(`INSERT INTO subgrupos_despesa (codigo, nome, familias) VALUES ('TF1.1'||$1, 'Fundações', '{Anexo Central}') RETURNING id`, suf).Scan(&sub)
+	_ = e.admin.QueryRow(`INSERT INTO subgrupos_despesa (codigo, nome, familias) VALUES ('TK1.1'||$1, 'Só Fortaleza', '{Fortaleza}') RETURNING id`, suf).Scan(&subFora)
+	_, _ = e.admin.Exec(`INSERT INTO obra_ordens (numero_ordem, local_obra_id, subgrupo_despesa_id, tipo_despesa, tipo_faturamento) VALUES
+		('T6024'||$3, $1, $2, 'aquisicao_externa', 'aquisicao_externa'), ('T6025'||$3, $1, $2, 'aquisicao_interna', 'fl')`, loc, sub, suf)
+	linha := func(subgrupo, ordem string) []obraLinhaValidado {
+		return []obraLinhaValidado{{LocalObraID: loc, SubgrupoDespesaID: subgrupo, OrdemInvestimento: ordem, Valor: 10}}
+	}
+	conf := func(classif string, l []obraLinhaValidado) string {
+		tx, _ := e.app.Begin()
+		defer func() { _ = tx.Rollback() }()
+		m, err := verificarGraoObras(tx, classif, l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if m := conf("inclusao", linha(sub, "CRIAR")); !strings.Contains(m, "já existe a ordem T6024") {
+		t.Errorf("CRIAR com ordem existente: %q", m)
+	}
+	if m := conf("fl", linha(sub, "T6024"+suf)); !strings.Contains(m, "use T6025") {
+		t.Errorf("FL deve usar a ordem interna: %q", m)
+	}
+	if m := conf("fl", linha(sub, "T6025"+suf)); m != "" {
+		t.Errorf("FL com a ordem interna passa: %q", m)
+	}
+	if m := conf("inclusao", linha(subFora, "CRIAR")); !strings.Contains(m, "não pertence à estrutura") {
+		t.Errorf("subgrupo de outra família: %q", m)
+	}
+	// F3: a origem de uma transferência viva reserva o valor (dez/2026, 60 mil); cancelada, deixa de reservar
+	tid := e.solicitacao(t, b, "aberta")
+	res, cods, err := reservasDoAno(context.Background(), e.app, b.cc, b.conta4, 2026, "")
+	if err != nil || res[11] != 60000 || len(cods[11]) != 1 {
+		t.Fatalf("reserva viva: %v %v %v", res[11], cods[11], err)
+	}
+	if res2, _, _ := reservasDoAno(context.Background(), e.app, b.cc, b.conta4, 2026, tid); res2[11] != 0 {
+		t.Errorf("a edição ignora a reserva do próprio chamado: %v", res2[11])
+	}
+	_, _ = e.priv.Exec(`UPDATE solicitacoes SET status = 'cancelada' WHERE id = $1`, tid)
+	if res3, _, _ := reservasDoAno(context.Background(), e.app, b.cc, b.conta4, 2026, ""); res3[11] != 0 {
+		t.Errorf("cancelada não reserva: %v", res3[11])
+	}
+}

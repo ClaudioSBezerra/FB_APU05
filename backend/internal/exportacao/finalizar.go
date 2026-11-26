@@ -230,10 +230,15 @@ func resolverLinhasCriar(tx *sql.Tx, solicitacaoID string, ordensCriadas []Ordem
 		}
 
 		iea := sql.NullString{String: strings.TrimSpace(oc.ImobilizadoIEA), Valid: strings.TrimSpace(oc.ImobilizadoIEA) != ""}
+		// F8 (26/11): a ordem nova nasce com o tipo de despesa (da classificação) e o faturamento derivado
+		var classificacao string
+		_ = tx.QueryRow(`SELECT COALESCE(classificacao, '') FROM solicitacoes WHERE id = $1`, solicitacaoID).Scan(&classificacao)
+		despesa := DespesaDaClassificacao(classificacao)
+		faturamento := FaturamentoDerivado(tx, l.LocalObraID, l.SubgrupoDespesaID, despesa)
 		if _, err := tx.Exec(`
-			INSERT INTO obra_ordens (numero_ordem, local_obra_id, subgrupo_despesa_id, imobilizado_iea, origem, solicitacao_id)
-			VALUES ($1, $2, $3, $4, 'chamado', $5)
-		`, numeroOrdem, l.LocalObraID, l.SubgrupoDespesaID, iea, solicitacaoID); err != nil {
+			INSERT INTO obra_ordens (numero_ordem, local_obra_id, subgrupo_despesa_id, imobilizado_iea, origem, solicitacao_id, tipo_despesa, tipo_faturamento)
+			VALUES ($1, $2, $3, $4, 'chamado', $5, $6, $7)
+		`, numeroOrdem, l.LocalObraID, l.SubgrupoDespesaID, iea, solicitacaoID, despesa, faturamento); err != nil {
 			if ehViolacaoDeUnicidade(err) {
 				return ErrOrdemJaExiste
 			}

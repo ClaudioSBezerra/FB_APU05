@@ -7,6 +7,9 @@ export interface MesSaldo {
   mes: string; // AAAA-MM
   disponivel: number;
   disponivel_acumulado: number;
+  // F3 (26/11): o que chamados abertos já reservam neste mês (já descontado do disponível e do acumulado)
+  reservado?: number;
+  chamados_reserva?: string[];
   pode_remanejar: number;
 }
 

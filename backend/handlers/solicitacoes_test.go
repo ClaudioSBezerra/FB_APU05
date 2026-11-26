@@ -61,7 +61,7 @@ func esperarAnexoPadrao(mock sqlmock.Sqlmock) {
 }
 
 func corpoTransferencia(lancamentosJSON string) string {
-	return `{"tipo_solicitacao":"transferencia","descricao":"teste",` + anexosPadrao() + `,"lancamentos":[` + lancamentosJSON + `]}`
+	return `{"tipo_solicitacao":"transferencia","tipo_transferencia":"Externo","descricao":"teste",` + anexosPadrao() + `,"lancamentos":[` + lancamentosJSON + `]}`
 }
 
 // corpoInclusaoSFC monta o corpo de uma Inclusão SFC (Story 3.2) — mesmo
@@ -507,7 +507,7 @@ func TestAbrirSolicitacaoHandler_SemAlcada_NaoObrigatoriaSegueParaAFila(t *testi
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_obrigatoria'")).
 		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("false"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "aberta", nil, nil).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "aberta", nil, nil, sqlmock.AnyArg()).
 		WillReturnError(errors.New("parou aqui de propósito"))
 	mock.ExpectRollback()
 
@@ -596,7 +596,7 @@ func TestAbrirSolicitacaoHandler_ComFornecedorDescricaoEAnexo(t *testing.T) {
 	const alcadaID = "al000000-0000-0000-0000-000000000001"
 
 	corpo := fmt.Sprintf(
-		`{"tipo_solicitacao":"transferencia","fornecedor":"Fornecedor Teste Ltda","descricao":"Transferência para cobrir despesa X","anexos":[%s],"lancamentos":[%s,%s]}`,
+		`{"tipo_solicitacao":"transferencia","tipo_transferencia":"FL","fornecedor":"Fornecedor Teste Ltda","descricao":"Transferência para cobrir despesa X","anexos":[%s],"lancamentos":[%s,%s]}`,
 		anexoJSON("nota.pdf", "application/pdf", testAnexoConteudoBase64),
 		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", 1000),
 		linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 1000),
@@ -630,7 +630,7 @@ func TestAbrirSolicitacaoHandler_ComFornecedorDescricaoEAnexo(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_limite_transferencia'")).
 		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("50000"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), "Fornecedor Teste Ltda", "Transferência para cobrir despesa X", nil, false, nil, "aberta", nil, nil).
+		WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), "Fornecedor Teste Ltda", "Transferência para cobrir despesa X", nil, false, nil, "aberta", nil, nil, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
 		WithArgs(solicitacaoID, "origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", nil, 1000.0).
@@ -976,7 +976,7 @@ func TestAbrirSolicitacaoHandler_Inclusao_ZeroLinhas(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Inclusão aceita apenas uma linha") {
+	if !strings.Contains(rec.Body.String(), "Inclusão precisa de ao menos um mês") {
 		t.Fatalf("corpo não cita a restrição de contagem esperada: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -1000,7 +1000,7 @@ func TestAbrirSolicitacaoHandler_Inclusao_MaisDeUmaLinha(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("esperado 400, obtido %d (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Inclusão aceita apenas uma linha") {
+	if !strings.Contains(rec.Body.String(), "aparece duas vezes") {
 		t.Fatalf("corpo não cita a restrição de contagem esperada: %s", rec.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

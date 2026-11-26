@@ -12,7 +12,53 @@ import { BuscaPessoa, type Pessoa } from '@/components/CompartilharChamado';
 // Grupos de pessoas em cópia (resposta da Controladoria de 26/11, §9.2). A Controladoria cria o grupo e sempre define o
 // gestor da área; depois o gestor edita os membros, e a Controladoria também pode editar tudo e trocar o gestor. Grupo
 // sem gestor não pode ser salvo. O histórico do grupo guarda quem mudou o quê e quando.
-interface Grupo { id: string; nome: string; descricao: string; gestor: Pessoa; ativo: boolean; membros: Pessoa[] }
+interface EscopoItem { cc: string; divisao: string }
+interface Grupo { id: string; nome: string; descricao: string; gestor: Pessoa; ativo: boolean; membros: Pessoa[]; escopo?: EscopoItem[] }
+
+// F6 (26/11): CCs (4 últimos dígitos) que o grupo vê; sem divisão = em todas as divisões. Só a Controladoria edita.
+function EditorEscopo({ escopo, onChange }: { escopo: EscopoItem[]; onChange: (e: EscopoItem[]) => void }) {
+  const [cc, setCc] = useState('');
+  const [divisoes, setDivisoes] = useState('');
+  const divs = divisoes.split(/[\s,;]+/).map((d) => d.trim()).filter(Boolean);
+  const valido = /^\d{4}$/.test(cc) && divs.every((d) => /^\d{4}$/.test(d));
+  function incluir() {
+    const novos = divs.length ? divs.map((d) => ({ cc, divisao: d })) : [{ cc, divisao: '' }];
+    const chave = (e: EscopoItem) => `${e.cc}|${e.divisao}`;
+    const atual = new Set(escopo.map(chave));
+    onChange([...escopo, ...novos.filter((n) => !atual.has(chave(n)))]);
+    setCc('');
+    setDivisoes('');
+  }
+  return (
+    <div className="grid gap-1.5">
+      <Label>Centros de custo que o grupo vê ({escopo.length})</Label>
+      <p className="text-xs text-muted-foreground">
+        Os membros veem os chamados destes CCs, além dos chamados em que o grupo está em cópia. CC sem divisão = em todas as divisões.
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="grid gap-1">
+          <Label htmlFor="esc-cc" className="text-xs">CC (4 últimos dígitos)</Label>
+          <Input id="esc-cc" className="w-28" inputMode="numeric" maxLength={4} value={cc} onChange={(e) => setCc(e.target.value.replace(/\D/g, ''))} placeholder="6120" />
+        </div>
+        <div className="grid gap-1">
+          <Label htmlFor="esc-div" className="text-xs">Divisões (opcional)</Label>
+          <Input id="esc-div" className="w-48" value={divisoes} onChange={(e) => setDivisoes(e.target.value)} placeholder="vazio = todas · ex.: 0101, 0201" />
+        </div>
+        <Button size="sm" variant="outline" className="h-10" disabled={!valido} onClick={incluir}>Incluir</Button>
+      </div>
+      {escopo.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {escopo.map((e) => (
+            <span key={`${e.cc}|${e.divisao}`} className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs">
+              CC {e.cc} · {e.divisao ? `divisão ${e.divisao}` : 'todas as divisões'}
+              <button type="button" aria-label="Retirar" className="text-fg-helper hover:text-foreground" onClick={() => onChange(escopo.filter((x) => x !== e))}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(url, init);
@@ -48,6 +94,7 @@ function FormGrupo({ grupo, controladoria, onFechar }: { grupo: Grupo | null; co
   const [gestor, setGestor] = useState<Pessoa | null>(grupo?.gestor ?? null);
   const [ativo, setAtivo] = useState(grupo?.ativo ?? true);
   const [membros, setMembros] = useState<Pessoa[]>(grupo?.membros ?? []);
+  const [escopo, setEscopo] = useState<EscopoItem[]>(grupo?.escopo ?? []);
   const [verHistorico, setVerHistorico] = useState(false);
 
   const salvar = useMutation({
@@ -55,7 +102,7 @@ function FormGrupo({ grupo, controladoria, onFechar }: { grupo: Grupo | null; co
       api(grupo ? `/api/grupos/${grupo.id}` : '/api/grupos', {
         method: grupo ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nome, descricao, gestor_id: gestor?.id ?? '', ativo, membros: membros.map((m) => m.id) }),
+        body: JSON.stringify({ nome, descricao, gestor_id: gestor?.id ?? '', ativo, membros: membros.map((m) => m.id), ...(controladoria ? { escopo } : {}) }),
       }),
     onSuccess: () => {
       toast.success(grupo ? 'Grupo atualizado' : 'Grupo criado');
@@ -94,6 +141,12 @@ function FormGrupo({ grupo, controladoria, onFechar }: { grupo: Grupo | null; co
                 <input type="checkbox" className="size-4 accent-[var(--blue-d50)]" checked={ativo} onChange={(e) => setAtivo(e.target.checked)} /> Ativo
               </label>
             </>
+          )}
+          {controladoria && <EditorEscopo escopo={escopo} onChange={setEscopo} />}
+          {!controladoria && (grupo?.escopo ?? []).length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              CCs do grupo: {(grupo?.escopo ?? []).map((e) => `${e.cc}${e.divisao ? ` (${e.divisao})` : ''}`).join(', ')} — definidos pela Controladoria.
+            </p>
           )}
           <div className="grid gap-1.5">
             <Label>Membros ({membros.length})</Label>
@@ -147,7 +200,9 @@ export default function Grupos() {
           <li key={g.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3">
             <div className="min-w-0">
               <p className="text-sm font-medium">{g.nome} {!g.ativo && <Badge variant="secondary" className="ml-1">Inativo</Badge>}</p>
-              <p className="text-xs text-fg-helper">Gestor: {g.gestor.nome} · {g.membros.length} membro(s){g.descricao ? ` · ${g.descricao}` : ''}</p>
+              <p className="text-xs text-fg-helper">
+                Gestor: {g.gestor.nome} · {g.membros.length} membro(s) · {(g.escopo ?? []).length} CC(s){g.descricao ? ` · ${g.descricao}` : ''}
+              </p>
             </div>
             <Button size="sm" variant="outline" onClick={() => setEditando(g)}>{controladoria ? 'Editar' : 'Editar membros'}</Button>
           </li>

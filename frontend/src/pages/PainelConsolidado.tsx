@@ -2,8 +2,6 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
-import { toast } from 'sonner'
-import { RefreshCw } from 'lucide-react'
 
 // PainelConsolidado — Story 5.1 (Epic 5, FR-17). Página autenticada que
 // busca o painel agregado pré-calculado em GET /api/paineis/consolidado
@@ -121,99 +119,168 @@ function Carregando() {
   )
 }
 
+type PainelFilial = { divisao: string; rotulo: string; transferido: number; incluido: number; chamados: number }
+type Pessoa = { id: string; nome: string }
+const moedaBR = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+
+// Período (F5, 26/11): mês atual, mês passado, ano, tudo ou datas livres — vira de/ate (data de abertura).
+type Periodo = 'mes' | 'mes_passado' | 'ano' | 'tudo' | 'livre'
+const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+function intervalo(p: Periodo, de: string, ate: string): { de?: string; ate?: string } {
+  const h = new Date()
+  if (p === 'mes') return { de: iso(new Date(h.getFullYear(), h.getMonth(), 1)), ate: iso(h) }
+  if (p === 'mes_passado') return { de: iso(new Date(h.getFullYear(), h.getMonth() - 1, 1)), ate: iso(new Date(h.getFullYear(), h.getMonth(), 0)) }
+  if (p === 'ano') return { de: iso(new Date(h.getFullYear(), 0, 1)), ate: iso(h) }
+  if (p === 'livre') return { de: de || undefined, ate: ate || undefined }
+  return {}
+}
+
+// Resultado (F5): os cartões contam pelo status, na ordem em que a pessoa lê.
+const RESULTADOS: [string, string][] = [
+  ['finalizada_sucesso', 'Finalizadas com sucesso'],
+  ['finalizada_erro', 'Finalizadas com erro'],
+  ['pendente', 'Com pendência'],
+  ['aberta', 'Abertas'],
+  ['em_atendimento', 'Em atendimento'],
+  ['aguardando_aprovacao', 'Aguardando aprovação'],
+  ['cancelada', 'Canceladas'],
+]
+
+function TabelaFiliais({ itens }: { itens: PainelFilial[] }) {
+  const ordenados = [...itens].sort((a, b) => b.transferido + b.incluido - (a.transferido + a.incluido) || b.chamados - a.chamados)
+  return (
+    <section className="flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-card p-4">
+      <div>
+        <h2 className="text-base font-semibold text-foreground">Por filial</h2>
+        <p className="text-xs text-fg-helper">Valor já transferido (saída da filial de origem) e já incluído, de chamados finalizados com sucesso no período.</p>
+      </div>
+      {ordenados.length === 0 ? (
+        <p className="text-sm text-fg-helper">Nenhuma solicitação no período.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm tabular-nums">
+            <thead className="text-xs text-fg-helper">
+              <tr className="border-b border-border">
+                <th className="py-1.5 text-left font-medium">Filial</th>
+                <th className="py-1.5 text-right font-medium">Transferido</th>
+                <th className="py-1.5 text-right font-medium">Incluído</th>
+                <th className="py-1.5 text-right font-medium">Chamados</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ordenados.map((f) => (
+                <tr key={f.divisao} className="border-b border-border last:border-0">
+                  <td className="py-1.5 pr-3"><span className="font-medium">{f.divisao}</span> <span className="text-fg-secondary">{f.rotulo !== f.divisao ? f.rotulo : ''}</span></td>
+                  <td className="py-1.5 text-right">{f.transferido ? moedaBR.format(f.transferido) : '—'}</td>
+                  <td className="py-1.5 text-right">{f.incluido ? moedaBR.format(f.incluido) : '—'}</td>
+                  <td className="py-1.5 text-right">{numero.format(f.chamados)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function PainelConsolidado() {
-  const { isAuthenticated, user } = useAuth()
+  const { isAuthenticated } = useAuth()
   const navigate = useNavigate()
-  const [painel, setPainel] = useState<PainelConsolidadoResponse | null>(null)
+  const [painel, setPainel] = useState<(PainelConsolidadoResponse & { por_filial?: PainelFilial[]; solicitantes?: Pessoa[] }) | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [recalculando, setRecalculando] = useState(false)
+  const [periodo, setPeriodo] = useState<Periodo>('ano')
+  const [de, setDe] = useState('')
+  const [ate, setAte] = useState('')
+  const [quem, setQuem] = useState('')
+  const [pessoas, setPessoas] = useState<Pessoa[]>([])
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      navigate('/login', { replace: true })
-    }
+    if (!isAuthenticated) navigate('/login', { replace: true })
   }, [isAuthenticated, navigate])
 
   const buscarPainel = useCallback(() => {
-    return fetch('/api/paineis/consolidado')
+    const p = new URLSearchParams()
+    const r = intervalo(periodo, de, ate)
+    if (r.de) p.set('de', r.de)
+    if (r.ate) p.set('ate', r.ate)
+    if (quem) p.set('solicitante', quem)
+    return fetch(`/api/paineis/consolidado?${p}`)
       .then(async (res) => {
-        const data = (await res.json()) as PainelConsolidadoResponse
-        if (!res.ok) {
-          throw new Error(data.error || `HTTP ${res.status}`)
-        }
+        const data = (await res.json()) as PainelConsolidadoResponse & { por_filial?: PainelFilial[]; solicitantes?: Pessoa[] }
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
         return data
       })
-      .then((data) => setPainel(data))
+      .then((data) => {
+        setPainel(data)
+        // a lista de "Quem abriu" não depende do filtro escolhido: guarda a primeira que vier
+        if ((data.solicitantes ?? []).length > 0) setPessoas(data.solicitantes ?? [])
+      })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-  }, [])
+  }, [periodo, de, ate, quem])
 
   useEffect(() => {
     if (!isAuthenticated) return
     buscarPainel()
   }, [isAuthenticated, buscarPainel])
 
-  // Recalcular agora — dispara o mesmo job que roda sozinho a cada 5
-  // minutos (handlers/painel_calculo.go), só que na hora; útil para não
-  // esperar o próximo ciclo depois de testar uma solicitação nova.
-  async function recalcularAgora() {
-    setRecalculando(true)
-    try {
-      const res = await fetch('/api/admin/paineis/consolidado/recalcular', { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) {
-        throw new Error(data?.error || `HTTP ${res.status}`)
-      }
-      await buscarPainel()
-      toast.success('Painel recalculado')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Erro ao recalcular painel')
-    } finally {
-      setRecalculando(false)
-    }
-  }
-
-  if (!isAuthenticated) {
-    return null
-  }
+  if (!isAuthenticated) return null
 
   const total = painel ? painel.por_status.reduce((acc, i) => acc + i.quantidade, 0) : 0
+  const qtdStatus = (k: string) => painel?.por_status.find((i) => i.chave === k)?.quantidade ?? 0
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-lg font-semibold text-foreground">
-            {painel?.escopo === 'meus' ? 'Painel das minhas solicitações' : 'Painel consolidado de solicitações'}
-          </h1>
-          {painel?.escopo === 'meus' && (
-            <p className="text-xs text-fg-helper">Só os chamados que você abriu e os que foram compartilhados com você. Atualizado agora.</p>
-          )}
-          {painel && painel.escopo !== 'meus' && (
-            <p className="text-xs text-fg-helper">
-              {painel.gerado_em
-                ? `Atualizado em ${new Date(painel.gerado_em).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}. Recalculado automaticamente a cada 5 minutos.`
-                : 'O painel ainda não foi calculado.'}
-            </p>
-          )}
+      <div className="flex flex-col gap-1">
+        <h1 className="text-lg font-semibold text-foreground">
+          {painel?.escopo === 'meus' ? 'Painel das minhas solicitações' : 'Painel de solicitações'}
+        </h1>
+        <p className="text-xs text-fg-helper">
+          {painel?.escopo === 'meus'
+            ? 'Os chamados que você abriu, os que acompanha em cópia e os dos centros de custo dos seus grupos.'
+            : 'Todos os chamados.'}{' '}
+          Atualizado agora.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="grid gap-1">
+          <label className="text-xs text-fg-helper" htmlFor="painel-periodo">Período (abertura)</label>
+          <select id="painel-periodo" className="h-9 rounded-md border border-input bg-card px-2 text-sm" value={periodo} onChange={(e) => setPeriodo(e.target.value as Periodo)}>
+            <option value="mes">Mês atual</option>
+            <option value="mes_passado">Mês passado</option>
+            <option value="ano">Ano atual</option>
+            <option value="tudo">Tudo</option>
+            <option value="livre">Datas livres</option>
+          </select>
         </div>
-        {user?.perfil === 'administrador' && (
-          <Button size="sm" variant="outline" onClick={recalcularAgora} disabled={recalculando}>
-            <RefreshCw className={recalculando ? 'animate-spin' : undefined} />
-            {recalculando ? 'Recalculando...' : 'Recalcular agora'}
-          </Button>
+        {periodo === 'livre' && (
+          <>
+            <div className="grid gap-1">
+              <label className="text-xs text-fg-helper" htmlFor="painel-de">De</label>
+              <input id="painel-de" type="date" className="h-9 rounded-md border border-input bg-card px-2 text-sm" value={de} onChange={(e) => setDe(e.target.value)} />
+            </div>
+            <div className="grid gap-1">
+              <label className="text-xs text-fg-helper" htmlFor="painel-ate">Até</label>
+              <input id="painel-ate" type="date" className="h-9 rounded-md border border-input bg-card px-2 text-sm" value={ate} onChange={(e) => setAte(e.target.value)} />
+            </div>
+          </>
+        )}
+        {pessoas.length > 0 && (
+          <div className="grid gap-1">
+            <label className="text-xs text-fg-helper" htmlFor="painel-quem">Quem abriu</label>
+            <select id="painel-quem" className="h-9 rounded-md border border-input bg-card px-2 text-sm" value={quem} onChange={(e) => setQuem(e.target.value)}>
+              <option value="">Todos</option>
+              {pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+            </select>
+          </div>
         )}
       </div>
 
       {error && (
-        <div
-          role="alert"
-          data-testid="painel-error"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger-border bg-danger-bg px-4 py-3 text-sm text-danger-text"
-        >
+        <div role="alert" data-testid="painel-error" className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger-border bg-danger-bg px-4 py-3 text-sm text-danger-text">
           <span>Não foi possível carregar o painel. {error}</span>
-          <Button size="sm" variant="outline" onClick={() => { setError(null); buscarPainel() }}>
-            Tentar de novo
-          </Button>
+          <Button size="sm" variant="outline" onClick={() => { setError(null); buscarPainel() }}>Tentar de novo</Button>
         </div>
       )}
 
@@ -221,12 +288,11 @@ function PainelConsolidado() {
 
       {!error && painel && (
         <div className="flex flex-col gap-4" data-testid="painel-consolidado">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]">
-            <Indicador rotulo="Total de solicitações" valor={total} destaque />
-            {painel.por_status.map((item) => (
-              <Indicador key={item.chave} rotulo={item.rotulo} valor={item.quantidade} />
-            ))}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8">
+            <Indicador rotulo="Total" valor={total} destaque />
+            {RESULTADOS.map(([k, r]) => <Indicador key={k} rotulo={r} valor={qtdStatus(k)} />)}
           </div>
+          <TabelaFiliais itens={painel.por_filial ?? []} />
           <div className="grid gap-4 lg:grid-cols-2">
             <BarrasRanqueadas titulo="Por tipo de solicitação" itens={painel.por_tipo} unidade="solicitações" />
             <BarrasRanqueadas titulo="Por centro de custo" itens={painel.por_cc} unidade="solicitações" />

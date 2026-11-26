@@ -108,7 +108,9 @@ type abrirSolicitacaoRequest struct {
 	ValorUnitario float64 `json:"valor_unitario"`
 	// Visualizadores (§9, 26/11): pessoas (usuario_id) e grupos (grupo_id) em cópia, que acompanham o chamado.
 	Visualizadores []string `json:"visualizadores"`
-	Grupos         []string `json:"grupos"`
+	// TipoTransferencia (F4, 26/11): "FL" ou "Externo", só da Transferência; filtra as divisões do DESTINO.
+	TipoTransferencia string   `json:"tipo_transferencia"`
+	Grupos            []string `json:"grupos"`
 	// Classificacao (Story 3.5) é um dos 4 valores {inclusao, fl,
 	// retirada_saldo, transferencia_saldo} — campo no nível da solicitação,
 	// obrigatório exclusivamente para tipo_solicitacao="obras". Ignorado
@@ -330,7 +332,14 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		// Balanceamento entre 2 lados e exercício orçamentário único só fazem
 		// sentido para Transferência (Boundaries "Never" da spec: Inclusão SFC
 		// é sempre 1 única linha, nenhum dos dois conceitos se aplica).
+		var tipoTransferencia sql.NullString
 		if req.TipoSolicitacao == "transferencia" {
+			tt, msgErro := validarTipoTransferencia(req.TipoTransferencia)
+			if msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
+			tipoTransferencia = sql.NullString{String: tt, Valid: true}
 			if msgErro := validarBalanceamento(lancamentos); msgErro != "" {
 				jsonErr(w, http.StatusBadRequest, msgErro)
 				return
@@ -418,6 +427,18 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// F4 (26/11): as divisões do destino precisam fazer o Tipo escolhido (FL / Externo); a origem não é validada.
+		if tipoTransferencia.Valid {
+			if msgErro, errServidor := conferirTipoDestino(tx, lancamentos, tipoTransferencia.String); errServidor != nil {
+				log.Printf("[Solicitacoes] Erro ao conferir o tipo do destino: %v", errServidor)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			} else if msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
+		}
+
 		// Plano de contas (18/11/2026): a antiga divisão BIFC/SFC acabou — todo tipo de
 		// solicitação usa o plano de contas do SAP (sapodata.PlanoContas, "0050"); só o rótulo
 		// na mensagem de erro muda por tipo. Imobilizado (Story 3.4) pula este bloco inteiramente — é classe de
@@ -448,7 +469,7 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		// Item 6 (26/11): o saldo do SAP BLOQUEIA — a retirada de cada mês da origem não passa do "pode remanejar".
 		if req.TipoSolicitacao == "transferencia" {
-			msgSaldo, errSaldo := conferirSaldoOrigem(r.Context(), db, lancamentos)
+			msgSaldo, errSaldo := conferirSaldoOrigem(r.Context(), db, tx, lancamentos, "")
 			if errSaldo != nil {
 				log.Printf("[Solicitacoes] Erro ao conferir o saldo da origem: %v", errSaldo)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -564,10 +585,10 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		var solicitacaoID string
 		err = tx.QueryRow(`
-			INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material, tipo_compra, valor_unitario)
-			VALUES ($1, $2, $3, $10, $4, 1, $5, $6, $7, $8, $9, $11, $12::numeric)
+			INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material, tipo_compra, valor_unitario, tipo_transferencia)
+			VALUES ($1, $2, $3, $10, $4, 1, $5, $6, $7, $8, $9, $11, $12::numeric, $13)
 			RETURNING id
-		`, req.TipoSolicitacao, solicitanteID, centroCustoID, string(snapshotJSON), fornecedor, descricao, fornecedorCNPJ, req.FornecedorNaoCadastrado, quantidadeMaterial, statusInicial, tipoCompra, valorUnitario).Scan(&solicitacaoID)
+		`, req.TipoSolicitacao, solicitanteID, centroCustoID, string(snapshotJSON), fornecedor, descricao, fornecedorCNPJ, req.FornecedorNaoCadastrado, quantidadeMaterial, statusInicial, tipoCompra, valorUnitario, tipoTransferencia).Scan(&solicitacaoID)
 		if err != nil {
 			log.Printf("[Solicitacoes] Erro ao inserir solicitacao: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -737,16 +758,15 @@ func validarContagemELadoPorTipo(tipo string, linhas []lancamentoValidado) strin
 		if len(linhas) < 2 {
 			return "a solicitação de transferência precisa de ao menos uma linha de origem e uma de destino"
 		}
-		// 11/11 (item 2): várias origens (meses diferentes do mesmo CC)
-		// somam para UM destino.
+		// F1 (26/11): origem e destino com 1 a 12 meses cada (mesma conta e CC por lado — validarTransferenciaUmaContaPorLado)
 		destinos := 0
 		for _, l := range linhas {
 			if l.Lado == "destino" {
 				destinos++
 			}
 		}
-		if destinos != 1 {
-			return "a transferência deve ter exatamente uma linha de destino"
+		if destinos == 0 {
+			return "a transferência precisa de ao menos um mês de destino"
 		}
 		if destinos == len(linhas) {
 			return "a solicitação de transferência precisa de ao menos uma linha de origem"
@@ -759,11 +779,14 @@ func validarContagemELadoPorTipo(tipo string, linhas []lancamentoValidado) strin
 			return `inclusão SFC exige lado="destino"`
 		}
 	case "inclusao":
-		if len(linhas) != 1 {
-			return "Inclusão aceita apenas uma linha"
+		// F2 (26/11): de 1 a 12 meses, na mesma conta e no mesmo CC, sem repetir mês (a Inclusão SFC continua com 1)
+		for _, l := range linhas {
+			if l.Lado != "destino" {
+				return `inclusão exige lado="destino"`
+			}
 		}
-		if linhas[0].Lado != "destino" {
-			return `inclusão exige lado="destino"`
+		if msg := validarMesesDeUmaConta(linhas, "Inclusão"); msg != "" {
+			return msg
 		}
 	case "imobilizado":
 		if len(linhas) != 1 {
@@ -1207,6 +1230,16 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 		return
 	}
 
+	// F7/F8 (26/11): subgrupo da família da obra e ordem resolvida pelo grão (local, subgrupo, tipo de despesa)
+	if msg, err := conferirGraoObras(tx, req.Classificacao, linhas); err != nil {
+		log.Printf("[Solicitacoes] Erro ao conferir o grão das linhas de obras: %v", err)
+		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+		return
+	} else if msg != "" {
+		jsonErr(w, http.StatusBadRequest, msg)
+		return
+	}
+
 	// valorTotal para Obras é a soma de TODAS as linhas, sem distinguir
 	// lado (Code Map da spec), exceto para "transferencia_saldo" que usa o
 	// maior dos 2 lados — mesma convenção de Transferência.
@@ -1459,6 +1492,11 @@ func validarLocalSubgrupoOrdemObras(tx *sql.Tx, linhas []obraLinhaValidado) (str
 			SELECT local_obra_id, subgrupo_despesa_id FROM obra_ordens WHERE numero_ordem = $1
 		`, l.OrdemInvestimento).Scan(&ordemLocalObraID, &ordemSubgrupoDespesaID)
 		if err == sql.ErrNoRows {
+			// F7 (26/11): obra sem estrutura carregada (ex.: CD Jaboatão) aceita a ordem digitada
+			var semEstrutura bool
+			if e := tx.QueryRow(`SELECT tipo_estrutura IS NULL FROM locais_obra WHERE id = $1`, l.LocalObraID).Scan(&semEstrutura); e == nil && semEstrutura && reOrdemDigitada.MatchString(l.OrdemInvestimento) {
+				continue
+			}
 			return fmt.Sprintf("linha %d: ordem de investimento não encontrada", n), nil
 		}
 		if err != nil {

@@ -91,16 +91,16 @@ func EditarChamadoHandler(dbApp, dbPriv *sql.DB) http.HandlerFunc {
 		}
 		defer func() { _ = tx.Rollback() }()
 
-		var tipo, status, classificacao string
+		var tipo, status, classificacao, tipoTransf string
 		var versao int
 		var descricao, fornecedor, cnpj, tipoCompra sql.NullString
 		var naoCadastrado bool
 		var qtd sql.NullInt64
 		var unit sql.NullFloat64
 		err = tx.QueryRow(`SELECT tipo_solicitacao, status, versao, descricao, fornecedor, fornecedor_cnpj, fornecedor_nao_cadastrado,
-				tipo_compra, quantidade_material, valor_unitario::float8, COALESCE(classificacao, '')
+				tipo_compra, quantidade_material, valor_unitario::float8, COALESCE(classificacao, ''), COALESCE(tipo_transferencia, '')
 			FROM solicitacoes WHERE id = $1 FOR UPDATE`, id).
-			Scan(&tipo, &status, &versao, &descricao, &fornecedor, &cnpj, &naoCadastrado, &tipoCompra, &qtd, &unit, &classificacao)
+			Scan(&tipo, &status, &versao, &descricao, &fornecedor, &cnpj, &naoCadastrado, &tipoCompra, &qtd, &unit, &classificacao, &tipoTransf)
 		if err == sql.ErrNoRows {
 			jsonErr(w, http.StatusNotFound, "solicitação não encontrada")
 			return
@@ -287,6 +287,16 @@ func EditarChamadoHandler(dbApp, dbPriv *sql.DB) http.HandlerFunc {
 				linhas[0].Valor, linhas[0].tipoAlterado = total, true
 			}
 		}
+		if tipo == "inclusao" && mexeuSaldo {
+			lv := make([]lancamentoValidado, len(linhas))
+			for i, l := range linhas {
+				lv[i] = l.lancamentoValidado
+			}
+			if msg := validarMesesDeUmaConta(lv, "Inclusão"); msg != "" {
+				jsonErr(w, http.StatusBadRequest, msg)
+				return
+			}
+		}
 		if tipo == "transferencia" {
 			// destino único acompanha a soma da origem (como no formulário)
 			var destinos []*linhaEdicao
@@ -316,8 +326,17 @@ func EditarChamadoHandler(dbApp, dbPriv *sql.DB) http.HandlerFunc {
 					return
 				}
 			}
+			if tipoTransf != "" {
+				if msg, err := conferirTipoDestino(tx, lv, tipoTransf); err != nil {
+					jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+					return
+				} else if msg != "" {
+					jsonErr(w, http.StatusBadRequest, msg)
+					return
+				}
+			}
 			if mexeuSaldo {
-				msg, err := conferirSaldoOrigem(r.Context(), dbApp, lv)
+				msg, err := conferirSaldoOrigem(r.Context(), dbApp, tx, lv, id)
 				if err != nil {
 					log.Printf("[Edicao] saldo %s: %v", id, err)
 					jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -385,7 +404,15 @@ func EditarChamadoHandler(dbApp, dbPriv *sql.DB) http.HandlerFunc {
 			}
 			ov := make([]obraLinhaValidado, len(obras))
 			for i, o := range obras {
-				ov[i] = obraLinhaValidado{OrdemInvestimento: o.ordem, Valor: o.valor, Lado: sql.NullString{String: o.lado, Valid: o.lado != ""}}
+				ov[i] = obraLinhaValidado{OrdemInvestimento: o.ordem, Valor: o.valor, Lado: sql.NullString{String: o.lado, Valid: o.lado != ""},
+					LocalObraID: o.local, SubgrupoDespesaID: o.subgrupo}
+			}
+			if msg, err := conferirGraoObras(tx, classificacao, ov); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			} else if msg != "" {
+				jsonErr(w, http.StatusBadRequest, msg)
+				return
 			}
 			if msg := validarCriarObras(classificacao, ov); msg != "" {
 				jsonErr(w, http.StatusBadRequest, msg)

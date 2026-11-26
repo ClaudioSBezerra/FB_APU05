@@ -87,7 +87,7 @@ func TestTransferencia_VariasOrigensParaDestinoEmOutroCC(t *testing.T) {
 		mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_limite_transferencia'")).
 			WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("50000"))
 		mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-			WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), nil, "teste", nil, false, nil, "aberta", nil, nil).
+			WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), nil, "teste", nil, false, nil, "aberta", nil, nil, sqlmock.AnyArg()).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testRegrasSolicitacao))
 		for _, l := range []struct {
 			mes   string
@@ -109,13 +109,23 @@ func TestTransferencia_VariasOrigensParaDestinoEmOutroCC(t *testing.T) {
 	}
 }
 
-func TestTransferencia_DoisDestinos_Rejeita(t *testing.T) {
+// F1 (26/11): o destino aceita vários meses, mas não o mesmo mês duas vezes nem soma diferente da origem.
+func TestTransferencia_DestinoMesRepetido_Rejeita(t *testing.T) {
 	corpo := corpoTransferencia(
 		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-01-01", 1000) + "," +
 			linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 500) + "," +
-			linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-11-01", 500),
+			linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 500),
 	)
-	esperar400(t, abrir(t, corpo, nil), "exatamente uma linha de destino")
+	esperar400(t, abrir(t, corpo, nil), "aparece duas vezes no destino")
+}
+
+func TestTransferencia_DestinoSomaDiferente_Rejeita(t *testing.T) {
+	corpo := corpoTransferencia(
+		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-01-01", 1000) + "," +
+			linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 500) + "," +
+			linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-11-01", 400),
+	)
+	esperar400(t, abrir(t, corpo, nil), "não batem")
 }
 
 func TestTransferencia_CCDestinoInexistente_Rejeita(t *testing.T) {
@@ -140,7 +150,7 @@ func TestTransferencia_CCDestinoInexistente_Rejeita(t *testing.T) {
 }
 
 func TestAbertura_SemAnexo_Rejeita(t *testing.T) {
-	corpo := `{"tipo_solicitacao":"transferencia","descricao":"teste","lancamentos":[` +
+	corpo := `{"tipo_solicitacao":"transferencia","tipo_transferencia":"Externo","descricao":"teste","lancamentos":[` +
 		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-01-01", 1000) + "," +
 		linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 1000) + `]}`
 	rec := abrir(t, corpo, nil)

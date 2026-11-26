@@ -19,7 +19,7 @@ var reCodigoChamado = regexp.MustCompile(`(?i)^\s*(?:GO-?)?(\d{1,12})\s*$`)
 
 var statusBusca = map[string]bool{
 	"aguardando_aprovacao": true, "aberta": true, "em_atendimento": true, "pendente": true,
-	"finalizada_sucesso": true, "finalizada_erro": true, "rejeitada": true,
+	"finalizada_sucesso": true, "finalizada_erro": true, "rejeitada": true, "cancelada": true,
 }
 
 var tiposBusca = map[string]bool{"transferencia": true, "inclusao": true, "inclusao_sfc": true, "imobilizado": true, "obras": true}

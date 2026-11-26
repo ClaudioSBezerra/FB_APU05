@@ -22,6 +22,7 @@ import ERPBridgeCredenciais from '@/pages/ERPBridgeCredenciais'
 import CadastrosMestres from '@/pages/CadastrosMestres'
 import ControleTI from '@/pages/ControleTI'
 import Grupos from '@/pages/Grupos'
+import DivisoesMarcas from '@/pages/DivisoesMarcas'
 import { usePermissoes } from '@/hooks/usePermissoes'
 
 const queryClient = new QueryClient()
@@ -103,6 +104,7 @@ function App() {
                   <Route path="/solicitacoes/:id" element={<SolicitacaoDetalhe />} />
                   <Route path="/solicitacoes" element={<Solicitacoes />} />
                   <Route path="/grupos" element={<Grupos />} />
+                  <Route path="/divisoes" element={<AtendimentoRoute><DivisoesMarcas /></AtendimentoRoute>} />
                   <Route
                     path="/fila/:id"
                     element={

@@ -19,6 +19,7 @@ export function DivisaoCentroCusto({
   rotuloDivisao = 'Filial / Divisão',
   rotuloCC = 'Centro de custo',
   limparRotulo,
+  divisaoPermitida,
 }: {
   value: string;
   onChange: (id: string) => void;
@@ -28,6 +29,8 @@ export function DivisaoCentroCusto({
   rotuloCC?: string;
   // destino da Transferência: "Mesmo centro de custo da origem" (value '')
   limparRotulo?: string;
+  // F4 (26/11): só as divisões que passam no filtro (ex.: Tipo FL no destino da Transferência)
+  divisaoPermitida?: (divisaoId: string) => boolean;
 }) {
   const ccAtual = centros.find((c) => c.id === value);
   const [divisaoEscolhida, setDivisaoEscolhida] = useState('');
@@ -35,19 +38,19 @@ export function DivisaoCentroCusto({
 
   // só as divisões que têm algum CC disponível para este campo
   const opcoesDivisao = useMemo(() => {
-    const comCC = new Set(centros.map((c) => c.divisao_id));
+    const comCC = new Set(centros.map((c) => c.divisao_id).filter((d) => !divisaoPermitida || divisaoPermitida(d)));
     const porId = new Map(divisoes.map((d) => [d.id, d]));
     return [...comCC]
       .map((id) => porId.get(id) ?? { id, codigo: '', nome: 'Divisão sem cadastro' })
       .sort((a, b) => a.codigo.localeCompare(b.codigo));
-  }, [centros, divisoes]);
+  }, [centros, divisoes, divisaoPermitida]);
 
   const opcoesCC = useMemo(
     () =>
       centros
-        .filter((c) => !divisaoId || c.divisao_id === divisaoId)
+        .filter((c) => (!divisaoId || c.divisao_id === divisaoId) && (!divisaoPermitida || divisaoPermitida(c.divisao_id)))
         .map((c) => ({ id: c.id, codigo: parteCC(c.codigo), nome: c.nome })),
-    [centros, divisaoId],
+    [centros, divisaoId, divisaoPermitida],
   );
 
   return (

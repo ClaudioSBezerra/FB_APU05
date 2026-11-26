@@ -37,7 +37,7 @@ func TestOpcoesFormularioHandler_Sucesso(t *testing.T) {
 			AddRow("cc-1", "1000", "CC Administrativo", "div-1"))
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM divisoes")).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome"}).AddRow("div-1", "100", "Controladoria"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome", "faz_fl", "faz_externo"}).AddRow("div-1", "100", "Controladoria", true, true))
 
 	mock.ExpectQuery(regexp.QuoteMeta("plano = '0050'")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome"}).AddRow("conta-1", "3001", "Despesas Gerais"))
@@ -46,10 +46,10 @@ func TestOpcoesFormularioHandler_Sucesso(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome"}))
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM locais_obra")).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome", "tipo_estrutura"}))
 
 	mock.ExpectQuery(regexp.QuoteMeta("FROM subgrupos_despesa")).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome", "familias"}))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, codigo, nome, divisao_id FROM centros_custo ORDER BY codigo")).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "codigo", "nome", "divisao_id"}).
 			AddRow("cc-destino", "CC900", "Destino qualquer", "dv-1"))
@@ -243,34 +243,34 @@ func TestAutorizadoresHandler_ValorInvalido(t *testing.T) {
 	}
 }
 
-func TestObraOrdensHandler_Sucesso(t *testing.T) {
-	db, mock := newSQLMock(t)
-
+// F8 (26/11): Anexo Central F1.1 tem 602484 (externa) e 602492 (FL); a classificação escolhe UMA, preenchida.
+func TestObraOrdensHandler_ResolvePeloGrao(t *testing.T) {
 	localID := "44444444-4444-4444-4444-444444444444"
 	subgrupoID := "55555555-5555-5555-5555-555555555555"
-
-	mock.ExpectQuery(regexp.QuoteMeta("FROM obra_ordens")).
-		WithArgs(localID, subgrupoID).
-		WillReturnRows(sqlmock.NewRows([]string{"numero_ordem"}).AddRow("OI-001").AddRow("OI-002"))
-
-	handler := ObraOrdensHandler(db)
-	rec := httptest.NewRecorder()
-	handler(rec, newFormularioRequest(http.MethodGet, "/api/formulario/obra-ordens?local_obra_id="+localID+"&subgrupo_despesa_id="+subgrupoID))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, esperado 200 (body=%s)", rec.Code, rec.Body.String())
+	casos := []struct{ classificacao, despesa, ordem string }{
+		{"inclusao", "aquisicao_externa", "602484"},
+		{"fl", "aquisicao_interna", "602492"},
 	}
-	var resp struct {
-		Items []string `json:"items"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("resposta não é JSON válido: %v", err)
-	}
-	if len(resp.Items) != 2 || resp.Items[0] != "OI-001" {
-		t.Fatalf("items = %+v, inesperado", resp.Items)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("expectativas não cumpridas: %v", err)
+	for _, c := range casos {
+		db, mock := newSQLMock(t)
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(tipo_estrutura, '') FROM locais_obra")).WithArgs(localID).
+			WillReturnRows(sqlmock.NewRows([]string{"f"}).AddRow("Anexo Central"))
+		mock.ExpectQuery(regexp.QuoteMeta("FROM subgrupos_despesa WHERE id = $1")).WithArgs(subgrupoID).
+			WillReturnRows(sqlmock.NewRows([]string{"nome", "familias"}).AddRow("Fundações", "{Anexo Central,Antiga}"))
+		mock.ExpectQuery(regexp.QuoteMeta("FROM obra_ordens WHERE local_obra_id = $1")).WithArgs(localID, subgrupoID, c.despesa).
+			WillReturnRows(sqlmock.NewRows([]string{"o", "d", "f", "i", "n"}).AddRow(c.ordem, c.despesa, "aquisicao_externa", "900000001", "91F1"))
+		rec := httptest.NewRecorder()
+		ObraOrdensHandler(db)(rec, newFormularioRequest(http.MethodGet, "/api/formulario/obra-ordens?local_obra_id="+localID+"&subgrupo_despesa_id="+subgrupoID+"&classificacao="+c.classificacao))
+		var resp struct {
+			Situacao, Ordem, Dica string
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if rec.Code != 200 || resp.Situacao != "existe" || resp.Ordem != c.ordem || !strings.Contains(resp.Dica, "imobilizado 900000001") {
+			t.Fatalf("%s: %d %s", c.classificacao, rec.Code, rec.Body.String())
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

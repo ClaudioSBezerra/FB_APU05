@@ -144,7 +144,7 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		divisoes, err := listarOpcoes(db, "SELECT id, codigo, nome FROM divisoes ORDER BY nome")
+		divisoes, err := listarDivisoesComMarcas(db) // F4: marcas FL/Externo e nome da filial
 		if err != nil {
 			log.Printf("[Formulario] Erro ao consultar divisões: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -165,14 +165,14 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		locaisObra, err := listarOpcoes(db, "SELECT id, codigo, nome FROM locais_obra ORDER BY nome")
+		locaisObra, err := listarLocaisObra(db) // F7: com a família da estrutura
 		if err != nil {
 			log.Printf("[Formulario] Erro ao consultar locais de obra: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
 
-		subgruposDespesa, err := listarOpcoes(db, "SELECT id, codigo, nome FROM subgrupos_despesa ORDER BY nome")
+		subgruposDespesa, err := listarSubgrupos(db) // F7: com as famílias em que valem
 		if err != nil {
 			log.Printf("[Formulario] Erro ao consultar subgrupos de despesa: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -305,60 +305,6 @@ func AutorizadoresHandler(db *sql.DB) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"items": itens})
-	}
-}
-
-// ObraOrdensHandler — GET /api/formulario/obra-ordens?local_obra_id=&subgrupo_despesa_id=.
-// Lista as ordens de investimento já existentes no SAP para o par
-// local/subgrupo escolhido — o literal "CRIAR" (Story 3.5) é sempre uma
-// opção válida no front-end e nunca vem desta listagem (só nasce de fato na
-// finalização, Epic 4).
-func ObraOrdensHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		localObraID := r.URL.Query().Get("local_obra_id")
-		subgrupoDespesaID := r.URL.Query().Get("subgrupo_despesa_id")
-		if !uuidFormatRegexp.MatchString(localObraID) || !uuidFormatRegexp.MatchString(subgrupoDespesaID) {
-			jsonErr(w, http.StatusBadRequest, "parâmetros 'local_obra_id' e 'subgrupo_despesa_id' devem ser UUIDs válidos")
-			return
-		}
-
-		rows, err := db.Query(`
-			SELECT numero_ordem
-			FROM obra_ordens
-			WHERE local_obra_id = $1 AND subgrupo_despesa_id = $2
-			ORDER BY numero_ordem
-		`, localObraID, subgrupoDespesaID)
-		if err != nil {
-			log.Printf("[Formulario] Erro ao consultar ordens de obra: %v", err)
-			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
-			return
-		}
-		defer rows.Close()
-
-		ordens := make([]string, 0)
-		for rows.Next() {
-			var numero string
-			if err := rows.Scan(&numero); err != nil {
-				log.Printf("[Formulario] Erro ao ler linha de ordens de obra: %v", err)
-				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
-				return
-			}
-			ordens = append(ordens, numero)
-		}
-		if err := rows.Err(); err != nil {
-			log.Printf("[Formulario] Erro ao iterar ordens de obra: %v", err)
-			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"items": ordens})
 	}
 }
 

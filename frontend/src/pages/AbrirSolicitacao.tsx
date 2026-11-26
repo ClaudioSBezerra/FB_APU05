@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,11 +50,11 @@ interface OpcoesFormulario {
   centros_custo_destino?: CentroCustoOpcao[];
   // Origem da Transferência: todos os CCs na fase de testes; senão igual a centros_custo.
   centros_custo_origem?: CentroCustoOpcao[];
-  divisoes: OpcaoBusca[];
+  divisoes: (OpcaoBusca & { faz_fl?: boolean; faz_externo?: boolean })[];
   contas: OpcaoBusca[]; // plano de contas do SAP
   classes_imobilizado: OpcaoBusca[];
-  locais_obra: OpcaoBusca[];
-  subgrupos_despesa: OpcaoBusca[];
+  locais_obra: (OpcaoBusca & { tipo_estrutura?: string })[];
+  subgrupos_despesa: (OpcaoBusca & { familias?: string[] })[];
   // Regra do ano (data do SERVIDOR, fuso de Recife): só o corrente; em janeiro também o anterior.
   ano_corrente?: number;
   anos_permitidos?: number[];
@@ -156,50 +156,93 @@ async function lerAnexo(file: File, chave: number): Promise<Anexo | null> {
   return { chave, nome: file.name, contentType: file.type || 'application/octet-stream', base64: await fileParaBase64(file) };
 }
 
-// OrdemInvestimentoSelect — combo de ordem de investimento para uma linha de Obras: as ordens já existentes para o
-// par local/subgrupo escolhido (GET /api/formulario/obra-ordens) e, onde a ordem pode nascer, a opção "CRIAR".
-function OrdemInvestimentoSelect({
+// OrdemDaLinha (F7/F8, 26/11) — a ordem é resolvida pelo grão (local, subgrupo e tipo de despesa, que sai da
+// classificação), como na referência: existe → preenchida e travada; não existe e a classificação permite → "CRIAR"
+// travado; retirada/origem sem ordem → bloqueia; obra sem estrutura → digitada; duas ordens no grão → escolhe pela
+// coluna de faturamento. A linha de ajuda sob o campo diz de onde veio a ordem.
+interface OrdemCandidata { ordem: string; tipo_faturamento: string; colunas: string; iea: string }
+interface RespostaOrdem {
+  situacao: 'existe' | 'criar' | 'exige_existente' | 'sem_estrutura' | 'ambigua' | 'fora_da_familia';
+  ordem: string;
+  dica: string;
+  candidatas: OrdemCandidata[];
+}
+
+function OrdemDaLinha({
   localObraId,
   subgrupoDespesaId,
+  classificacao,
+  lado,
   value,
   onChange,
-  criar,
 }: {
   localObraId: string;
   subgrupoDespesaId: string;
+  classificacao: string;
+  lado: string;
   value: string;
   onChange: (v: string) => void;
-  criar: boolean;
 }) {
   const habilitado = Boolean(localObraId && subgrupoDespesaId);
+  const ladoEfetivo = classificacao === 'transferencia_saldo' ? lado : '';
   const { data } = useQuery({
-    queryKey: ['obra-ordens', localObraId, subgrupoDespesaId],
+    queryKey: ['obra-ordem', localObraId, subgrupoDespesaId, classificacao, ladoEfetivo],
     queryFn: () =>
-      fetchJSON<{ items: string[] }>(
-        `/api/formulario/obra-ordens?local_obra_id=${localObraId}&subgrupo_despesa_id=${subgrupoDespesaId}`,
+      fetchJSON<RespostaOrdem>(
+        `/api/formulario/obra-ordens?local_obra_id=${localObraId}&subgrupo_despesa_id=${subgrupoDespesaId}&classificacao=${classificacao}&lado=${ladoEfetivo}`,
       ),
     enabled: habilitado,
   });
-  const ordens = data?.items ?? [];
+  // o sistema preenche o que sabe; nos demais casos limpa o que não vale mais
+  useEffect(() => {
+    if (!data) return;
+    if (data.situacao === 'existe' || data.situacao === 'criar') {
+      if (value !== data.ordem) onChange(data.ordem);
+    } else if (data.situacao === 'ambigua') {
+      if (value && !data.candidatas.some((c) => c.ordem === value)) onChange('');
+    } else if (data.situacao !== 'sem_estrutura' && value) {
+      onChange('');
+    } else if (data.situacao === 'sem_estrutura' && value === 'CRIAR') {
+      onChange('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
+  if (!habilitado) {
+    return (
+      <div className="flex h-9 items-center rounded-md border border-input bg-[var(--bg-input-disabled)] px-3 text-sm text-fg-muted">
+        {!localObraId ? 'Escolha o local de obra' : 'Escolha o subgrupo'}
+      </div>
+    );
+  }
+  const travado = data?.situacao === 'existe' || data?.situacao === 'criar';
+  const erro = data?.situacao === 'exige_existente' || data?.situacao === 'fora_da_familia';
   return (
     <>
-      <Select value={value} onValueChange={onChange} disabled={!habilitado}>
-        <SelectTrigger className="h-9">
-          <SelectValue placeholder={habilitado ? 'Ordem de investimento' : !localObraId ? 'Escolha o local de obra' : 'Escolha o subgrupo'} />
-        </SelectTrigger>
-        <SelectContent>
-          {criar && <SelectItem value="CRIAR">CRIAR (nova ordem, só na finalização)</SelectItem>}
-          {ordens.map((numero) => (
-            <SelectItem key={numero} value={numero}>
-              {numero}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {habilitado && !criar && data && ordens.length === 0 && (
-        <p className="text-xs text-destructive">Não há ordem cadastrada para este local e subgrupo. Na retirada a ordem precisa existir.</p>
+      {data?.situacao === 'ambigua' ? (
+        <Select value={value} onValueChange={onChange}>
+          <SelectTrigger className="h-9">
+            <SelectValue placeholder="Escolha a ordem" />
+          </SelectTrigger>
+          <SelectContent>
+            {data.candidatas.map((c) => (
+              <SelectItem key={c.ordem} value={c.ordem}>
+                {c.ordem} · {c.colunas || c.tipo_faturamento}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : data?.situacao === 'sem_estrutura' ? (
+        <Input className="h-9" inputMode="numeric" placeholder="Ordem (4 a 20 dígitos)" value={value} onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 20))} />
+      ) : (
+        <div
+          className={`flex h-9 items-center rounded-md border px-3 text-sm tabular-nums ${travado ? 'border-input bg-[var(--bg-input-disabled)] text-foreground' : 'border-danger-border text-fg-muted'}`}
+          title={travado ? 'Definida pela estrutura da obra' : undefined}
+        >
+          {data ? (travado ? data.ordem : '—') : 'Consultando…'}
+        </div>
       )}
+      {data && <p className={`text-xs ${erro ? 'text-danger-text' : 'text-fg-helper'}`}>{data.dica}</p>}
     </>
   );
 }
@@ -532,6 +575,7 @@ function OrcamentoInformativo({ ccId, contaId, mes }: { ccId: string; contaId: s
 }
 
 const AbrirSolicitacao = () => {
+  const queryClient = useQueryClient();
   const [tipo, setTipo] = useState<TipoSolicitacao>('transferencia');
   const [centroCustoId, setCentroCustoId] = useState('');
   const [linhas, setLinhas] = useState<LinhaLancamento[]>([novaLinhaLancamento('origem'), novaLinhaLancamento('destino')]);
@@ -547,6 +591,8 @@ const AbrirSolicitacao = () => {
   const [fornecedorNaoCadastrado, setFornecedorNaoCadastrado] = useState(false);
   // Transferência (11/11, item 2): CC do destino ('' = mesmo CC da origem).
   const [ccDestinoId, setCcDestinoId] = useState('');
+  // F4 (26/11): Tipo da Transferência, só para o destino — filtra as divisões pelas marcas FL / Externo
+  const [tipoTransferencia, setTipoTransferencia] = useState<'' | 'FL' | 'Externo'>('');
   // Imobilizado (11/11 item 8; A1/A4 de 26/11).
   const [quantidadeMaterial, setQuantidadeMaterial] = useState('');
   const [tipoCompra, setTipoCompra] = useState('');
@@ -574,6 +620,7 @@ const AbrirSolicitacao = () => {
     setFornecedorCnpj('');
     setFornecedorNaoCadastrado(false);
     setCcDestinoId('');
+    setTipoTransferencia('');
     setQuantidadeMaterial('');
     setTipoCompra('');
     setValorUnitario('');
@@ -605,9 +652,32 @@ const AbrirSolicitacao = () => {
     limparCampos(tipo);
   }
 
+  // F7: a família da obra filtra os subgrupos (obra sem estrutura: todos)
+  const familiaObra = (opcoes?.locais_obra ?? []).find((o) => o.id === obraLocalId)?.tipo_estrutura ?? '';
+  const subgruposDaObra = (opcoes?.subgrupos_despesa ?? []).filter((sg) => !familiaObra || (sg.familias ?? []).includes(familiaObra));
+
   const opcoesOrigemTodas = (tipo === 'transferencia' ? opcoes?.centros_custo_origem : undefined) ?? opcoes?.centros_custo ?? [];
   const centroCustoSelecionado = opcoesOrigemTodas.find((cc) => cc.id === centroCustoId);
   const ccDestino = ccDestinoId ? opcoes?.centros_custo_destino?.find((cc) => cc.id === ccDestinoId) : centroCustoSelecionado;
+  const divisaoPorId = useMemo(() => new Map((opcoes?.divisoes ?? []).map((d) => [d.id, d])), [opcoes]);
+  const divisaoFazTipo = useCallback(
+    (divId: string) => {
+      if (!tipoTransferencia) return true;
+      const d = divisaoPorId.get(divId);
+      return tipoTransferencia === 'FL' ? !!d?.faz_fl : d?.faz_externo !== false;
+    },
+    [tipoTransferencia, divisaoPorId],
+  );
+  const destinoForaDoTipo = tipo === 'transferencia' && !!tipoTransferencia && !!ccDestino && !divisaoFazTipo(ccDestino.divisao_id);
+  function trocarTipoTransferencia(t: 'FL' | 'Externo') {
+    setTipoTransferencia(t);
+    const d = ccDestinoId ? opcoes?.centros_custo_destino?.find((cc) => cc.id === ccDestinoId) : undefined;
+    const permitida = (divId: string) => (t === 'FL' ? !!divisaoPorId.get(divId)?.faz_fl : divisaoPorId.get(divId)?.faz_externo !== false);
+    if (d && !permitida(d.divisao_id)) {
+      setCcDestinoId('');
+      toast.warning(`A divisão do destino escolhido não faz ${t === 'FL' ? 'FL' : 'compra externa'}: escolha outro destino.`);
+    }
+  }
 
   // Ano único da solicitação (Transferência, Inclusão, Inclusão SFC e, desde 26/11, Imobilizado).
   const usaAnoUnico = tipo !== 'obras';
@@ -685,7 +755,7 @@ const AbrirSolicitacao = () => {
       return obrasLinhas.reduce((acc, l) => acc + num(l.valor), 0);
     }
     if (tipo === 'imobilizado') return valorImobilizado;
-    return num(linhas[0]?.valor ?? '');
+    return centavos(linhas.reduce((a, l) => a + num(l.valor), 0));
   }, [tipo, classificacao, obrasLinhas, linhas, valorImobilizado]);
 
   const precisaAutorizador = tipo === 'inclusao' || tipo === 'imobilizado' || tipo === 'obras';
@@ -708,6 +778,8 @@ const AbrirSolicitacao = () => {
       atual.map((linha, i) => {
         if (i !== indice) return linha;
         const nova = { ...linha, [campo]: valor } as LinhaObra;
+        // outro subgrupo: a ordem é resolvida de novo pela estrutura
+        if (campo === 'subgrupoDespesaId' && valor !== linha.subgrupoDespesaId) nova.ordemInvestimento = '';
         // trocou para retirada: "CRIAR" deixa de valer nesta linha
         if (nova.ordemInvestimento === 'CRIAR' && !permiteCriar(classificacao, nova.lado)) nova.ordemInvestimento = '';
         return nova;
@@ -756,6 +828,7 @@ const AbrirSolicitacao = () => {
         payload = {
           tipo_solicitacao: tipo,
           ...(tipo === 'inclusao' || tipo === 'imobilizado' ? { autorizador_id: autorizadorId } : {}),
+          ...(tipo === 'transferencia' ? { tipo_transferencia: tipoTransferencia } : {}),
           ...(tipo === 'imobilizado'
             ? { quantidade_material: parseInt(quantidadeMaterial, 10) || 0, tipo_compra: tipoCompra, valor_unitario: num(valorUnitario) }
             : {}),
@@ -786,6 +859,8 @@ const AbrirSolicitacao = () => {
 
       toast.success(`Solicitação aberta com sucesso. Aprovador: ${resp.aprovador_snapshot.nome} (${resp.aprovador_snapshot.motivo})`);
       resetarFormulario();
+      // F3: o valor da origem já está reservado — a tabela de saldo precisa mostrar o desconto
+      queryClient.invalidateQueries({ queryKey: ['saldo-meses'] });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erro ao abrir solicitação');
     } finally {
@@ -809,6 +884,8 @@ const AbrirSolicitacao = () => {
     obrasLinhas.forEach((l) => valoresDigitados.push(num(l.valor)));
   } else if (tipo === 'transferencia') {
     if (!centroCustoId) faltando.push('Centro de custo de origem');
+    if (!tipoTransferencia) faltando.push('Tipo da transferência (FL ou Externo)');
+    if (destinoForaDoTipo) faltando.push(`Destino de uma divisão que faz ${tipoTransferencia === 'FL' ? 'FL' : 'compra externa'}`);
     if (!contaOrigem) faltando.push('Conta de origem');
     if (!contaDestino) faltando.push('Conta de destino');
     if (indicesOrigem.some((i) => !linhas[i].mes)) faltando.push('Mês de todas as linhas de origem');
@@ -834,6 +911,7 @@ const AbrirSolicitacao = () => {
       if (linhas.some((l) => !l.contaId)) faltando.push('Conta');
       if (linhas.some((l) => !l.mes)) faltando.push('Mês de competência');
       if (linhas.some((l) => !(num(l.valor) > 0))) faltando.push('Valor maior que zero');
+      if (new Set(linhas.map((l) => l.mes).filter(Boolean)).size < linhas.filter((l) => l.mes).length) faltando.push('Um mês só uma vez');
       linhas.forEach((l) => valoresDigitados.push(num(l.valor)));
     }
     if ((tipo === 'inclusao' || tipo === 'imobilizado') && !autorizadorId) faltando.push('Autorizador');
@@ -987,7 +1065,21 @@ const AbrirSolicitacao = () => {
 
           <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
             <h2 className="text-sm font-semibold text-foreground">Destino</h2>
+            <div className="grid gap-1.5 sm:max-w-[14rem]">
+              <Label>Tipo</Label>
+              <Select value={tipoTransferencia} onValueChange={(v) => trocarTipoTransferencia(v as 'FL' | 'Externo')}>
+                <SelectTrigger aria-label="Tipo da transferência">
+                  <SelectValue placeholder="FL ou Externo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="FL">FL</SelectItem>
+                  <SelectItem value="Externo">Externo</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-fg-helper">Vale só para o destino: lista as divisões que fazem {tipoTransferencia === 'FL' ? 'FL' : tipoTransferencia === 'Externo' ? 'compra externa' : 'o tipo escolhido'}.</p>
+            </div>
             <DivisaoCentroCusto
+              divisaoPermitida={tipoTransferencia ? divisaoFazTipo : undefined}
               value={ccDestinoId}
               onChange={setCcDestinoId}
               centros={opcoes?.centros_custo_destino ?? []}
@@ -1116,10 +1208,25 @@ const AbrirSolicitacao = () => {
               </>
             ) : (
               <>
-                <div className="col-span-2 grid min-w-0 gap-1.5">
-                  <Label>Conta</Label>
-                  <BuscaCombobox value={linha.contaId} onChange={(v) => atualizarLinha(i, 'contaId', v)} opcoes={contasDisponiveis} ariaLabel="Conta" />
-                </div>
+                {tipo === 'inclusao' && i > 0 ? (
+                  <div className="col-span-2 flex items-center justify-between">
+                    <span className="text-xs text-fg-helper">Mesma conta e centro de custo; outro mês.</span>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setLinhas((a) => a.filter((_, j) => j !== i))}>
+                      Remover mês
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="col-span-2 grid min-w-0 gap-1.5">
+                    <Label>Conta</Label>
+                    <BuscaCombobox
+                      value={linha.contaId}
+                      // F2: a Inclusão tem uma conta só; os meses variam
+                      onChange={(v) => (tipo === 'inclusao' ? setLinhas((a) => a.map((l) => ({ ...l, contaId: v }))) : atualizarLinha(i, 'contaId', v))}
+                      opcoes={contasDisponiveis}
+                      ariaLabel="Conta"
+                    />
+                  </div>
+                )}
                 <div className="grid gap-1.5">
                   <Label>Mês de competência</Label>
                   <MesAno value={linha.mes} ano={anoParaMes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
@@ -1135,6 +1242,21 @@ const AbrirSolicitacao = () => {
             )}
           </div>
         ))}
+
+      {tipo === 'inclusao' && (
+        <div className="-mt-3 flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={linhas.length >= MAX_MESES_LADO}
+            onClick={() => setLinhas((a) => [...a, { ...novaLinhaLancamento('destino'), contaId: a[0]?.contaId ?? '' }])}
+          >
+            + mês
+          </Button>
+          {linhas.length > 1 && <span className="text-xs text-fg-helper">Total da inclusão: {moeda.format(centavos(linhas.reduce((a, l) => a + num(l.valor), 0)))}</span>}
+        </div>
+      )}
 
       {tipo === 'obras' && (
         <>
@@ -1178,8 +1300,14 @@ const AbrirSolicitacao = () => {
               value={obraLocalId}
               onValueChange={(v) => {
                 setObraLocalId(v);
-                // A ordem de investimento depende do local — as já escolhidas podem não existir no local novo.
-                setObrasLinhas((atual) => atual.map((l) => ({ ...l, ordemInvestimento: '' })));
+                // F7: a ordem depende do local, e o subgrupo precisa ser da família da obra nova — limpa o que não vale
+                const fam = (opcoes?.locais_obra ?? []).find((o) => o.id === v)?.tipo_estrutura ?? '';
+                const valeNaObra = (sid: string) => !fam || (opcoes?.subgrupos_despesa ?? []).find((sg) => sg.id === sid)?.familias?.includes(fam);
+                const invalidas = obrasLinhas.filter((l) => l.subgrupoDespesaId && !valeNaObra(l.subgrupoDespesaId)).length;
+                if (invalidas) toast.warning(`${invalidas} linha(s) com subgrupo que não existe na estrutura desta obra: o subgrupo foi limpo.`);
+                setObrasLinhas((atual) =>
+                  atual.map((l) => ({ ...l, ordemInvestimento: '', subgrupoDespesaId: valeNaObra(l.subgrupoDespesaId) ? l.subgrupoDespesaId : '' })),
+                );
               }}
             >
               <SelectTrigger>
@@ -1193,7 +1321,10 @@ const AbrirSolicitacao = () => {
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-fg-helper">Vale para todas as linhas desta solicitação.</p>
+            <p className="text-xs text-fg-helper">
+              Vale para todas as linhas desta solicitação.
+              {obraLocalId && (familiaObra ? ` Estrutura: ${familiaObra} (${subgruposDaObra.length} subgrupos).` : ' Obra sem estrutura cadastrada: a ordem é digitada.')}
+            </p>
           </div>
 
           {obrasLinhas.map((linha, i) => (
@@ -1222,27 +1353,25 @@ const AbrirSolicitacao = () => {
               )}
               <div className="grid gap-1.5">
                 <Label>Subgrupo de despesa</Label>
-                <Select value={linha.subgrupoDespesaId} onValueChange={(v) => atualizarLinhaObra(i, 'subgrupoDespesaId', v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Escolha" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(opcoes?.subgrupos_despesa ?? []).map((o) => (
-                      <SelectItem key={o.id} value={o.id}>
-                        {o.codigo} — {o.nome}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <BuscaCombobox
+                  value={linha.subgrupoDespesaId}
+                  onChange={(v) => atualizarLinhaObra(i, 'subgrupoDespesaId', v)}
+                  opcoes={subgruposDaObra}
+                  placeholder={obraLocalId ? 'Escolha o subgrupo' : 'Escolha o local de obra primeiro'}
+                  vazio="Nenhum subgrupo nesta estrutura."
+                  disabled={!obraLocalId}
+                  ariaLabel="Subgrupo de despesa"
+                />
               </div>
               <div className="grid gap-1.5">
                 <Label>Ordem de investimento</Label>
-                <OrdemInvestimentoSelect
+                <OrdemDaLinha
                   localObraId={obraLocalId}
                   subgrupoDespesaId={linha.subgrupoDespesaId}
+                  classificacao={classificacao}
+                  lado={linha.lado}
                   value={linha.ordemInvestimento}
                   onChange={(v) => atualizarLinhaObra(i, 'ordemInvestimento', v)}
-                  criar={permiteCriar(classificacao, linha.lado)}
                 />
               </div>
               <div className="grid gap-1.5">

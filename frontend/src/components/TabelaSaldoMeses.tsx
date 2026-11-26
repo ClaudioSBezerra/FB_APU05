@@ -50,6 +50,7 @@ export function TabelaSaldoMeses({
               <th className="px-2 py-1.5 text-left font-medium">Mês</th>
               <th className="px-2 py-1.5 text-right font-medium">Disponível no mês</th>
               <th className="px-2 py-1.5 text-right font-medium">Acumulado até o mês</th>
+              <th className="px-2 py-1.5 text-right font-medium">Reservado em chamados abertos</th>
               <th className="px-2 py-1.5 text-right font-medium">Pode remanejar</th>
             </tr>
           </thead>
@@ -79,6 +80,16 @@ export function TabelaSaldoMeses({
                   </td>
                   <td className="px-2 py-1 text-right">{moeda.format(m.disponivel)}</td>
                   <td className="px-2 py-1 text-right">{moeda.format(m.disponivel_acumulado)}</td>
+                  <td className="px-2 py-1 text-right" title={(m.chamados_reserva ?? []).join(', ')}>
+                    {m.reservado ? (
+                      <>
+                        {moeda.format(m.reservado)}
+                        <span className="block text-[10px] text-fg-helper">{(m.chamados_reserva ?? []).join(', ')}</span>
+                      </>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td className={`px-2 py-1 text-right ${estoura ? 'text-danger-text' : comporta ? 'font-semibold text-foreground' : ''}`}>
                     {moeda.format(m.pode_remanejar)}
                   </td>
@@ -89,7 +100,7 @@ export function TabelaSaldoMeses({
         </table>
       </div>
       <p className="text-xs text-fg-helper">
-        Pode remanejar = o menor entre o disponível do mês e o acumulado até o mês. Nenhum mês pode ficar negativo. Clique num mês para usá-lo na linha em edição.
+        Disponível e acumulado já descontam o que está reservado em chamados abertos. Pode remanejar = o menor entre os dois; nenhum mês pode ficar negativo. Clique num mês para usá-lo na linha em edição.
         {saldo.status === 'sem_lancamentos' && ' Sem orçamento nem lançamentos no SAP para esta conta.'}
       </p>
     </div>

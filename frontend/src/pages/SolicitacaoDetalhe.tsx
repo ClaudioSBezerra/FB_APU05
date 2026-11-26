@@ -16,7 +16,7 @@ import { EditarChamado } from '@/components/EditarChamado';
 // Página do chamado (substitui o pop-up "Ver e comentar"): quem abriu, como foi preenchido, aprovador,
 // anexos, histórico e as ações do atendimento (assumir, pendência, comentar, finalizar).
 interface Lanc { id?: string; centro_custo_id?: string; conta_id?: string; lado: string; centro_custo: string; conta: string; conta_nome: string; classe_imobilizado: string; mes: string; valor: number }
-interface LinhaObra { id?: string; lado: string; local: string; subgrupo: string; ordem: string; iea?: string; valor: number }
+interface LinhaObra { id?: string; lado: string; local: string; subgrupo: string; ordem: string; iea?: string; valor: number; tipos?: string }
 const reOrdem = /^\d{4,20}$/;
 interface Extras {
   codigo?: string;
@@ -33,6 +33,7 @@ interface Extras {
   lancamentos?: Lanc[];
   tipo_compra?: string;
   valor_unitario?: number;
+  tipo_transferencia?: string;
 }
 interface Detalhe {
   id: string;
@@ -73,7 +74,7 @@ const TIPO: Record<string, string> = { transferencia: 'Transferência', inclusao
 const STATUS: Record<string, string> = {
   aguardando_aprovacao: 'Aguardando aprovação', aberta: 'Aguardando atendimento', em_atendimento: 'Em atendimento',
   pendente: 'Pendente (com o solicitante)', finalizada_sucesso: 'Finalizada com sucesso', finalizada_erro: 'Finalizada com erro',
-  finalizada: 'Finalizada', rejeitada: 'Rejeitada',
+  finalizada: 'Finalizada', rejeitada: 'Rejeitada', cancelada: 'Cancelada',
 };
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const MESES_ABREV = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -128,6 +129,8 @@ export default function SolicitacaoDetalhe() {
   const [confirmando, setConfirmando] = useState(false);
   const [nota, setNota] = useState('');
   const [editando, setEditando] = useState(false);
+  const [cancelando, setCancelando] = useState(false);
+  const [motivoCancel, setMotivoCancel] = useState('');
   // Obras com "CRIAR" (24/11, item 3): por linha, a nova ordem de investimento e o novo imobilizado (IEA)
   const [novasOrdens, setNovasOrdens] = useState<Record<string, { ordem: string; iea: string }>>({});
 
@@ -210,6 +213,7 @@ export default function SolicitacaoDetalhe() {
           </Campo>
         )}
         {x?.tipo_compra && <Campo rotulo="Tipo de compra">{x.tipo_compra}</Campo>}
+        {x?.tipo_transferencia && <Campo rotulo="Tipo (destino)">{x.tipo_transferencia}</Campo>}
         {d.quantidade_material ? <Campo rotulo="Quantidade do material">{d.quantidade_material.toLocaleString('pt-BR')}</Campo> : null}
         {x?.valor_unitario != null && <Campo rotulo="Valor unitário">{moeda.format(x.valor_unitario)}</Campo>}
         {x?.valor_unitario != null && d.quantidade_material ? <Campo rotulo="Valor total">{moeda.format(Math.round(x.valor_unitario * d.quantidade_material * 100) / 100)}</Campo> : null}
@@ -227,7 +231,7 @@ export default function SolicitacaoDetalhe() {
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-left text-sm">
                 <thead className="bg-muted/50 text-xs text-muted-foreground">
-                  <tr><th className="p-2">Lado</th><th className="p-2">Local</th><th className="p-2">Subgrupo</th><th className="p-2">Ordem</th><th className="p-2">IEA</th><th className="p-2 text-right">Valor</th></tr>
+                  <tr><th className="p-2">Lado</th><th className="p-2">Local</th><th className="p-2">Subgrupo</th><th className="p-2">Ordem</th><th className="p-2">IEA</th><th className="p-2">Despesa · faturamento</th><th className="p-2 text-right">Valor</th></tr>
                 </thead>
                 <tbody>
                   {(x?.obras_linhas ?? []).map((l, i) => (
@@ -237,6 +241,7 @@ export default function SolicitacaoDetalhe() {
                       <td className="p-2">{l.subgrupo}</td>
                       <td className="p-2 tabular-nums">{l.ordem}</td>
                       <td className="p-2 tabular-nums">{l.iea || '—'}</td>
+                      <td className="p-2 text-xs text-fg-secondary">{l.tipos || '—'}</td>
                       <td className="p-2 text-right tabular-nums">{moeda.format(l.valor)}</td>
                     </tr>
                   ))}
@@ -334,12 +339,13 @@ export default function SolicitacaoDetalhe() {
                 </Select>
                 {resultado === 'sucesso' && linhasCriar.length > 0 && (
                   <div className="grid gap-2 rounded-md border border-border p-2">
-                    <p className="text-xs text-fg-secondary">Para cada linha "CRIAR", informe a nova ordem de investimento e o novo imobilizado (IEA), de 4 a 20 dígitos. A ordem entra no cadastro de Obras.</p>
+                    <p className="text-xs text-fg-secondary">A linha saiu do formulário como CRIAR e a ordem foi criada no SAP. Informe o número e o imobilizado (IEA), de 4 a 20 dígitos, para a estrutura passar a conhecê-la — sem isso o próximo chamado deste subgrupo pede CRIAR outra vez, e o SAP ganha ordem duplicada.</p>
                     {linhasCriar.map((l) => {
                       const v = novasOrdens[l.id!] ?? { ordem: '', iea: '' };
                       return (
                         <div key={l.id} className="grid gap-1">
                           <p className="text-xs font-medium">{l.subgrupo} · {moeda.format(l.valor)}</p>
+                          {l.tipos && <p className="text-xs text-fg-helper">{l.tipos}</p>}
                           <div className="grid grid-cols-2 gap-2">
                             <Input inputMode="numeric" placeholder="Nova ordem" aria-label={`Nova ordem — ${l.subgrupo}`} value={v.ordem} onChange={(e) => setNovaOrdem(l.id!, 'ordem', e.target.value)} />
                             <Input inputMode="numeric" placeholder="Novo IEA" aria-label={`Novo IEA — ${l.subgrupo}`} value={v.iea} onChange={(e) => setNovaOrdem(l.id!, 'iea', e.target.value)} />
@@ -395,6 +401,40 @@ export default function SolicitacaoDetalhe() {
           obras={(x?.obras_linhas ?? []).map((o) => ({ id: o.id, lado: o.lado, subgrupo: o.subgrupo, ordem: o.ordem, valor: o.valor }))}
         />
       )}
+      {(() => {
+        // F3 (26/11): quem abriu cancela enquanto o chamado não foi assumido; o atendimento, qualquer chamado vivo.
+        // Cancelar devolve o valor reservado da origem.
+        const podeCancelar =
+          (dono && ['aberta', 'pendente', 'aguardando_aprovacao'].includes(d.status)) ||
+          (atende && ['aberta', 'em_atendimento', 'pendente', 'aguardando_aprovacao'].includes(d.status));
+        return podeCancelar ? (
+          <div>
+            <Button size="sm" variant="outline" onClick={() => setCancelando(true)}>Cancelar este chamado</Button>
+          </div>
+        ) : null;
+      })()}
+      <Dialog open={cancelando} onOpenChange={(o) => { setCancelando(o); if (!o) setMotivoCancel(''); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancelar o chamado?</DialogTitle>
+            <DialogDescription>O chamado é encerrado como Cancelado e o valor reservado da origem volta para o saldo. Quem acompanha recebe o aviso.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="motivo-cancel">Motivo (obrigatório)</Label>
+            <Textarea id="motivo-cancel" maxLength={1000} value={motivoCancel} onChange={(e) => setMotivoCancel(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelando(false)}>Voltar</Button>
+            <Button variant="destructive" disabled={!motivoCancel.trim() || mut.isPending}
+              onClick={() => mut.mutate(() =>
+                api(`/api/chamados/${id}/cancelar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ versao: d.versao, motivo: motivoCancel.trim() }) })
+                  .then(() => { toast.success('Chamado cancelado'); setCancelando(false); setMotivoCancel(''); refrescar(); qc.invalidateQueries({ queryKey: ['saldo-meses'] }); })
+                  .catch((e: Error) => toast.error(e.message)))}>
+              Cancelar o chamado
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={confirmando} onOpenChange={setConfirmando}>
         <DialogContent>
           <DialogHeader>

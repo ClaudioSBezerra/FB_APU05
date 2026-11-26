@@ -1,7 +1,7 @@
 import { podeAtender } from '@/lib/perfis';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { LayoutDashboard, Users, UsersRound, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database, PanelLeftClose, PanelLeftOpen, Cpu, Settings } from 'lucide-react';
+import { LayoutDashboard, Users, UsersRound, Building2, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database, PanelLeftClose, PanelLeftOpen, Cpu, Settings } from 'lucide-react';
 import { WORKSPACE } from '@/lib/workspace';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
@@ -176,6 +176,7 @@ export function AppRail() {
     ...(permissoes?.controle_ti ? [{ id: 'controle-ti', icon: Cpu, label: 'Controle de Despesas', path: '/controle-ti' }] : []),
     ...(podeAtender(user?.perfil) ? [filaItem] : []),
     // Grupos em cópia (26/11, §9.2): a Controladoria mantém todos; o gestor vê "Meus grupos" (a lista vem vazia se não gere nenhum)
+    ...(podeAtender(user?.perfil) ? [{ id: 'divisoes', icon: Building2, label: 'Divisões: FL e Externo', path: '/divisoes' }] : []),
     ...(mostraGrupos ? [{ id: 'grupos', icon: UsersRound, label: podeAtender(user?.perfil) ? 'Grupos de pessoas' : 'Meus grupos', path: '/grupos' }] : []),
     ...(user?.perfil === 'administrador'
       ? [

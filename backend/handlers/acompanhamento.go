@@ -19,6 +19,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -30,10 +31,18 @@ import (
 
 // sqlAcompanha: condição SQL "o usuário (parâmetro p) acompanha o chamado s" — compartilhado direto com ele ou membro
 // (ou gestor) de um grupo ATIVO incluído no chamado. O grupo é referência: vale quem está nele hoje.
+// F6 (26/11): também os chamados dos CCs (4 últimos dígitos) e divisões (4 primeiros) atribuídos a um grupo do
+// usuário — CC sem divisão vale em todas. Conta o CC do cabeçalho e o de cada linha (destino em outro CC).
 func sqlAcompanha(p string) string {
 	return `(EXISTS (SELECT 1 FROM solicitacao_compartilhamentos sc WHERE sc.solicitacao_id = s.id AND sc.usuario_id = ` + p + `)
 	 OR EXISTS (SELECT 1 FROM solicitacao_grupos sg JOIN grupos g ON g.id = sg.grupo_id AND g.ativo
-	            WHERE sg.solicitacao_id = s.id AND (g.gestor_id = ` + p + ` OR EXISTS (SELECT 1 FROM grupo_membros gm WHERE gm.grupo_id = g.id AND gm.usuario_id = ` + p + `))))`
+	            WHERE sg.solicitacao_id = s.id AND (g.gestor_id = ` + p + ` OR EXISTS (SELECT 1 FROM grupo_membros gm WHERE gm.grupo_id = g.id AND gm.usuario_id = ` + p + `)))
+	 OR EXISTS (SELECT 1 FROM grupos g JOIN grupo_escopo ge ON ge.grupo_id = g.id
+	            JOIN centros_custo ccx ON ccx.id = s.centro_custo_id
+	               OR ccx.id IN (SELECT l.centro_custo_id FROM solicitacao_lancamentos l WHERE l.solicitacao_id = s.id)
+	            WHERE g.ativo AND (g.gestor_id = ` + p + ` OR EXISTS (SELECT 1 FROM grupo_membros gm WHERE gm.grupo_id = g.id AND gm.usuario_id = ` + p + `))
+	              AND length(ccx.codigo) > 4 AND right(ccx.codigo, 4) = ge.cc
+	              AND (ge.divisao IS NULL OR lpad(left(ccx.codigo, length(ccx.codigo) - 4), 4, '0') = ge.divisao)))`
 }
 
 // acompanha: o usuário acompanha o chamado (direto ou por grupo)?
@@ -389,11 +398,91 @@ func responderVisualizadores(w http.ResponseWriter, db *sql.DB, id string) {
 // ---------------------------------------------------------------- cadastro de grupos (§9.2)
 
 type grupoReq struct {
-	Nome      string   `json:"nome"`
-	Descricao string   `json:"descricao"`
-	GestorID  string   `json:"gestor_id"`
-	Membros   []string `json:"membros"`
-	Ativo     *bool    `json:"ativo"`
+	Nome      string        `json:"nome"`
+	Descricao string        `json:"descricao"`
+	GestorID  string        `json:"gestor_id"`
+	Membros   []string      `json:"membros"`
+	Ativo     *bool         `json:"ativo"`
+	Escopo    *[]escopoItem `json:"escopo"` // F6: só a Controladoria muda; nil = não mexe
+}
+
+// escopoItem (F6): CC de 4 dígitos e, opcionalmente, a divisão de 4 dígitos ("" = todas as divisões).
+type escopoItem struct {
+	CC      string `json:"cc"`
+	Divisao string `json:"divisao"`
+}
+
+func (e escopoItem) texto() string {
+	if e.Divisao == "" {
+		return "o CC " + e.CC + " (todas as divisões)"
+	}
+	return "o CC " + e.CC + " na divisão " + e.Divisao
+}
+
+var reQuatroDigitos = regexp.MustCompile(`^[0-9]{4}$`)
+
+// normalizarEscopo valida e tira repetições.
+func normalizarEscopo(itens []escopoItem) ([]escopoItem, string) {
+	visto := map[escopoItem]bool{}
+	out := []escopoItem{}
+	for _, e := range itens {
+		e.CC, e.Divisao = strings.TrimSpace(e.CC), strings.TrimSpace(e.Divisao)
+		if !reQuatroDigitos.MatchString(e.CC) {
+			return nil, "O centro de custo do grupo tem 4 dígitos (os 4 últimos do código)."
+		}
+		if e.Divisao != "" && !reQuatroDigitos.MatchString(e.Divisao) {
+			return nil, "A divisão tem 4 dígitos (os 4 primeiros do código do CC)."
+		}
+		if !visto[e] {
+			visto[e] = true
+			out = append(out, e)
+		}
+	}
+	return out, ""
+}
+
+// gravarEscopo substitui o escopo do grupo e registra no histórico o que entrou e o que saiu.
+func gravarEscopo(tx *sql.Tx, gid, autor string, novo []escopoItem) error {
+	atual := map[escopoItem]bool{}
+	rows, err := tx.Query(`SELECT cc, COALESCE(divisao, '') FROM grupo_escopo WHERE grupo_id = $1`, gid)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var e escopoItem
+		if rows.Scan(&e.CC, &e.Divisao) == nil {
+			atual[e] = true
+		}
+	}
+	rows.Close()
+	quer := map[escopoItem]bool{}
+	for _, e := range novo {
+		quer[e] = true
+	}
+	var hist []string
+	for _, e := range novo {
+		if !atual[e] {
+			if _, err := tx.Exec(`INSERT INTO grupo_escopo (grupo_id, cc, divisao) VALUES ($1, $2, NULLIF($3, ''))`, gid, e.CC, e.Divisao); err != nil {
+				return err
+			}
+			hist = append(hist, "Incluiu "+e.texto()+" no escopo do grupo.")
+		}
+	}
+	for e := range atual {
+		if !quer[e] {
+			if _, err := tx.Exec(`DELETE FROM grupo_escopo WHERE grupo_id = $1 AND cc = $2 AND COALESCE(divisao, '') = $3`, gid, e.CC, e.Divisao); err != nil {
+				return err
+			}
+			hist = append(hist, "Retirou "+e.texto()+" do escopo do grupo.")
+		}
+	}
+	sort.Strings(hist)
+	for _, h := range hist {
+		if _, err := tx.Exec(`INSERT INTO grupo_historico (grupo_id, autor_id, texto) VALUES ($1, $2, $3)`, gid, autor, h); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type pessoaRef struct {
@@ -403,12 +492,13 @@ type pessoaRef struct {
 }
 
 type grupoResp struct {
-	ID        string      `json:"id"`
-	Nome      string      `json:"nome"`
-	Descricao string      `json:"descricao"`
-	Gestor    pessoaRef   `json:"gestor"`
-	Ativo     bool        `json:"ativo"`
-	Membros   []pessoaRef `json:"membros"`
+	ID        string       `json:"id"`
+	Nome      string       `json:"nome"`
+	Descricao string       `json:"descricao"`
+	Gestor    pessoaRef    `json:"gestor"`
+	Ativo     bool         `json:"ativo"`
+	Membros   []pessoaRef  `json:"membros"`
+	Escopo    []escopoItem `json:"escopo"`
 }
 
 func carregarGrupos(db *sql.DB, filtro string, args ...any) ([]grupoResp, error) {
@@ -426,6 +516,7 @@ func carregarGrupos(db *sql.DB, filtro string, args ...any) ([]grupoResp, error)
 			return nil, err
 		}
 		g.Membros = []pessoaRef{}
+		g.Escopo = []escopoItem{}
 		idx[g.ID] = len(out)
 		out = append(out, g)
 	}
@@ -433,6 +524,20 @@ func carregarGrupos(db *sql.DB, filtro string, args ...any) ([]grupoResp, error)
 	if len(out) == 0 {
 		return out, nil
 	}
+	erows, err := db.Query(`SELECT grupo_id, cc, COALESCE(divisao, '') FROM grupo_escopo ORDER BY cc, divisao NULLS FIRST`)
+	if err != nil {
+		return nil, err
+	}
+	for erows.Next() {
+		var gid string
+		var e escopoItem
+		if erows.Scan(&gid, &e.CC, &e.Divisao) == nil {
+			if i, ok := idx[gid]; ok {
+				out[i].Escopo = append(out[i].Escopo, e)
+			}
+		}
+	}
+	erows.Close()
 	mrows, err := db.Query(`SELECT gm.grupo_id, u.id, u.nome, u.email FROM grupo_membros gm JOIN usuarios u ON u.id = gm.usuario_id ORDER BY lower(u.nome)`)
 	if err != nil {
 		return nil, err
@@ -561,6 +666,18 @@ func CriarGrupoHandler(db *sql.DB) http.HandlerFunc {
 		}
 		for _, h := range hist {
 			if _, err := tx.Exec(`INSERT INTO grupo_historico (grupo_id, autor_id, texto) VALUES ($1, $2, $3)`, gid, autor, h); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+		}
+		if req.Escopo != nil {
+			esc, msg := normalizarEscopo(*req.Escopo)
+			if msg != "" {
+				jsonErr(w, http.StatusBadRequest, msg)
+				return
+			}
+			if err := gravarEscopo(tx, gid, autor, esc); err != nil {
+				log.Printf("[Grupos] escopo: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
 			}
@@ -702,6 +819,18 @@ func AtualizarGrupoHandler(db *sql.DB) http.HandlerFunc {
 		}
 		for _, h := range hist {
 			if _, err := tx.Exec(`INSERT INTO grupo_historico (grupo_id, autor_id, texto) VALUES ($1, $2, $3)`, gid, autor, h); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+		}
+		if req.Escopo != nil && controladoria {
+			esc, msg := normalizarEscopo(*req.Escopo)
+			if msg != "" {
+				jsonErr(w, http.StatusBadRequest, msg)
+				return
+			}
+			if err := gravarEscopo(tx, gid, autor, esc); err != nil {
+				log.Printf("[Grupos] escopo: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
 			}

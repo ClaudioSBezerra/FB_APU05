@@ -43,6 +43,11 @@ var rotulosStatusSolicitacao = map[string]string{
 	"pendente":           "Pendente",
 	"finalizada_sucesso": "Finalizada (sucesso)",
 	"finalizada_erro":    "Finalizada (erro)",
+	// 26/11: completam a lista (o painel passou a contar ao vivo)
+	"aguardando_aprovacao": "Aguardando aprovação",
+	"rejeitada":            "Rejeitada",
+	"cancelada":            "Cancelada",
+	"finalizada":           "Finalizada",
 }
 
 // rotuloOuChave devolve a chave crua quando não há tradução conhecida (ex.

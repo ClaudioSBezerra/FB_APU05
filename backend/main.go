@@ -517,6 +517,10 @@ func main() {
 	http.HandleFunc("GET /api/grupos/{id}/historico", handlers.RequireAuth(withDB(handlers.HistoricoGrupoHandler), ""))
 	http.HandleFunc("POST /api/chamados/{id}/notas", handlers.RequireAuth(withDB(handlers.NotaInternaHandler), "administrador,atendente"))
 	http.HandleFunc("PUT /api/chamados/{id}/edicao", handlers.RequireAuth(withBothDB(handlers.EditarChamadoHandler), "administrador,atendente"))
+	// Segunda leva (26/11): cancelar chamado (F3) e marcas FL/Externo das divisões (F4)
+	http.HandleFunc("POST /api/chamados/{id}/cancelar", handlers.RequireAuth(withPrivilegedDB(handlers.CancelarChamadoHandler), ""))
+	http.HandleFunc("GET /api/divisoes/marcas", handlers.RequireAuth(withDB(handlers.DivisoesMarcasHandler), "administrador,atendente"))
+	http.HandleFunc("PUT /api/divisoes/{id}/marcas", handlers.RequireAuth(withDB(handlers.AtualizarDivisaoMarcasHandler), "administrador,atendente"))
 	http.HandleFunc("GET /api/solicitacoes/{id}", handlers.RequireAuth(withDB(handlers.ObterSolicitacaoHandler), ""))
 	http.HandleFunc("GET /api/solicitacoes/anexos/{anexoId}", handlers.RequireAuth(withDB(handlers.BaixarAnexoHandler), ""))
 

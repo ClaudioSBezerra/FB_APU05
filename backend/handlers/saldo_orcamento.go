@@ -378,6 +378,13 @@ func SaldoMesesHandler(db *sql.DB) http.HandlerFunc {
 		if !s.Encontrado {
 			status = "sem_lancamentos"
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"ativo": true, "status": status, "cc": cc, "conta": conta, "meses": mesesDoSaldo(s, ano.Year())})
+		// F3: o que chamados abertos já reservam sai do disponível na hora (só códigos GO-n, sem dados de quem abriu)
+		res, cods, err := reservasDoAno(r.Context(), db, ccID, contaID, ano.Year(), r.URL.Query().Get("ignorar"))
+		if err != nil {
+			log.Printf("[Saldo] Erro ao ler as reservas: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ativo": true, "status": status, "cc": cc, "conta": conta, "meses": mesesDoSaldo(s, ano.Year(), res, cods)})
 	}
 }

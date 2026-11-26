@@ -121,7 +121,7 @@ func TestFinalizar_ResolveLinhaCriar(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "local_obra_id", "subgrupo_despesa_id"}).
 			AddRow(testFinalizarLinhaCriarID, testFinalizarLocalObraID, testFinalizarSubgrupoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO obra_ordens")).
-		WithArgs(testFinalizarNumeroOrdem, testFinalizarLocalObraID, testFinalizarSubgrupoID, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(testFinalizarNumeroOrdem, testFinalizarLocalObraID, testFinalizarSubgrupoID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE solicitacao_obras_linhas SET ordem_investimento")).
 		WithArgs(testFinalizarNumeroOrdem, testFinalizarLinhaCriarID, sqlmock.AnyArg()).
@@ -207,7 +207,7 @@ func TestFinalizar_NumeroOrdemJaExiste(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "local_obra_id", "subgrupo_despesa_id"}).
 			AddRow(testFinalizarLinhaCriarID, testFinalizarLocalObraID, testFinalizarSubgrupoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO obra_ordens")).
-		WithArgs(testFinalizarNumeroOrdem, testFinalizarLocalObraID, testFinalizarSubgrupoID, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(testFinalizarNumeroOrdem, testFinalizarLocalObraID, testFinalizarSubgrupoID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(&pq.Error{Code: "23505"})
 	mock.ExpectRollback()
 
@@ -335,7 +335,7 @@ func TestFinalizar_ResolveLinhaCriar_LinhaIDCaseInsensitive(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "local_obra_id", "subgrupo_despesa_id"}).
 			AddRow(testFinalizarLinhaCriarIDLower, testFinalizarLocalObraID, testFinalizarSubgrupoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO obra_ordens")).
-		WithArgs(testFinalizarNumeroOrdem, testFinalizarLocalObraID, testFinalizarSubgrupoID, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(testFinalizarNumeroOrdem, testFinalizarLocalObraID, testFinalizarSubgrupoID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE solicitacao_obras_linhas SET ordem_investimento")).
 		WithArgs(testFinalizarNumeroOrdem, testFinalizarLinhaCriarIDLower, sqlmock.AnyArg()).
@@ -375,7 +375,7 @@ func TestFinalizar_OrdensCriadasLinhaIDDuplicadoOmiteOutra(t *testing.T) {
 			AddRow(testFinalizarLinhaCriarID, testFinalizarLocalObraID, testFinalizarSubgrupoID).
 			AddRow(testFinalizarLinhaCriarID2, testFinalizarLocalObraID, testFinalizarSubgrupoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO obra_ordens")).
-		WithArgs("SAP-0001", testFinalizarLocalObraID, testFinalizarSubgrupoID, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs("SAP-0001", testFinalizarLocalObraID, testFinalizarSubgrupoID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE solicitacao_obras_linhas SET ordem_investimento")).
 		WithArgs("SAP-0001", testFinalizarLinhaCriarID, sqlmock.AnyArg()).
