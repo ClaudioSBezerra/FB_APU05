@@ -54,6 +54,7 @@ func GetEmailConfig() *EmailConfig {
 		// abaixo ("Redefinicao de Senha", sem acento).
 		from = "Modulo de Controladoria <noreply@fortesbezerra.com.br>"
 	}
+	from = comNomeRemetente(from)
 	return &EmailConfig{
 		Host:     os.Getenv("SMTP_HOST"),
 		Port:     port,
@@ -286,4 +287,21 @@ func textoSimples(h string) string {
 	h = strings.NewReplacer("</p>", "\n\n", "<br>", "\n", "<br/>", "\n", "</div>", "\n").Replace(h)
 	t := html.UnescapeString(reTag.ReplaceAllString(h, ""))
 	return strings.TrimSpace(regexp.MustCompile(`\n{3,}`).ReplaceAllString(t, "\n\n"))
+}
+
+// nomeRemetentePadrao: nome que aparece como remetente (26/11/2026: "Orçamento FC" no lugar do "Cloud" que vinha do
+// SMTP_FROM do servidor). SMTP_FROM_NAME troca sem novo deploy. O ENDEREÇO continua o do SMTP_FROM.
+const nomeRemetentePadrao = "Orçamento FC"
+
+// comNomeRemetente troca só o nome de exibição do From; o acento vai codificado (RFC 2047) por mail.Address.
+func comNomeRemetente(from string) string {
+	nome := strings.TrimSpace(os.Getenv("SMTP_FROM_NAME"))
+	if nome == "" {
+		nome = nomeRemetentePadrao
+	}
+	a, err := mail.ParseAddress(from)
+	if err != nil {
+		return from
+	}
+	return (&mail.Address{Name: nome, Address: a.Address}).String()
 }
