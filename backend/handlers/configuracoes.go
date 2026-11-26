@@ -484,11 +484,17 @@ func credencialSAP(m map[string]string, sv sapodata.Servico) sapodata.Config {
 
 func guardarResultado(db *sql.DB, sv sapodata.Servico, res sapodata.Resultado, origem string, quando time.Time) {
 	raw, _ := json.Marshal(resultadoSalvo{OK: res.OK, Total: res.Total, Mensagem: res.Mensagem, DuracaoMs: res.DuracaoMs, Origem: origem})
-	for chave, valor := range map[string]string{
+	grava := map[string]string{
 		cfgServico(sv, "ultima_execucao"):  quando.UTC().Format(time.RFC3339),
 		cfgServico(sv, "ultimo_resultado"): string(raw),
-	} {
-		if _, err := db.Exec(`UPDATE configuracoes SET valor = $2, updated_at = now() WHERE chave = $1`, chave, valor); err != nil {
+	}
+	// 26/11: só a rotina marca "a carga de hoje já rodou"; o teste manual (só leitura) não pode adiar a carga
+	if origem == "agendada" {
+		grava[cfgServico(sv, "ultima_rotina")] = quando.UTC().Format(time.RFC3339)
+	}
+	for chave, valor := range grava {
+		if _, err := db.Exec(`INSERT INTO configuracoes (chave, valor) VALUES ($1, $2)
+			ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = now()`, chave, valor); err != nil {
 			log.Printf("[SAP] Erro ao guardar %s: %v", chave, err)
 		}
 	}
@@ -583,7 +589,7 @@ func RotinaSAPDiaria(db *sql.DB, agora time.Time) {
 		return
 	}
 	for _, sv := range sapodata.Todos {
-		if !sv.Diaria || m[cfgServico(sv, "ativo")] != "true" || !sapDevido(m[cfgSapHorario], m[cfgServico(sv, "ultima_execucao")], agora) {
+		if !sv.Diaria || m[cfgServico(sv, "ativo")] != "true" || !sapDevido(m[cfgSapHorario], m[cfgServico(sv, "ultima_rotina")], agora) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

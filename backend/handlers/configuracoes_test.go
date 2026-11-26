@@ -136,8 +136,8 @@ func TestSAPTestar_UsaConfiguracaoGravadaEGuardaResultado(t *testing.T) {
 	cifrada, _ := crypto.EncryptField("senha-do-sap")
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT chave, valor FROM configuracoes")).WillReturnRows(linhasConfig(
 		cfgSapUsuario, "svc_orcamento", cfgSapSenha, cifrada, "sap_gl_url_base", urlGL))
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE configuracoes SET valor")).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE configuracoes SET valor")).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO configuracoes (chave, valor)")).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO configuracoes (chave, valor)")).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	orig := sondaSAP
 	t.Cleanup(func() { sondaSAP = orig })
@@ -190,10 +190,12 @@ func TestRotinaSAPDiaria_SoRodaOQueEstaDevidoEAtivo(t *testing.T) {
 	agora := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC) // 07:00 em Recife
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT chave, valor FROM configuracoes")).WillReturnRows(linhasConfig(
 		cfgSapHorario, "06:00", cfgSapUsuario, "u", cfgSapSenha, cifrada,
-		"sap_cc_ativo", "true", "sap_cc_url_base", urlCC, "sap_cc_ultima_execucao", "",
+		"sap_cc_ativo", "true", "sap_cc_url_base", urlCC, "sap_cc_ultima_execucao", "2026-11-18T09:30:00Z", // teste manual hoje não adia a carga
 		"sap_gl_ativo", "false", "sap_gl_url_base", urlGL)) // gl desligado: não roda
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE configuracoes SET valor")).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE configuracoes SET valor")).WillReturnResult(sqlmock.NewResult(0, 1))
+	// rotina agendada grava 3 chaves: ultima_execucao, ultimo_resultado e ultima_rotina
+	for i := 0; i < 3; i++ {
+		mock.ExpectExec(regexp.QuoteMeta("INSERT INTO configuracoes (chave, valor)")).WillReturnResult(sqlmock.NewResult(0, 1))
+	}
 
 	orig := sondaSAP
 	t.Cleanup(func() { sondaSAP = orig })
