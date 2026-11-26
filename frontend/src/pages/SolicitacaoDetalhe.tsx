@@ -7,14 +7,17 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { CompartilharChamado } from '@/components/CompartilharChamado';
+import { EditarChamado } from '@/components/EditarChamado';
 
 // Página do chamado (substitui o pop-up "Ver e comentar"): quem abriu, como foi preenchido, aprovador,
 // anexos, histórico e as ações do atendimento (assumir, pendência, comentar, finalizar).
-interface Lanc { lado: string; centro_custo: string; conta: string; conta_nome: string; classe_imobilizado: string; mes: string; valor: number }
-interface LinhaObra { lado: string; local: string; subgrupo: string; ordem: string; valor: number }
+interface Lanc { id?: string; centro_custo_id?: string; conta_id?: string; lado: string; centro_custo: string; conta: string; conta_nome: string; classe_imobilizado: string; mes: string; valor: number }
+interface LinhaObra { id?: string; lado: string; local: string; subgrupo: string; ordem: string; iea?: string; valor: number }
+const reOrdem = /^\d{4,20}$/;
 interface Extras {
   codigo?: string;
   classificacao?: string | null;
@@ -28,6 +31,8 @@ interface Extras {
   created_at?: string;
   aprovador?: { tipo?: string; nome?: string; motivo?: string };
   lancamentos?: Lanc[];
+  tipo_compra?: string;
+  valor_unitario?: number;
 }
 interface Detalhe {
   id: string;
@@ -54,7 +59,15 @@ const CATEGORIAS_ERRO: [string, string][] = [
   ['documentacao_incompleta', 'Documentação incompleta'],
   ['outro', 'Outro'],
 ];
-const TIPO_HISTORICO: Record<string, string> = { pendencia: 'Pendência', comentario: 'Comentário', encerramento: 'Encerramento' };
+const TIPO_HISTORICO: Record<string, string> = {
+  pendencia: 'Pendência',
+  comentario: 'Comentário',
+  encerramento: 'Encerramento',
+  evento: 'Evento',
+  nota_interna: 'Nota adicionada (interna — o solicitante não vê)',
+  edicao: 'Edição pela Controladoria',
+};
+const STATUS_EDITAVEIS = ['aberta', 'em_atendimento', 'pendente'];
 
 const TIPO: Record<string, string> = { transferencia: 'Transferência', inclusao: 'Inclusão', inclusao_sfc: 'Inclusão SFC', imobilizado: 'Imobilizado', obras: 'Obras' };
 const STATUS: Record<string, string> = {
@@ -113,6 +126,10 @@ export default function SolicitacaoDetalhe() {
   const [categoriaErro, setCategoriaErro] = useState('');
   const [obsFinal, setObsFinal] = useState('');
   const [confirmando, setConfirmando] = useState(false);
+  const [nota, setNota] = useState('');
+  const [editando, setEditando] = useState(false);
+  // Obras com "CRIAR" (24/11, item 3): por linha, a nova ordem de investimento e o novo imobilizado (IEA)
+  const [novasOrdens, setNovasOrdens] = useState<Record<string, { ordem: string; iea: string }>>({});
 
   const q = useQuery({ queryKey: ['solicitacao', id], queryFn: () => api<Detalhe>(`/api/solicitacoes/${id}`) });
   const d = q.data;
@@ -120,7 +137,7 @@ export default function SolicitacaoDetalhe() {
   const atende = user?.perfil === 'administrador' || user?.perfil === 'atendente';
   const meu = !!d && d.administrador_id === user?.id;
   const dono = !!d && d.solicitante_id === user?.id;
-  // quem só recebeu o compartilhamento acompanha, sem comentar nem agir
+  // quem está em cópia acompanha e comenta (26/11, §9.1), mas não age no atendimento
   const somenteLeitura = !!d && !dono && !atende;
 
   function refrescar() {
@@ -140,6 +157,10 @@ export default function SolicitacaoDetalhe() {
 
   const origem = (x?.lancamentos ?? []).filter((l) => l.lado === 'origem');
   const destino = (x?.lancamentos ?? []).filter((l) => l.lado === 'destino');
+  const linhasCriar = (x?.obras_linhas ?? []).filter((l) => l.ordem === 'CRIAR' && l.id);
+  const ordensOk = linhasCriar.every((l) => reOrdem.test(novasOrdens[l.id!]?.ordem ?? '') && reOrdem.test(novasOrdens[l.id!]?.iea ?? ''));
+  const setNovaOrdem = (id: string, campo: 'ordem' | 'iea', v: string) =>
+    setNovasOrdens((a) => ({ ...a, [id]: { ordem: a[id]?.ordem ?? '', iea: a[id]?.iea ?? '', [campo]: v.replace(/\D/g, '').slice(0, 20) } }));
   const mesmoCC = origem.length > 0 && destino.length > 0 && destino.every((l) => l.centro_custo === origem[0].centro_custo);
   const tabela = (linhas: Lanc[], titulo: string) =>
     linhas.length === 0 ? null : (
@@ -183,13 +204,16 @@ export default function SolicitacaoDetalhe() {
         <Campo rotulo="Atendente">{x?.atendente_nome ?? 'Ainda não assumida'}</Campo>
         <Campo rotulo="Aprovador">{x?.aprovador?.nome || '—'}{x?.aprovador?.motivo && <span className="text-muted-foreground"> · {x.aprovador.motivo}</span>}</Campo>
         {d.fornecedor && (
-          <Campo rotulo="Fornecedor">
+          <Campo rotulo={d.tipo_solicitacao === 'inclusao' || d.tipo_solicitacao === 'transferencia' ? 'Nome Fornecedor da despesa' : 'Fornecedor da despesa'}>
             {d.fornecedor}{d.fornecedor_cnpj && <span className="text-muted-foreground"> · {d.fornecedor_cnpj}</span>}
             {d.fornecedor_nao_cadastrado && <Badge variant="warning" className="ml-2">Não cadastrado</Badge>}
           </Campo>
         )}
+        {x?.tipo_compra && <Campo rotulo="Tipo de compra">{x.tipo_compra}</Campo>}
         {d.quantidade_material ? <Campo rotulo="Quantidade do material">{d.quantidade_material.toLocaleString('pt-BR')}</Campo> : null}
-        {d.descricao && <div className="sm:col-span-2"><Campo rotulo="Descrição">{d.descricao}</Campo></div>}
+        {x?.valor_unitario != null && <Campo rotulo="Valor unitário">{moeda.format(x.valor_unitario)}</Campo>}
+        {x?.valor_unitario != null && d.quantidade_material ? <Campo rotulo="Valor total">{moeda.format(Math.round(x.valor_unitario * d.quantidade_material * 100) / 100)}</Campo> : null}
+        {d.descricao && <div className="sm:col-span-2"><Campo rotulo={d.tipo_solicitacao === 'obras' ? 'Detalhe' : 'Descrição'}><span className="whitespace-pre-wrap">{d.descricao}</span></Campo></div>}
       </section>
 
       <section className="grid gap-4 rounded-lg border border-border bg-card p-4">
@@ -203,7 +227,7 @@ export default function SolicitacaoDetalhe() {
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-left text-sm">
                 <thead className="bg-muted/50 text-xs text-muted-foreground">
-                  <tr><th className="p-2">Lado</th><th className="p-2">Local</th><th className="p-2">Subgrupo</th><th className="p-2">Ordem</th><th className="p-2 text-right">Valor</th></tr>
+                  <tr><th className="p-2">Lado</th><th className="p-2">Local</th><th className="p-2">Subgrupo</th><th className="p-2">Ordem</th><th className="p-2">IEA</th><th className="p-2 text-right">Valor</th></tr>
                 </thead>
                 <tbody>
                   {(x?.obras_linhas ?? []).map((l, i) => (
@@ -212,6 +236,7 @@ export default function SolicitacaoDetalhe() {
                       <td className="p-2">{l.local}</td>
                       <td className="p-2">{l.subgrupo}</td>
                       <td className="p-2 tabular-nums">{l.ordem}</td>
+                      <td className="p-2 tabular-nums">{l.iea || '—'}</td>
                       <td className="p-2 text-right tabular-nums">{moeda.format(l.valor)}</td>
                     </tr>
                   ))}
@@ -237,13 +262,13 @@ export default function SolicitacaoDetalhe() {
         <h2 className="text-sm font-semibold">Histórico e comentários</h2>
         {d.comentarios.length === 0 && <p className="text-sm text-muted-foreground">Nenhum comentário ainda.</p>}
         {d.comentarios.map((c) => (
-          <div key={c.id} className="rounded-lg border border-border p-2 text-sm">
+          <div key={c.id} className={`rounded-lg border p-2 text-sm ${c.tipo === 'nota_interna' ? 'border-warning-border bg-warning-bg' : 'border-border'}`}>
             <p className="text-xs text-muted-foreground">{c.autor_nome || 'Usuário'} · {TIPO_HISTORICO[c.tipo] ?? c.tipo} · {dataHora(c.created_at)}</p>
             <p className="whitespace-pre-wrap">{c.texto}</p>
           </div>
         ))}
-        {somenteLeitura && <p className="text-xs text-muted-foreground">Este chamado foi compartilhado com você para acompanhamento (somente leitura).</p>}
-        {!somenteLeitura && <div className="grid gap-1.5">
+        {somenteLeitura && <p className="text-xs text-muted-foreground">Você está em cópia neste chamado: acompanha e pode comentar.</p>}
+        {<div className="grid gap-1.5">
           <Label htmlFor="coment">Novo comentário</Label>
           <Textarea id="coment" value={comentario} onChange={(e) => setComentario(e.target.value)} />
           <div>
@@ -255,11 +280,33 @@ export default function SolicitacaoDetalhe() {
         </div>}
       </section>
 
-      {dono && <CompartilharChamado solicitacaoId={d.id} />}
+      {atende && (
+        <section className="grid gap-1.5 rounded-lg border border-warning-border bg-card p-4">
+          <Label htmlFor="nota-interna">Nota interna</Label>
+          <p className="text-xs text-muted-foreground">Só o atendimento e a administração veem. Fica no histórico como "Nota adicionada", com autor e data.</p>
+          <Textarea id="nota-interna" maxLength={2000} value={nota} onChange={(e) => setNota(e.target.value)} />
+          <div>
+            <Button size="sm" variant="outline" disabled={!nota.trim() || mut.isPending}
+              onClick={() => mut.mutate(() =>
+                api(`/api/chamados/${id}/notas`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texto: nota.trim() }) })
+                  .then(() => { toast.success('Nota interna adicionada'); setNota(''); refrescar(); })
+                  .catch((e: Error) => toast.error(e.message)))}>
+              Adicionar nota interna
+            </Button>
+          </div>
+        </section>
+      )}
+
+      <CompartilharChamado solicitacaoId={d.id} podeGerir={dono || atende} />
 
       {atende && (
         <section className="grid gap-4 rounded-lg border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold">Ações do atendimento</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">Ações do atendimento</h2>
+            {STATUS_EDITAVEIS.includes(d.status) && (
+              <Button size="sm" variant="outline" onClick={() => setEditando(true)}>Editar o chamado</Button>
+            )}
+          </div>
           {d.status === 'aberta' && (
             <div><Button onClick={() => mut.mutate(() => post('assumir', { versao: d.versao }, 'Solicitação assumida'))}>Assumir esta solicitação</Button></div>
           )}
@@ -285,6 +332,24 @@ export default function SolicitacaoDetalhe() {
                     <SelectItem value="erro">Erro</SelectItem>
                   </SelectContent>
                 </Select>
+                {resultado === 'sucesso' && linhasCriar.length > 0 && (
+                  <div className="grid gap-2 rounded-md border border-border p-2">
+                    <p className="text-xs text-fg-secondary">Para cada linha "CRIAR", informe a nova ordem de investimento e o novo imobilizado (IEA), de 4 a 20 dígitos. A ordem entra no cadastro de Obras.</p>
+                    {linhasCriar.map((l) => {
+                      const v = novasOrdens[l.id!] ?? { ordem: '', iea: '' };
+                      return (
+                        <div key={l.id} className="grid gap-1">
+                          <p className="text-xs font-medium">{l.subgrupo} · {moeda.format(l.valor)}</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input inputMode="numeric" placeholder="Nova ordem" aria-label={`Nova ordem — ${l.subgrupo}`} value={v.ordem} onChange={(e) => setNovaOrdem(l.id!, 'ordem', e.target.value)} />
+                            <Input inputMode="numeric" placeholder="Novo IEA" aria-label={`Novo IEA — ${l.subgrupo}`} value={v.iea} onChange={(e) => setNovaOrdem(l.id!, 'iea', e.target.value)} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {!ordensOk && <p className="text-xs text-fg-helper">Preencha ordem e IEA (4 a 20 dígitos) de todas as linhas para finalizar com sucesso.</p>}
+                  </div>
+                )}
                 {resultado === 'erro' && (
                   <>
                     <Label>Categoria do erro (obrigatória)</Label>
@@ -299,7 +364,7 @@ export default function SolicitacaoDetalhe() {
                   </>
                 )}
                 <div>
-                  <Button size="sm" disabled={mut.isPending || (resultado === 'erro' && (!categoriaErro || (categoriaErro === 'outro' && !obsFinal.trim())))}
+                  <Button size="sm" disabled={mut.isPending || (resultado === 'sucesso' && !ordensOk) || (resultado === 'erro' && (!categoriaErro || (categoriaErro === 'outro' && !obsFinal.trim())))}
                     onClick={() => setConfirmando(true)}>
                     Finalizar
                   </Button>
@@ -311,6 +376,24 @@ export default function SolicitacaoDetalhe() {
           {d.status === 'aguardando_aprovacao' && <p className="text-sm text-muted-foreground">Aguardando aprovação. A decisão manual fica na fila de atendimento.</p>}
           {['finalizada', 'finalizada_sucesso', 'finalizada_erro', 'rejeitada', 'pendente'].includes(d.status) && <p className="text-sm text-muted-foreground">Sem ações disponíveis neste status.</p>}
         </section>
+      )}
+      {editando && (
+        <EditarChamado
+          aberto={editando}
+          onFechar={() => setEditando(false)}
+          onSalvo={() => { setEditando(false); refrescar(); }}
+          id={d.id}
+          versao={d.versao}
+          tipo={d.tipo_solicitacao}
+          descricao={d.descricao}
+          fornecedor={d.fornecedor}
+          fornecedorCnpj={d.fornecedor_cnpj}
+          tipoCompra={x?.tipo_compra}
+          quantidade={d.quantidade_material}
+          valorUnitario={x?.valor_unitario}
+          lancamentos={(x?.lancamentos ?? []).map((l) => ({ id: l.id, lado: l.lado, centro_custo_id: l.centro_custo_id, conta_id: l.conta_id, mes: l.mes, valor: l.valor }))}
+          obras={(x?.obras_linhas ?? []).map((o) => ({ id: o.id, lado: o.lado, subgrupo: o.subgrupo, ordem: o.ordem, valor: o.valor }))}
+        />
       )}
       <Dialog open={confirmando} onOpenChange={setConfirmando}>
         <DialogContent>
@@ -328,7 +411,11 @@ export default function SolicitacaoDetalhe() {
                 setConfirmando(false);
                 const corpo = resultado === 'erro'
                   ? { versao: d.versao, resultado, ordens_criadas: [], categoria_erro: categoriaErro, observacao: obsFinal.trim() }
-                  : { versao: d.versao, resultado, ordens_criadas: [] };
+                  : {
+                      versao: d.versao,
+                      resultado,
+                      ordens_criadas: linhasCriar.map((l) => ({ linha_id: l.id, numero_ordem: novasOrdens[l.id!]?.ordem ?? '', imobilizado_iea: novasOrdens[l.id!]?.iea ?? '' })),
+                    };
                 mut.mutate(() => post('finalizar', corpo, 'Solicitação finalizada', () => navigate('/fila')));
               }}>
               Confirmar

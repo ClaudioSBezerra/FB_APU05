@@ -447,6 +447,7 @@ func main() {
 	http.HandleFunc("POST /api/solicitacoes", handlers.RequireAuth(withDB(handlers.AbrirSolicitacaoHandler), ""))
 	// saldo orçamentário (API de Trava orçamentária): AVISO no formulário, nunca trava (docs/referencia/07)
 	http.HandleFunc("POST /api/solicitacoes/saldo", handlers.RequireAuth(withDB(handlers.SaldoOrcamentoHandler), ""))
+	http.HandleFunc("GET /api/solicitacoes/saldo-meses", handlers.RequireAuth(withDB(handlers.SaldoMesesHandler), ""))
 
 	// Opções de formulário (suporte de front-end ao Epic 3) — somente
 	// leitura, mesmo nível de permissão de POST /api/solicitacoes
@@ -506,6 +507,16 @@ func main() {
 	http.HandleFunc("GET /api/compartilhamentos/{id}", handlers.RequireAuth(withDB(handlers.CompartilhamentosHandler), ""))
 	http.HandleFunc("POST /api/compartilhamentos/{id}", handlers.RequireAuth(withDB(handlers.CompartilharHandler), ""))
 	http.HandleFunc("DELETE /api/compartilhamentos/{id}/{usuarioId}", handlers.RequireAuth(withDB(handlers.RemoverCompartilhamentoHandler), ""))
+	// Resposta da Controladoria (26/11): grupos em cópia, cadastro de grupos, nota interna e edição do chamado
+	http.HandleFunc("POST /api/compartilhamentos/{id}/grupos", handlers.RequireAuth(withDB(handlers.IncluirGrupoNoChamadoHandler), ""))
+	http.HandleFunc("DELETE /api/compartilhamentos/{id}/grupos/{grupoId}", handlers.RequireAuth(withDB(handlers.RemoverGrupoDoChamadoHandler), ""))
+	http.HandleFunc("GET /api/grupos/opcoes", handlers.RequireAuth(withDB(handlers.GruposOpcoesHandler), ""))
+	http.HandleFunc("GET /api/grupos", handlers.RequireAuth(withDB(handlers.ListarGruposHandler), ""))
+	http.HandleFunc("POST /api/grupos", handlers.RequireAuth(withDB(handlers.CriarGrupoHandler), "administrador,atendente"))
+	http.HandleFunc("PUT /api/grupos/{id}", handlers.RequireAuth(withDB(handlers.AtualizarGrupoHandler), ""))
+	http.HandleFunc("GET /api/grupos/{id}/historico", handlers.RequireAuth(withDB(handlers.HistoricoGrupoHandler), ""))
+	http.HandleFunc("POST /api/chamados/{id}/notas", handlers.RequireAuth(withDB(handlers.NotaInternaHandler), "administrador,atendente"))
+	http.HandleFunc("PUT /api/chamados/{id}/edicao", handlers.RequireAuth(withBothDB(handlers.EditarChamadoHandler), "administrador,atendente"))
 	http.HandleFunc("GET /api/solicitacoes/{id}", handlers.RequireAuth(withDB(handlers.ObterSolicitacaoHandler), ""))
 	http.HandleFunc("GET /api/solicitacoes/anexos/{anexoId}", handlers.RequireAuth(withDB(handlers.BaixarAnexoHandler), ""))
 

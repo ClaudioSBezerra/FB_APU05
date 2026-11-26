@@ -5,7 +5,8 @@ package handlers
 //
 //	POST /api/solicitacoes/saldo   corpo {"lancamentos":[{lado, centro_custo_id, conta_id, mes}]}
 //
-// Decisões do usuário (23/11/2026): é AVISO, não trava (nunca impede o envio); se o SAP não responde, a linha volta
+// Decisões: desde 26/11/2026 a ORIGEM da Transferência BLOQUEIA (verificarSaldoOrigem, na abertura); na Inclusão o
+// destino é só informativo. Antes (23/11) era só aviso. Se o SAP não responde, a linha volta
 // "nao_identificado" (a tela mostra "Saldo Não Identificado"); basta o saldo da ORIGEM (confirmado com a Wanessa).
 // Autorização: o SAP não restringe por CC, então AQUI só se consulta a ORIGEM e só para os CCs do solicitante (próprio
 // + exceções); o saldo de um CC de destino (de outra pessoa) nunca é devolvido.
@@ -201,10 +202,7 @@ func SaldoOrcamentoHandler(db *sql.DB) http.HandlerFunc {
 				continue
 			}
 			s.CC, s.Conta = cc, conta
-			if l.Lado != "origem" {
-				fim("o saldo é mostrado só para a origem")
-				continue
-			}
+			// Inclusão (26/11, §5): o destino também é consultado, só como informação, e só no CC do próprio solicitante.
 			if !meusCCs[l.CentroCustoID] && !todosLiberados {
 				fim("sem permissão para ver o saldo deste centro de custo")
 				continue
@@ -313,5 +311,70 @@ func SaldoOrcamentoHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ativo": true, "linhas": saida})
+	}
+}
+
+// SaldoMesesHandler — GET /api/solicitacoes/saldo-meses?centro_custo_id=&conta_id=&ano= (item C, 26/11): os 12 meses
+// da combinação CC+conta numa só consulta ao SAP, com o "pode remanejar" de cada mês (o mesmo que a abertura usa para
+// recusar). Só para CCs do solicitante (ou todos, na fase de testes com a origem livre).
+func SaldoMesesHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		ccID, contaID := q.Get("centro_custo_id"), q.Get("conta_id")
+		ano, errAno := time.Parse("2006", q.Get("ano"))
+		if !reUUIDSaldo.MatchString(ccID) || !reUUIDSaldo.MatchString(contaID) || errAno != nil {
+			jsonErr(w, http.StatusBadRequest, "Informe centro de custo, conta e ano.")
+			return
+		}
+		ativo, cfg, err := saldoAtivoECfg(db)
+		if err != nil {
+			log.Printf("[Saldo] Erro ao ler configurações: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		if !ativo {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ativo": false, "meses": []MesSaldo{}})
+			return
+		}
+		m, _ := lerConfiguracoes(db)
+		permitido := m[cfgTesteOrigemTodosCC] == "true"
+		if !permitido {
+			autorizados, err := centrosCustoAutorizados(db, GetUserIDFromContext(r))
+			if err != nil {
+				log.Printf("[Saldo] Erro ao ler os CCs do usuário: %v", err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+			for _, c := range autorizados {
+				permitido = permitido || c.ID == ccID
+			}
+		}
+		if !permitido {
+			jsonErr(w, http.StatusForbidden, "Sem permissão para ver o saldo deste centro de custo.")
+			return
+		}
+		var cc, conta string
+		if db.QueryRow(`SELECT codigo FROM centros_custo WHERE id = $1`, ccID).Scan(&cc) != nil || db.QueryRow(`SELECT codigo FROM contas WHERE id = $1`, contaID).Scan(&conta) != nil {
+			jsonErr(w, http.StatusBadRequest, "Centro de custo ou conta não encontrado.")
+			return
+		}
+		objnr, errObj := sapodata.ObjnrCentroCusto(cc)
+		if errObj != nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ativo": true, "status": "nao_identificado", "motivo": "este centro de custo não existe no SAP (código antigo)", "meses": []MesSaldo{}})
+			return
+		}
+		s, errSAP := saldoCacheado(r.Context(), cfg, objnr, conta, ano.Format("2006"))
+		if errSAP != nil {
+			log.Printf("[Saldo] Consulta ao SAP falhou (%s/%s/%s): %v", objnr, conta, ano.Format("2006"), errSAP)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ativo": true, "status": "nao_identificado", "motivo": errSAP.Error(), "meses": []MesSaldo{}})
+			return
+		}
+		status := "ok"
+		if !s.Encontrado {
+			status = "sem_lancamentos"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ativo": true, "status": status, "cc": cc, "conta": conta, "meses": mesesDoSaldo(s, ano.Year())})
 	}
 }

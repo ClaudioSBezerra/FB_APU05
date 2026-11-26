@@ -659,7 +659,14 @@ func decodeCSVObraOrdens(tx *sql.Tx, linha []string) ([]interface{}, error) {
 			return nil, err
 		}
 	}
-	return []interface{}{numeroOrdem, localObraID, subgrupoDespesaID, tipoDespesa, tipoFaturamento}, nil
+	var iea interface{}
+	if len(linha) > 5 {
+		iea = parseStringOpcional(linha[5])
+		if s, ok := iea.(string); ok && !reDigitos4a20.MatchString(s) {
+			return nil, fmt.Errorf("campo 'imobilizado_iea' deve ter de 4 a 20 dígitos")
+		}
+	}
+	return []interface{}{numeroOrdem, localObraID, subgrupoDespesaID, tipoDespesa, tipoFaturamento, iea}, nil
 }
 
 // decodeCSVFornecedores (20/10) — cgc/razsoc obrigatórios, fantas/uf

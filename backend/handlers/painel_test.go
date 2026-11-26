@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,12 +22,12 @@ import (
 )
 
 // newPainelRequest monta GET /api/paineis/{painel} com claims de um usuário
-// autenticado qualquer (perfil "solicitante") — a rota é aberta a qualquer
+// atendente (o solicitante vê só os chamados dele — teste próprio abaixo) — a rota é aberta a qualquer
 // perfil (Boundaries "Always" da spec), diferente de ListarFilaHandler.
 func newPainelRequest(painel string) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/paineis/"+painel, nil)
 	req.SetPathValue("painel", painel)
-	claims := jwt.MapClaims{"user_id": "55555555-5555-5555-5555-555555555555", "perfil": "solicitante"}
+	claims := jwt.MapClaims{"user_id": "55555555-5555-5555-5555-555555555555", "perfil": "atendente"}
 	ctx := context.WithValue(req.Context(), ClaimsContextKey, claims)
 	return req.WithContext(ctx)
 }
@@ -132,5 +133,28 @@ func TestObterPainelHandler_PainelDesconhecido(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectativas não cumpridas (nada deveria tocar o banco): %v", err)
+	}
+}
+
+// Resposta da Controladoria (26/11, §10): o solicitante só vê a contagem dos chamados dele e dos compartilhados com ele.
+func TestObterPainelHandler_SolicitanteVeSoOsDele(t *testing.T) {
+	db, mock := newSQLMock(t)
+	const eu = "55555555-5555-5555-5555-555555555555"
+	mock.ExpectQuery("FROM solicitacoes s WHERE \\(s.solicitante_id = \\$1 OR").WithArgs(eu).
+		WillReturnRows(sqlmock.NewRows([]string{"tipo", "n"}).AddRow("transferencia", 2))
+	mock.ExpectQuery("SELECT s.status").WithArgs(eu).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "n"}).AddRow("aberta", 2))
+	mock.ExpectQuery("JOIN centros_custo cc").WithArgs(eu).
+		WillReturnRows(sqlmock.NewRows([]string{"codigo", "nome", "n"}).AddRow("10026040", "TI", 2))
+	req := httptest.NewRequest(http.MethodGet, "/api/paineis/consolidado", nil)
+	req.SetPathValue("painel", "consolidado")
+	req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": eu, "perfil": "solicitante"}))
+	rec := httptest.NewRecorder()
+	ObterPainelHandler(db)(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"escopo":"meus"`) || strings.Contains(rec.Body.String(), "painel_snapshots") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

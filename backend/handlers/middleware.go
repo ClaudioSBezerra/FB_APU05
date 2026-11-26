@@ -133,7 +133,7 @@ func jsonErrConflitoVersao(w http.ResponseWriter, versaoAtual int) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"erro": map[string]interface{}{
 			"codigo":       "conflito_versao",
-			"mensagem":     "a solicitação já foi assumida ou não está mais aberta",
+			"mensagem":     "Este chamado mudou desde que você abriu a tela (outra pessoa agiu nele, ou você em outra aba). Nada foi gravado. Atualize a página para ver a situação atual e, se ainda fizer sentido, repita a ação.",
 			"versao_atual": versaoAtual,
 		},
 	})

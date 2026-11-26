@@ -1,6 +1,7 @@
 import { podeAtender } from '@/lib/perfis';
 import { useState } from 'react';
-import { LayoutDashboard, Users, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database, PanelLeftClose, PanelLeftOpen, Cpu, Settings } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { LayoutDashboard, Users, UsersRound, LogOut, KeyRound, Mail, FilePlus, ListChecks, Plug, Database, PanelLeftClose, PanelLeftOpen, Cpu, Settings } from 'lucide-react';
 import { WORKSPACE } from '@/lib/workspace';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
@@ -159,6 +160,14 @@ export function AppRail() {
   // Módulo Controle TI: o menu só aparece para quem tem o interruptor ligado
   // em Gestão de Usuários (lido do servidor, ver usePermissoes).
   const { data: permissoes } = usePermissoes();
+  // "Meus grupos" só aparece para quem é gestor de algum grupo (o atendimento sempre vê "Grupos de pessoas")
+  const { data: meusGrupos } = useQuery({
+    queryKey: ['grupos'],
+    queryFn: async () => (await (await fetch('/api/grupos')).json()) as { items?: unknown[] },
+    enabled: !!user && !podeAtender(user?.perfil),
+    staleTime: 5 * 60_000,
+  });
+  const mostraGrupos = podeAtender(user?.perfil) || (meusGrupos?.items?.length ?? 0) > 0;
   const filaItem = { id: 'fila', icon: ListChecks, label: 'Fila de atendimento', path: '/fila' };
   const consultaItem = { id: 'solicitacoes', icon: ListChecks, label: podeAtender(user?.perfil) ? 'Solicitações' : 'Minhas solicitações', path: '/solicitacoes' };
   const items = [
@@ -166,6 +175,8 @@ export function AppRail() {
     consultaItem,
     ...(permissoes?.controle_ti ? [{ id: 'controle-ti', icon: Cpu, label: 'Controle de Despesas', path: '/controle-ti' }] : []),
     ...(podeAtender(user?.perfil) ? [filaItem] : []),
+    // Grupos em cópia (26/11, §9.2): a Controladoria mantém todos; o gestor vê "Meus grupos" (a lista vem vazia se não gere nenhum)
+    ...(mostraGrupos ? [{ id: 'grupos', icon: UsersRound, label: podeAtender(user?.perfil) ? 'Grupos de pessoas' : 'Meus grupos', path: '/grupos' }] : []),
     ...(user?.perfil === 'administrador'
       ? [
           { id: 'usuarios', icon: Users, label: 'Gestão de usuários', path: '/admin/usuarios' },

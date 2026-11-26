@@ -197,6 +197,7 @@ func AssumirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		log.Printf("[Fila] %s assumiu solicitação %s (versao=%d)", administradorID, resultado.ID, resultado.Versao)
+		go avisarEvento(db, id, administradorID, "chamado assumido pelo atendimento", "")
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{

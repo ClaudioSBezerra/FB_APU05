@@ -18,6 +18,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -47,6 +48,13 @@ func ObterPainelHandler(db *sql.DB) http.HandlerFunc {
 		painel := r.PathValue("painel")
 		if painel != "consolidado" {
 			jsonErr(w, http.StatusNotFound, "painel não encontrado")
+			return
+		}
+
+		// Resposta da Controladoria (26/11, §10): o solicitante vê só os números dos chamados DELE e dos que acompanha
+		// (compartilhados com ele). Atendente e administrador continuam com o consolidado geral (snapshot).
+		if !perfilAtende(GetPerfilFromContext(r)) {
+			painelDoSolicitante(w, db, GetUserIDFromContext(r))
 			return
 		}
 
@@ -108,4 +116,50 @@ func ObterPainelHandler(db *sql.DB) http.HandlerFunc {
 			"gerado_em":  geradoEm,
 		})
 	}
+}
+
+// painelDoSolicitante conta ao vivo (poucos chamados por pessoa) só os chamados que o usuário abriu ou que foram
+// compartilhados com ele. Mesmo formato de resposta do consolidado.
+func painelDoSolicitante(w http.ResponseWriter, db *sql.DB, usuarioID string) {
+	meus := `(s.solicitante_id = $1 OR ` + sqlAcompanha("$1") + `)`
+	contar := func(query string, rotulos map[string]string, comRotulo bool) ([]painelItem, error) {
+		rows, err := db.Query(query, usuarioID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		out := make([]painelItem, 0)
+		for rows.Next() {
+			var it painelItem
+			if comRotulo {
+				err = rows.Scan(&it.Chave, &it.Rotulo, &it.Quantidade)
+			} else {
+				err = rows.Scan(&it.Chave, &it.Quantidade)
+				it.Rotulo = rotuloOuChave(rotulos, it.Chave)
+			}
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, it)
+		}
+		return out, rows.Err()
+	}
+	porTipo, err1 := contar(`SELECT s.tipo_solicitacao, COUNT(*) FROM solicitacoes s WHERE `+meus+` GROUP BY 1 ORDER BY 1`, rotulosTipoSolicitacao, false)
+	porStatus, err2 := contar(`SELECT s.status, COUNT(*) FROM solicitacoes s WHERE `+meus+` GROUP BY 1 ORDER BY 1`, rotulosStatusSolicitacao, false)
+	porCC, err3 := contar(`SELECT cc.codigo, cc.nome, COUNT(*) FROM solicitacoes s JOIN centros_custo cc ON cc.id = s.centro_custo_id WHERE `+meus+` GROUP BY 1, 2 ORDER BY 1`, nil, true)
+	if err := errors.Join(err1, err2, err3); err != nil {
+		log.Printf("[Painel] Erro ao contar os chamados do solicitante %s: %v", usuarioID, err)
+		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+		return
+	}
+	agora := time.Now()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"por_tipo":   porTipo,
+		"por_status": porStatus,
+		"por_cc":     porCC,
+		"gerado_em":  agora,
+		"escopo":     "meus",
+	})
 }

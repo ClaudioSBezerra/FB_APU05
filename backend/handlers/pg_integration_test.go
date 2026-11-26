@@ -76,6 +76,7 @@ func pgSetup(t *testing.T) *pgEnv {
 	// banco descartável: limpa o que os testes criam (respeita as FKs)
 	for _, q := range []string{
 		"TRUNCATE solicitacoes, papel_pessoa CASCADE", // leva junto lançamentos, anexos, comentários, aprovações, exportações
+		"TRUNCATE grupos CASCADE",
 		"DELETE FROM contas WHERE codigo LIKE 'T%' OR codigo LIKE '4%'",
 		"DELETE FROM classes_imobilizado WHERE codigo LIKE 'T%'",
 	} {
@@ -786,15 +787,18 @@ func TestPG_CompartilharChamado(t *testing.T) {
 		t.Errorf("não deveria reenviar o e-mail: %s", m)
 	case <-time.After(300 * time.Millisecond):
 	}
-	// agora o amigo vê, o estranho continua sem ver, e a lista de compartilhamentos é só do dono
+	// agora o amigo vê, o estranho continua sem ver; desde 26/11 (§9.1) quem acompanha vê quem mais acompanha
 	if rec := chamar(ObterSolicitacaoHandler(e.app), "GET", "/", amigo, "", pv); rec.Code != 200 {
 		t.Errorf("compartilhado deveria ver: %d", rec.Code)
 	}
 	if rec := chamar(ObterSolicitacaoHandler(e.app), "GET", "/", estranho, "", pv); rec.Code != 403 {
 		t.Errorf("terceiro deveria continuar sem ver: %d", rec.Code)
 	}
-	if rec := chamar(CompartilhamentosHandler(e.app), "GET", "/", amigo, "", pv); rec.Code != 403 {
-		t.Errorf("quem recebeu não lista os compartilhamentos: %d", rec.Code)
+	if rec := chamar(CompartilhamentosHandler(e.app), "GET", "/", amigo, "", pv); rec.Code != 200 {
+		t.Errorf("quem acompanha vê a lista de visualizadores: %d", rec.Code)
+	}
+	if rec := chamar(CompartilhamentosHandler(e.app), "GET", "/", estranho, "", pv); rec.Code != 403 {
+		t.Errorf("terceiro não vê a lista de visualizadores: %d", rec.Code)
 	}
 	// aparece na busca do amigo (e só nela), como compartilhado
 	reqB := httptest.NewRequest("GET", "/api/solicitacoes/busca", nil)
@@ -804,9 +808,35 @@ func TestPG_CompartilharChamado(t *testing.T) {
 	if !strings.Contains(recB.Body.String(), id) || !strings.Contains(recB.Body.String(), "Solicitante Teste") {
 		t.Errorf("o chamado deveria aparecer na lista do amigo, com quem compartilhou: %s", recB.Body.String())
 	}
-	// quem recebeu NÃO comenta (comentar é do dono)
-	if rec := chamar(ComentarSolicitacaoHandler(e.priv), "POST", "/", amigo, `{"versao":1,"comentario":"oi"}`, pv); rec.Code == 200 {
-		t.Errorf("compartilhado não pode comentar")
+	// §9.1 (26/11): o visualizador comenta, sem mudar o status do chamado
+	var stAntes, stDepois string
+	_ = e.app.QueryRow(`SELECT status FROM solicitacoes WHERE id = $1`, id).Scan(&stAntes)
+	if rec := chamar(ComentarSolicitacaoHandler(e.priv), "POST", "/", amigo, `{"versao":1,"comentario":"oi"}`, pv); rec.Code != 200 {
+		t.Errorf("visualizador deveria comentar: %d %s", rec.Code, rec.Body.String())
+	}
+	_ = e.app.QueryRow(`SELECT status FROM solicitacoes WHERE id = $1`, id).Scan(&stDepois)
+	if stAntes != stDepois {
+		t.Errorf("comentário do visualizador não muda o status: %s -> %s", stAntes, stDepois)
+	}
+	// o terceiro passa a ver quando entra num GRUPO em cópia; o grupo inativo deixa de valer
+	var gid string
+	if err := e.app.QueryRow(`INSERT INTO grupos (nome, gestor_id, criado_por) VALUES ('Grupo Expansão', $1, $1) RETURNING id`, b.usuario).Scan(&gid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.app.Exec(`INSERT INTO grupo_membros (grupo_id, usuario_id) VALUES ($1, $2)`, gid, estranho); err != nil {
+		t.Fatal(err)
+	}
+	if rec := chamar(IncluirGrupoNoChamadoHandler(e.app), "POST", "/", b.usuario, `{"grupo_id":"`+gid+`"}`, pv); rec.Code != 200 {
+		t.Fatalf("incluir grupo: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := chamar(ObterSolicitacaoHandler(e.app), "GET", "/", estranho, "", pv); rec.Code != 200 {
+		t.Errorf("membro do grupo em cópia deveria ver: %d", rec.Code)
+	}
+	if _, err := e.app.Exec(`UPDATE grupos SET ativo = false WHERE id = $1`, gid); err != nil {
+		t.Fatal(err)
+	}
+	if rec := chamar(ObterSolicitacaoHandler(e.app), "GET", "/", estranho, "", pv); rec.Code != 403 {
+		t.Errorf("grupo inativo não dá acesso: %d", rec.Code)
 	}
 	// retirar o acesso
 	if rec := chamar(RemoverCompartilhamentoHandler(e.app), "DELETE", "/", b.usuario, "", map[string]string{"id": id, "usuarioId": amigo}); rec.Code != 200 {
@@ -823,5 +853,66 @@ func TestPG_CompartilharChamado(t *testing.T) {
 	rec = chamar(BuscarUsuariosHandler(e.app), "GET", "/api/usuarios/busca?q=amigo", b.usuario, "", nil)
 	if !strings.Contains(rec.Body.String(), "amigo") {
 		t.Errorf("busca deveria achar o amigo: %s", rec.Body.String())
+	}
+}
+
+// Resposta da Controladoria (26/11): §3 edição pela Controladoria (histórico com antes/depois, destino único acompanha
+// a origem) e §2 nota interna (o solicitante não vê).
+func TestPG_EdicaoPelaControladoriaENotaInterna(t *testing.T) {
+	e := pgSetup(t)
+	b := e.seed(t)
+	id := e.solicitacao(t, b, "em_atendimento")
+	var atendente string
+	if err := e.admin.QueryRow(`INSERT INTO usuarios (email, nome, perfil) VALUES ('atend'||$1||'@teste.local', 'Atendente Teste', 'atendente')
+		ON CONFLICT (LOWER(email)) DO UPDATE SET nome = EXCLUDED.nome RETURNING id`, fmt.Sprint(os.Getpid())).Scan(&atendente); err != nil {
+		t.Fatal(err)
+	}
+	chamar := func(h http.HandlerFunc, metodo, usuario, perfil, corpo string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(metodo, "/", strings.NewReader(corpo))
+		req.SetPathValue("id", id)
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": usuario, "perfil": perfil}))
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		return rec
+	}
+	var origemID string
+	if err := e.app.QueryRow(`SELECT id FROM solicitacao_lancamentos WHERE solicitacao_id = $1 AND lado = 'origem'`, id).Scan(&origemID); err != nil {
+		t.Fatal(err)
+	}
+	// o chamado de exemplo nasce com origem = destino; o destino vai para outra conta (senão a edição é recusada)
+	if _, err := e.admin.Exec(`UPDATE solicitacao_lancamentos SET conta_id = $2 WHERE solicitacao_id = $1 AND lado = 'destino'`, id, b.conta5); err != nil {
+		t.Fatal(err)
+	}
+	corpo := `{"versao":1,"descricao":"Descrição nova","lancamentos":[{"id":"` + origemID + `","valor":45000}]}`
+	rec := chamar(EditarChamadoHandler(e.app, e.priv), "PUT", atendente, "atendente", corpo)
+	if rec.Code != 200 {
+		t.Fatalf("editar: %d %s", rec.Code, rec.Body.String())
+	}
+	var destino float64
+	_ = e.app.QueryRow(`SELECT valor::float8 FROM solicitacao_lancamentos WHERE solicitacao_id = $1 AND lado = 'destino'`, id).Scan(&destino)
+	if destino != 45000 {
+		t.Errorf("o destino único acompanha a origem: %v", destino)
+	}
+	var hist string
+	_ = e.app.QueryRow(`SELECT texto FROM solicitacao_comentarios WHERE solicitacao_id = $1 AND tipo = 'edicao'`, id).Scan(&hist)
+	if !strings.Contains(hist, "R$ 60.000,00 → R$ 45.000,00") || !strings.Contains(hist, "Descrição nova") {
+		t.Errorf("histórico da edição: %q", hist)
+	}
+	if _, v := statusDe(t, e.admin, id); v != 2 {
+		t.Errorf("a edição sobe a versão: %d", v)
+	}
+	// versão velha: conflito
+	if rec := chamar(EditarChamadoHandler(e.app, e.priv), "PUT", atendente, "atendente", corpo); rec.Code != 409 {
+		t.Errorf("versão desatualizada deveria dar 409: %d", rec.Code)
+	}
+	// nota interna: o atendimento vê, o solicitante não
+	if rec := chamar(NotaInternaHandler(e.app), "POST", atendente, "atendente", `{"texto":"conferir com o SAP"}`); rec.Code != 201 {
+		t.Fatalf("nota: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := chamar(ObterSolicitacaoHandler(e.app), "GET", b.usuario, "solicitante", ""); strings.Contains(rec.Body.String(), "conferir com o SAP") {
+		t.Errorf("o solicitante não pode ver a nota interna")
+	}
+	if rec := chamar(ObterSolicitacaoHandler(e.app), "GET", atendente, "atendente", ""); !strings.Contains(rec.Body.String(), "conferir com o SAP") {
+		t.Errorf("o atendimento vê a nota interna: %s", rec.Body.String())
 	}
 }

@@ -102,6 +102,13 @@ type abrirSolicitacaoRequest struct {
 	// QuantidadeMaterial (11/11, item 8) — obrigatória (>0) só para
 	// imobilizado; ignorada nos demais tipos.
 	QuantidadeMaterial int `json:"quantidade_material"`
+	// TipoCompra (A1, 26/11) — Imobilizado: "FL" ou "Externa", obrigatório. ValorUnitario (A4, 26/11) — Imobilizado:
+	// o total da linha é quantidade × unitário, calculado no servidor (o valor da linha enviado é ignorado).
+	TipoCompra    string  `json:"tipo_compra"`
+	ValorUnitario float64 `json:"valor_unitario"`
+	// Visualizadores (§9, 26/11): pessoas (usuario_id) e grupos (grupo_id) em cópia, que acompanham o chamado.
+	Visualizadores []string `json:"visualizadores"`
+	Grupos         []string `json:"grupos"`
 	// Classificacao (Story 3.5) é um dos 4 valores {inclusao, fl,
 	// retirada_saldo, transferencia_saldo} — campo no nível da solicitação,
 	// obrigatório exclusivamente para tipo_solicitacao="obras". Ignorado
@@ -240,6 +247,45 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// A3 (26/11): descrição obrigatória e com tamanho máximo; fornecedor dentro da coluna.
+		if msgErro := validarDescricao(req.TipoSolicitacao, req.Descricao); msgErro != "" {
+			jsonErr(w, http.StatusBadRequest, msgErro)
+			return
+		}
+		if msgErro := validarFornecedorTamanho(req.Fornecedor); msgErro != "" {
+			jsonErr(w, http.StatusBadRequest, msgErro)
+			return
+		}
+
+		// A1/A4 (26/11): Imobilizado — tipo de compra e total = quantidade × unitário (o servidor recalcula).
+		var tipoCompra, valorUnitario sql.NullString
+		if req.TipoSolicitacao == "imobilizado" {
+			tc, msgErro := validarTipoCompra(req.TipoCompra)
+			if msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
+			tipoCompra = sql.NullString{String: tc, Valid: true}
+			if req.ValorUnitario <= 0 {
+				jsonErr(w, http.StatusBadRequest, "Informe o valor unitário do imobilizado (maior que zero).")
+				return
+			}
+			if msgErro := validarValorMaximo(req.ValorUnitario); msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
+			if req.QuantidadeMaterial > 0 {
+				lancamentos[0].Valor = totalImobilizado(req.QuantidadeMaterial, req.ValorUnitario)
+			}
+			valorUnitario = sql.NullString{String: fmt.Sprintf("%.2f", req.ValorUnitario), Valid: true}
+		}
+		for _, l := range lancamentos {
+			if msgErro := validarValorMaximo(l.Valor); msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
+		}
+
 		// Story 3.3/3.4: Inclusão e Imobilizado exigem um autorizador_id
 		// (UUID) escolhido pelo solicitante — validado contra
 		// autorizadores_formulario mais adiante, via AutorizadorNominal
@@ -286,6 +332,11 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		// é sempre 1 única linha, nenhum dos dois conceitos se aplica).
 		if req.TipoSolicitacao == "transferencia" {
 			if msgErro := validarBalanceamento(lancamentos); msgErro != "" {
+				jsonErr(w, http.StatusBadRequest, msgErro)
+				return
+			}
+
+			if msgErro := validarTransferenciaUmaContaPorLado(lancamentos); msgErro != "" {
 				jsonErr(w, http.StatusBadRequest, msgErro)
 				return
 			}
@@ -395,6 +446,20 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
+		// Item 6 (26/11): o saldo do SAP BLOQUEIA — a retirada de cada mês da origem não passa do "pode remanejar".
+		if req.TipoSolicitacao == "transferencia" {
+			msgSaldo, errSaldo := conferirSaldoOrigem(r.Context(), db, lancamentos)
+			if errSaldo != nil {
+				log.Printf("[Solicitacoes] Erro ao conferir o saldo da origem: %v", errSaldo)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+			if msgSaldo != "" {
+				jsonErr(w, http.StatusBadRequest, msgSaldo)
+				return
+			}
+		}
+
 		// Story 3.4: Imobilizado valida classe_imobilizado_id contra
 		// classes_imobilizado (cadastro já administrável desde o Epic 2) —
 		// mesmo padrão de validarPlanoConta: (msg, nil) para violação de
@@ -499,10 +564,10 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		var solicitacaoID string
 		err = tx.QueryRow(`
-			INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material)
-			VALUES ($1, $2, $3, $10, $4, 1, $5, $6, $7, $8, $9)
+			INSERT INTO solicitacoes (tipo_solicitacao, solicitante_id, centro_custo_id, status, aprovador_snapshot, versao, fornecedor, descricao, fornecedor_cnpj, fornecedor_nao_cadastrado, quantidade_material, tipo_compra, valor_unitario)
+			VALUES ($1, $2, $3, $10, $4, 1, $5, $6, $7, $8, $9, $11, $12::numeric)
 			RETURNING id
-		`, req.TipoSolicitacao, solicitanteID, centroCustoID, string(snapshotJSON), fornecedor, descricao, fornecedorCNPJ, req.FornecedorNaoCadastrado, quantidadeMaterial, statusInicial).Scan(&solicitacaoID)
+		`, req.TipoSolicitacao, solicitanteID, centroCustoID, string(snapshotJSON), fornecedor, descricao, fornecedorCNPJ, req.FornecedorNaoCadastrado, quantidadeMaterial, statusInicial, tipoCompra, valorUnitario).Scan(&solicitacaoID)
 		if err != nil {
 			log.Printf("[Solicitacoes] Erro ao inserir solicitacao: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -531,6 +596,15 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
 			}
+		}
+
+		if msg, err := gravarVisualizadores(tx, solicitacaoID, solicitanteID, req.Visualizadores, req.Grupos); err != nil {
+			log.Printf("[Solicitacoes] Erro ao gravar visualizadores: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		} else if msg != "" {
+			jsonErr(w, http.StatusBadRequest, msg)
+			return
 		}
 
 		// Story 3.4 (+ 20/10 para os demais tipos): anexos de cotação são
@@ -763,7 +837,7 @@ func validarAnexosTipo(itens []anexoRequest, obrigatorio bool, tipo string) ([]a
 			return nil, fmt.Sprintf("anexo %d (%s): o arquivo não é de um tipo aceito ou o conteúdo não corresponde à extensão. Aceitos: %s.", n, a.NomeArquivo, tiposAnexoAceitos)
 		}
 		decodificados = append(decodificados, anexos.ArquivoDecodificado{
-			NomeArquivo: a.NomeArquivo,
+			NomeArquivo: nomeAnexoSeguro(a.NomeArquivo),
 			ContentType: ct,
 			Dados:       dados,
 		})
@@ -1074,6 +1148,26 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 		}
 	}
 
+	// Item 4 (24/11): "CRIAR" não vale onde o saldo sai. A3/seção 14 (26/11): detalhe obrigatório e limites.
+	if msgErro := validarCriarObras(req.Classificacao, linhas); msgErro != "" {
+		jsonErr(w, http.StatusBadRequest, msgErro)
+		return
+	}
+	if msgErro := validarDescricao("obras", req.Descricao); msgErro != "" {
+		jsonErr(w, http.StatusBadRequest, msgErro)
+		return
+	}
+	if msgErro := validarFornecedorTamanho(req.Fornecedor); msgErro != "" {
+		jsonErr(w, http.StatusBadRequest, msgErro)
+		return
+	}
+	for _, l := range linhas {
+		if msgErro := validarValorMaximo(l.Valor); msgErro != "" {
+			jsonErr(w, http.StatusBadRequest, msgErro)
+			return
+		}
+	}
+
 	// Anexo obrigatório também para Obras desde 11/11 (item 5).
 	anexosParaSalvar, msgErroAnexo := validarAnexos(req.Anexos, true)
 	if msgErroAnexo != "" {
@@ -1191,6 +1285,15 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
+	}
+
+	if msg, err := gravarVisualizadores(tx, solicitacaoID, solicitanteID, req.Visualizadores, req.Grupos); err != nil {
+		log.Printf("[Solicitacoes] Erro ao gravar visualizadores (obras): %v", err)
+		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+		return
+	} else if msg != "" {
+		jsonErr(w, http.StatusBadRequest, msg)
+		return
 	}
 
 	for _, a := range anexosParaSalvar {

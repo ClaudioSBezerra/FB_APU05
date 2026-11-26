@@ -30,9 +30,10 @@ var locRecife = func() *time.Location {
 // agoraRecife é o relógio da regra (trocável nos testes).
 var agoraRecife = func() time.Time { return time.Now().In(locRecife) }
 
-// tipoUsaAnoUnico: os formulários que seguem a regra. Obras e Imobilizado não mudam.
+// tipoUsaAnoUnico: os formulários que seguem a regra. Imobilizado entrou em 26/11/2026 (resposta da Controladoria §6);
+// Obras tem regra própria (classificacaoUsaAno).
 func tipoUsaAnoUnico(tipo string) bool {
-	return tipo == "transferencia" || tipo == "inclusao" || tipo == "inclusao_sfc"
+	return tipo == "transferencia" || tipo == "inclusao" || tipo == "inclusao_sfc" || tipo == "imobilizado"
 }
 
 // parseLimiteAnoAnterior converte "MM-DD" (ex.: "01-31"); inválido vira o padrão.

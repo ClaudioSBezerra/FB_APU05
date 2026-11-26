@@ -229,10 +229,11 @@ func resolverLinhasCriar(tx *sql.Tx, solicitacaoID string, ordensCriadas []Ordem
 			return ErrOrdensCriadasInvalidas
 		}
 
+		iea := sql.NullString{String: strings.TrimSpace(oc.ImobilizadoIEA), Valid: strings.TrimSpace(oc.ImobilizadoIEA) != ""}
 		if _, err := tx.Exec(`
-			INSERT INTO obra_ordens (numero_ordem, local_obra_id, subgrupo_despesa_id)
-			VALUES ($1, $2, $3)
-		`, numeroOrdem, l.LocalObraID, l.SubgrupoDespesaID); err != nil {
+			INSERT INTO obra_ordens (numero_ordem, local_obra_id, subgrupo_despesa_id, imobilizado_iea, origem, solicitacao_id)
+			VALUES ($1, $2, $3, $4, 'chamado', $5)
+		`, numeroOrdem, l.LocalObraID, l.SubgrupoDespesaID, iea, solicitacaoID); err != nil {
 			if ehViolacaoDeUnicidade(err) {
 				return ErrOrdemJaExiste
 			}
@@ -240,8 +241,8 @@ func resolverLinhasCriar(tx *sql.Tx, solicitacaoID string, ordensCriadas []Ordem
 		}
 
 		if _, err := tx.Exec(`
-			UPDATE solicitacao_obras_linhas SET ordem_investimento = $1 WHERE id = $2
-		`, numeroOrdem, l.ID); err != nil {
+			UPDATE solicitacao_obras_linhas SET ordem_investimento = $1, imobilizado_iea = $3 WHERE id = $2
+		`, numeroOrdem, l.ID, iea); err != nil {
 			return fmt.Errorf("exportacao: atualizar ordem_investimento da linha %s: %w", l.ID, err)
 		}
 	}

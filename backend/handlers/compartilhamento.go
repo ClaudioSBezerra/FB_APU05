@@ -20,13 +20,9 @@ import (
 var enviarEmailCompartilhamento = services.SendHTMLEmail
 
 // podeVerSolicitacao: dono, atendente/administrador, administrador do chamado ou usuário com quem foi compartilhado.
+// Desde 26/11 inclui os grupos em cópia (acompanhamento.go).
 func compartilhadoCom(db *sql.DB, solicitacaoID, usuarioID string) bool {
-	var ok bool
-	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM solicitacao_compartilhamentos WHERE solicitacao_id = $1 AND usuario_id = $2)`, solicitacaoID, usuarioID).Scan(&ok); err != nil {
-		log.Printf("[Compartilhamento] erro ao checar acesso: %v", err)
-		return false
-	}
-	return ok
+	return acompanha(db, solicitacaoID, usuarioID)
 }
 
 // donoDoChamado devolve o solicitante e o código do chamado; ok=false se não existe.
@@ -101,18 +97,12 @@ func CompartilhamentosHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusNotFound, "solicitação não encontrada")
 			return
 		}
-		if dono != GetUserIDFromContext(r) {
-			jsonErr(w, http.StatusForbidden, "Só quem abriu o chamado pode compartilhá-lo.")
+		quem := GetUserIDFromContext(r)
+		if dono != quem && !perfilAtende(GetPerfilFromContext(r)) && !acompanha(db, id, quem) {
+			jsonErr(w, http.StatusForbidden, "Sem permissão para ver este chamado.")
 			return
 		}
-		itens, err := listarCompartilhamentos(db, id)
-		if err != nil {
-			log.Printf("[Compartilhamento] listar: %v", err)
-			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": itens})
+		responderVisualizadores(w, db, id)
 	}
 }
 
@@ -144,12 +134,13 @@ func CompartilharHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusNotFound, "solicitação não encontrada")
 			return
 		}
-		if dono != quem {
-			jsonErr(w, http.StatusForbidden, "Só quem abriu o chamado pode compartilhá-lo.")
+		// 26/11 (§9.1): a Controladoria (atendimento) também inclui visualizadores.
+		if dono != quem && !perfilAtende(GetPerfilFromContext(r)) {
+			jsonErr(w, http.StatusForbidden, "Só quem abriu o chamado ou o atendimento inclui visualizadores.")
 			return
 		}
-		if req.UsuarioID == quem {
-			jsonErr(w, http.StatusBadRequest, "O chamado já é seu. Escolha outra pessoa.")
+		if req.UsuarioID == dono {
+			jsonErr(w, http.StatusBadRequest, "Essa pessoa abriu o chamado. Escolha outra pessoa.")
 			return
 		}
 		var nome, email string
@@ -176,7 +167,7 @@ func CompartilharHandler(db *sql.DB) http.HandlerFunc {
 		}
 		novo, _ := res.RowsAffected()
 		if novo > 0 {
-			if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'evento', $3)`, id, quem, "Compartilhou o chamado (somente leitura) com "+nome+"."); err != nil {
+			if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'evento', $3)`, id, quem, "Incluiu "+nome+" em cópia (visualizador)."); err != nil {
 				log.Printf("[Compartilhamento] histórico: %v", err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
@@ -191,9 +182,7 @@ func CompartilharHandler(db *sql.DB) http.HandlerFunc {
 			_ = db.QueryRow(`SELECT nome FROM usuarios WHERE id = $1`, quem).Scan(&quemNome)
 			go avisarCompartilhamento(email, nome, quemNome, CodigoChamado(numero), id)
 		}
-		itens, _ := listarCompartilhamentos(db, id)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": itens})
+		responderVisualizadores(w, db, id)
 	}
 }
 
@@ -215,8 +204,8 @@ func RemoverCompartilhamentoHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusNotFound, "solicitação não encontrada")
 			return
 		}
-		if dono != quem {
-			jsonErr(w, http.StatusForbidden, "Só quem abriu o chamado pode retirar o acesso.")
+		if dono != quem && !perfilAtende(GetPerfilFromContext(r)) {
+			jsonErr(w, http.StatusForbidden, "Só quem abriu o chamado ou o atendimento retira visualizadores.")
 			return
 		}
 		tx, err := db.Begin()
@@ -234,7 +223,7 @@ func RemoverCompartilhamentoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
-			if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'evento', $3)`, id, quem, "Retirou o acesso de "+nome+" ao chamado."); err != nil {
+			if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'evento', $3)`, id, quem, "Retirou "+nome+" da cópia (visualizador)."); err != nil {
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
 			}
@@ -243,9 +232,7 @@ func RemoverCompartilhamentoHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
-		itens, _ := listarCompartilhamentos(db, id)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": itens})
+		responderVisualizadores(w, db, id)
 	}
 }
 

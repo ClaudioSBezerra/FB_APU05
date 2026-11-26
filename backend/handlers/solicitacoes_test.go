@@ -61,13 +61,13 @@ func esperarAnexoPadrao(mock sqlmock.Sqlmock) {
 }
 
 func corpoTransferencia(lancamentosJSON string) string {
-	return `{"tipo_solicitacao":"transferencia",` + anexosPadrao() + `,"lancamentos":[` + lancamentosJSON + `]}`
+	return `{"tipo_solicitacao":"transferencia","descricao":"teste",` + anexosPadrao() + `,"lancamentos":[` + lancamentosJSON + `]}`
 }
 
 // corpoInclusaoSFC monta o corpo de uma Inclusão SFC (Story 3.2) — mesmo
 // helper de linha (linhaJSON), outro tipo_solicitacao.
 func corpoInclusaoSFC(lancamentosJSON string) string {
-	return `{"tipo_solicitacao":"inclusao_sfc",` + anexosPadrao() + `,"lancamentos":[` + lancamentosJSON + `]}`
+	return `{"tipo_solicitacao":"inclusao_sfc","descricao":"teste",` + anexosPadrao() + `,"lancamentos":[` + lancamentosJSON + `]}`
 }
 
 // corpoInclusao monta o corpo de uma Inclusão (Story 3.3, autorizador
@@ -75,7 +75,7 @@ func corpoInclusaoSFC(lancamentosJSON string) string {
 // nível da solicitação.
 func corpoInclusao(autorizadorID, lancamentosJSON string) string {
 	return fmt.Sprintf(
-		`{"tipo_solicitacao":"inclusao","autorizador_id":%q,%s,"lancamentos":[%s]}`,
+		`{"tipo_solicitacao":"inclusao","descricao":"teste","autorizador_id":%q,%s,"lancamentos":[%s]}`,
 		autorizadorID, anexosPadrao(), lancamentosJSON,
 	)
 }
@@ -93,7 +93,7 @@ func linhaJSON(lado, divisaoID, centroCustoID, contaID, mes string, valor float6
 // solicitação.
 func corpoImobilizado(autorizadorID, lancamentosJSON, anexosJSON string) string {
 	return fmt.Sprintf(
-		`{"tipo_solicitacao":"imobilizado","autorizador_id":%q,"quantidade_material":1,"lancamentos":[%s],"anexos":[%s]}`,
+		`{"tipo_solicitacao":"imobilizado","descricao":"teste","tipo_compra":"FL","valor_unitario":1000,"autorizador_id":%q,"quantidade_material":1,"lancamentos":[%s],"anexos":[%s]}`,
 		autorizadorID, lancamentosJSON, anexosJSON,
 	)
 }
@@ -113,7 +113,7 @@ func linhaImobilizadoJSON(lado, divisaoID, centroCustoID, classeImobilizadoID st
 // `classificacao` e `obras_linhas` no lugar de `anexos`/`lancamentos`.
 func corpoObras(autorizadorID, classificacao, linhasJSON string) string {
 	return fmt.Sprintf(
-		`{"tipo_solicitacao":"obras","autorizador_id":%q,"classificacao":%q,%s,"obras_linhas":[%s]}`,
+		`{"tipo_solicitacao":"obras","descricao":"teste","autorizador_id":%q,"classificacao":%q,%s,"obras_linhas":[%s]}`,
 		autorizadorID, classificacao, anexosPadrao(), linhasJSON,
 	)
 }
@@ -507,7 +507,7 @@ func TestAbrirSolicitacaoHandler_SemAlcada_NaoObrigatoriaSegueParaAFila(t *testi
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_obrigatoria'")).
 		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("false"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "aberta").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "aberta", nil, nil).
 		WillReturnError(errors.New("parou aqui de propósito"))
 	mock.ExpectRollback()
 
@@ -630,7 +630,7 @@ func TestAbrirSolicitacaoHandler_ComFornecedorDescricaoEAnexo(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_limite_transferencia'")).
 		WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("50000"))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-		WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), "Fornecedor Teste Ltda", "Transferência para cobrir despesa X", nil, false, nil, "aberta").
+		WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), "Fornecedor Teste Ltda", "Transferência para cobrir despesa X", nil, false, nil, "aberta", nil, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_lancamentos")).
 		WithArgs(solicitacaoID, "origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-10-01", nil, 1000.0).
@@ -1964,7 +1964,7 @@ func TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoBalanceada_Success(t *t
 	const autorizadorRegraID = "ar000000-0000-0000-0000-000000000004"
 
 	corpo := corpoObras(testSolicitacaoAutorizadorID, classificacaoTransferenciaSaldo,
-		linhaObraJSON("retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000)+","+
+		linhaObraJSON("retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "123456", 1000)+","+
 			linhaObraJSON("inclusao", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000),
 	)
 
@@ -1975,6 +1975,10 @@ func TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoBalanceada_Success(t *t
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM subgrupos_despesa WHERE id = $1)")).
 		WithArgs(testObraSubgrupoDespesaID).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	// retirada: a ordem precisa existir (item 4 de 24/11 — "CRIAR" não vale onde o saldo sai)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT local_obra_id, subgrupo_despesa_id FROM obra_ordens WHERE numero_ordem = $1")).
+		WithArgs("123456").
+		WillReturnRows(sqlmock.NewRows([]string{"local_obra_id", "subgrupo_despesa_id"}).AddRow(testObraLocalObraID, testObraSubgrupoDespesaID))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM locais_obra WHERE id = $1)")).
 		WithArgs(testObraLocalObraID).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
@@ -1994,7 +1998,7 @@ func TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoBalanceada_Success(t *t
 		WithArgs(testAtorID, sqlmock.AnyArg(), classificacaoTransferenciaSaldo, sqlmock.AnyArg(), sqlmock.AnyArg(), nil, false, int64(2026)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
-		WithArgs(solicitacaoID, "retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).
+		WithArgs(solicitacaoID, "retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "123456", 1000.0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
 		WithArgs(solicitacaoID, "inclusao", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).

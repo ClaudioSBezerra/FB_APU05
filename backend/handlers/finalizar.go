@@ -19,6 +19,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"fb_apu05/internal/exportacao"
@@ -29,7 +30,12 @@ import (
 type ordemCriadaRequest struct {
 	LinhaID     string `json:"linha_id"`
 	NumeroOrdem string `json:"numero_ordem"`
+	// ImobilizadoIEA (24/11, item 3): novo imobilizado, 4 a 20 dígitos, obrigatório junto com a ordem.
+	ImobilizadoIEA string `json:"imobilizado_iea"`
 }
+
+// reDigitos4a20: ordem de investimento e IEA têm de 4 a 20 dígitos (FORM-OBRAS / ESTRUTURA-ORDEM-INVESTIMENTO).
+var reDigitos4a20 = regexp.MustCompile(`^[0-9]{4,20}$`)
 
 // finalizarRequest é o corpo de POST /api/solicitacoes/{id}/finalizar.
 // `administrador_id` NUNCA vem do corpo (Boundaries "Always" da spec:
@@ -142,7 +148,17 @@ func lerFinalizarRequest(w http.ResponseWriter, r *http.Request) (versao int, re
 			return 0, "", nil, "", false
 		}
 
-		ordens = append(ordens, exportacao.OrdemCriada{LinhaID: oc.LinhaID, NumeroOrdem: numeroOrdem})
+		iea := strings.TrimSpace(oc.ImobilizadoIEA)
+		if !reDigitos4a20.MatchString(numeroOrdem) {
+			jsonErr(w, http.StatusBadRequest, "A nova ordem de investimento deve ter de 4 a 20 dígitos (só números).")
+			return 0, "", nil, "", false
+		}
+		if !reDigitos4a20.MatchString(iea) {
+			jsonErr(w, http.StatusBadRequest, "O novo imobilizado (IEA) deve ter de 4 a 20 dígitos (só números).")
+			return 0, "", nil, "", false
+		}
+
+		ordens = append(ordens, exportacao.OrdemCriada{LinhaID: oc.LinhaID, NumeroOrdem: numeroOrdem, ImobilizadoIEA: iea})
 	}
 
 	nota, msg := notaEncerramento(req.Resultado, req.CategoriaErro, req.Observacao)
@@ -235,6 +251,7 @@ func finalizarHandler(db *sql.DB, dispensaExportacao func() bool) http.HandlerFu
 			return
 		}
 
+		go avisarEvento(db, id, administradorID, map[bool]string{true: "chamado finalizado com sucesso", false: "chamado finalizado com erro"}[resultado == "sucesso"], nota)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id":               resultadoFinal.ID,

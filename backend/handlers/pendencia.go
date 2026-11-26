@@ -161,6 +161,7 @@ func MarcarPendenciaHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		log.Printf("[Fila] %s marcou pendência em %s (versao=%d)", administradorID, resultado.ID, resultado.Versao)
+		go avisarEvento(db, id, administradorID, "pendência: o atendimento devolveu o chamado para você responder", comentario)
 		responderSolicitacaoFila(w, resultado)
 	}
 }
@@ -192,9 +193,12 @@ func ComentarSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 
 		solicitanteID := GetUserIDFromContext(r)
 
+		var statusAntes string
+		_ = db.QueryRow(`SELECT status FROM solicitacoes WHERE id = $1`, id).Scan(&statusAntes)
 		resultado, err := fila.Comentar(db, id, versao, solicitanteID, comentario)
-		if errors.Is(err, fila.ErrNaoAutorizado) && perfilAtende(GetPerfilFromContext(r)) {
-			// atendente/administrador comentando no chamado de outra pessoa: não reabre nem muda o status
+		if errors.Is(err, fila.ErrNaoAutorizado) && (perfilAtende(GetPerfilFromContext(r)) || compartilhadoCom(db, id, solicitanteID)) {
+			// atendente/administrador ou visualizador (§9.1, 26/11) comentando no chamado de outra pessoa: não reabre
+			// nem muda o status
 			resultado, err = fila.ComentarAtendimento(db, id, versao, solicitanteID, comentario)
 		}
 		if err != nil {
@@ -207,6 +211,9 @@ func ComentarSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		log.Printf("[Fila] %s comentou em %s (versao=%d, status=%s)", solicitanteID, resultado.ID, resultado.Versao, resultado.Status)
+		if statusAntes == "pendente" && resultado.Status != "pendente" {
+			go avisarEvento(db, id, solicitanteID, "chamado reaberto pelo solicitante", comentario)
+		}
 		responderSolicitacaoFila(w, resultado)
 	}
 }
@@ -306,6 +313,10 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 				log.Printf("[Fila] Erro ao ler comentário de %s: %v", id, err)
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
+			}
+			// §2 (26/11): a nota interna só aparece para o atendimento/administração
+			if c.Tipo == "nota_interna" && !perfilAtende(GetPerfilFromContext(r)) {
+				continue
 			}
 			comentarios = append(comentarios, c)
 		}
@@ -460,7 +471,7 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 		}
 	}
 	rows, err := db.Query(`
-		SELECT l.lado, cc.codigo, cc.nome, COALESCE(c.codigo, ''), COALESCE(c.nome, ''), COALESCE(ci.nome, ''),
+		SELECT l.id, l.centro_custo_id, COALESCE(l.conta_id::text, ''), l.lado, cc.codigo, cc.nome, COALESCE(c.codigo, ''), COALESCE(c.nome, ''), COALESCE(ci.nome, ''),
 		       COALESCE(to_char(l.mes, 'YYYY-MM'), ''), l.valor::float8
 		FROM solicitacao_lancamentos l
 		JOIN centros_custo cc ON cc.id = l.centro_custo_id
@@ -475,18 +486,31 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 	defer rows.Close()
 	lanc := make([]map[string]interface{}, 0)
 	for rows.Next() {
-		var lado, ccC, ccN, contaC, contaN, classe, mes string
+		var linhaID, ccID, contaID, lado, ccC, ccN, contaC, contaN, classe, mes string
 		var valor float64
-		if err := rows.Scan(&lado, &ccC, &ccN, &contaC, &contaN, &classe, &mes, &valor); err != nil {
+		if err := rows.Scan(&linhaID, &ccID, &contaID, &lado, &ccC, &ccN, &contaC, &contaN, &classe, &mes, &valor); err != nil {
 			log.Printf("[Fila] detalhe da solicitação %s: lançamento ilegível: %v", id, err)
 			break
 		}
 		lanc = append(lanc, map[string]interface{}{
+			"id": linhaID, "centro_custo_id": ccID, "conta_id": contaID,
 			"lado": lado, "centro_custo": ccC + " — " + ccN, "conta": contaC, "conta_nome": contaN,
 			"classe_imobilizado": classe, "mes": mes, "valor": valor,
 		})
 	}
 	out["lancamentos"] = lanc
+
+	// Imobilizado (26/11, A1/A4): tipo de compra e valor unitário; o total é o valor da linha.
+	var tipoCompra sql.NullString
+	var valorUnit sql.NullFloat64
+	if err := db.QueryRow(`SELECT tipo_compra, valor_unitario::float8 FROM solicitacoes WHERE id = $1`, id).Scan(&tipoCompra, &valorUnit); err == nil {
+		if tipoCompra.Valid {
+			out["tipo_compra"] = tipoCompra.String
+		}
+		if valorUnit.Valid {
+			out["valor_unitario"] = valorUnit.Float64
+		}
+	}
 
 	// Obras: as linhas ficam em outra tabela (local, subgrupo, ordem, lado, valor) e a classificação no cabeçalho.
 	var classificacao sql.NullString
@@ -497,7 +521,7 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 		out["ano_orcamento"] = anoOrcamento.Int64
 	}
 	orows, err := db.Query(`
-		SELECT COALESCE(ol.lado, ''), lo.nome, sg.nome, ol.ordem_investimento, ol.valor::float8
+		SELECT ol.id, COALESCE(ol.lado, ''), lo.nome, sg.nome, ol.ordem_investimento, COALESCE(ol.imobilizado_iea, ''), ol.valor::float8
 		FROM solicitacao_obras_linhas ol
 		JOIN locais_obra lo ON lo.id = ol.local_obra_id
 		JOIN subgrupos_despesa sg ON sg.id = ol.subgrupo_despesa_id
@@ -510,13 +534,13 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 	defer orows.Close()
 	obras := make([]map[string]interface{}, 0)
 	for orows.Next() {
-		var lado, local, subgrupo, ordem string
+		var linhaID, lado, local, subgrupo, ordem, iea string
 		var valor float64
-		if err := orows.Scan(&lado, &local, &subgrupo, &ordem, &valor); err != nil {
+		if err := orows.Scan(&linhaID, &lado, &local, &subgrupo, &ordem, &iea, &valor); err != nil {
 			log.Printf("[Fila] detalhe da solicitação %s: linha de obra ilegível: %v", id, err)
 			break
 		}
-		obras = append(obras, map[string]interface{}{"lado": lado, "local": local, "subgrupo": subgrupo, "ordem": ordem, "valor": valor})
+		obras = append(obras, map[string]interface{}{"id": linhaID, "lado": lado, "local": local, "subgrupo": subgrupo, "ordem": ordem, "iea": iea, "valor": valor})
 	}
 	out["obras_linhas"] = obras
 	return out

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useLayoutEffect, useRef } from 'react';
 import { SESSION_KEY_AUTH_VIA_SSO } from '@/lib/keycloak/buildLoginUrl';
 import type { Perfil } from '@/lib/perfis';
 
@@ -42,12 +42,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(() => readStoredUser());
   const [token, setToken] = useState<string | null>(() => sessionStorage.getItem('token'));
 
-  // Ref para o interceptor de fetch (sem stale closure).
-  const tokenRef = useRef<string | null>(null);
+  // Ref para o interceptor de fetch (sem stale closure). Já nasce com o token guardado: na abertura direta de uma
+  // página (F5 ou link), a página dispara a 1ª chamada antes de qualquer efeito deste provider (homologação 25/11,
+  // item 22: "Autenticação necessária" ao abrir o Painel direto).
+  const tokenRef = useRef<string | null>(sessionStorage.getItem('token'));
   // Guarda contra dupla-invocação de logout() (duplo clique, 2 componentes de navegação).
   const loggingOutRef = useRef(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     tokenRef.current = token;
   }, [token]);
 
@@ -60,7 +62,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   // — esta story não implementa renovação via refresh cookie (/api/auth/refresh
   // não existe ainda; ver Implementation Notes da spec), então uma sessão
   // expira de fato ao fim dos 30min do access token, exigindo novo login.
-  useEffect(() => {
+  // useLayoutEffect: instala o interceptor antes dos efeitos (useEffect) das páginas filhas.
+  useLayoutEffect(() => {
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = typeof input === 'string' ? input : (input as Request).url ?? '';
@@ -88,6 +91,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const login = (data: { token: string; user: User }, opts?: { viaSSO?: boolean }) => {
+    tokenRef.current = data.token;
     setToken(data.token);
     setUser(data.user);
 

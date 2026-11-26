@@ -97,16 +97,16 @@ func TestFinalizarSolicitacaoHandler_SucessoComLinhaCriar(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "local_obra_id", "subgrupo_despesa_id"}).
 			AddRow(testFinalizarHandlerLinhaCriarID, testFinalizarHandlerLocalObraID, testFinalizarHandlerSubgrupoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO obra_ordens")).
-		WithArgs("SAP-0001", testFinalizarHandlerLocalObraID, testFinalizarHandlerSubgrupoID).
+		WithArgs("40001234", testFinalizarHandlerLocalObraID, testFinalizarHandlerSubgrupoID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE solicitacao_obras_linhas SET ordem_investimento")).
-		WithArgs("SAP-0001", testFinalizarHandlerLinhaCriarID).
+		WithArgs("40001234", testFinalizarHandlerLinhaCriarID, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO solicitacao_comentarios").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	handler := FinalizarSolicitacaoHandler(db)
-	corpo := `{"versao":1,"resultado":"sucesso","ordens_criadas":[{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":" SAP-0001 "}]}`
+	corpo := `{"versao":1,"resultado":"sucesso","ordens_criadas":[{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":" 40001234 ","imobilizado_iea":"5000123"}]}`
 	req := newFinalizarRequest(testFinalizarHandlerSolicitacaoID, corpo)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
@@ -160,7 +160,7 @@ func TestFinalizarSolicitacaoHandler_OrdensCriadasComResultadoErro(t *testing.T)
 	db, mock := newSQLMock(t)
 
 	handler := FinalizarSolicitacaoHandler(db)
-	corpo := `{"versao":1,"resultado":"erro","ordens_criadas":[{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":"SAP-0001"}]}`
+	corpo := `{"versao":1,"resultado":"erro","ordens_criadas":[{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":"40001234"}]}`
 	req := newFinalizarRequest(testFinalizarHandlerSolicitacaoID, corpo)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
@@ -177,7 +177,7 @@ func TestFinalizarSolicitacaoHandler_LinhaIDFormatoInvalido(t *testing.T) {
 	db, mock := newSQLMock(t)
 
 	handler := FinalizarSolicitacaoHandler(db)
-	corpo := `{"versao":1,"resultado":"sucesso","ordens_criadas":[{"linha_id":"nao-e-uuid","numero_ordem":"SAP-0001"}]}`
+	corpo := `{"versao":1,"resultado":"sucesso","ordens_criadas":[{"linha_id":"nao-e-uuid","numero_ordem":"40001234"}]}`
 	req := newFinalizarRequest(testFinalizarHandlerSolicitacaoID, corpo)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
@@ -212,8 +212,8 @@ func TestFinalizarSolicitacaoHandler_LinhaIDDuplicado(t *testing.T) {
 
 	handler := FinalizarSolicitacaoHandler(db)
 	corpo := `{"versao":1,"resultado":"sucesso","ordens_criadas":[` +
-		`{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":"SAP-0001"},` +
-		`{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":"SAP-0002"}` +
+		`{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":"40001234","imobilizado_iea":"5000123"},` +
+		`{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":"40001235"}` +
 		`]}`
 	req := newFinalizarRequest(testFinalizarHandlerSolicitacaoID, corpo)
 	rec := httptest.NewRecorder()
@@ -362,7 +362,7 @@ func TestFinalizarSolicitacaoHandler_OrdensCriadasInvalidas(t *testing.T) {
 	mock.ExpectRollback()
 
 	handler := FinalizarSolicitacaoHandler(db)
-	corpo := `{"versao":1,"resultado":"sucesso","ordens_criadas":[{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":"SAP-0001"}]}`
+	corpo := `{"versao":1,"resultado":"sucesso","ordens_criadas":[{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":"40001234","imobilizado_iea":"5000123"}]}`
 	req := newFinalizarRequest(testFinalizarHandlerSolicitacaoID, corpo)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
@@ -388,12 +388,12 @@ func TestFinalizarSolicitacaoHandler_NumeroOrdemJaExiste(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "local_obra_id", "subgrupo_despesa_id"}).
 			AddRow(testFinalizarHandlerLinhaCriarID, testFinalizarHandlerLocalObraID, testFinalizarHandlerSubgrupoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO obra_ordens")).
-		WithArgs("SAP-0001", testFinalizarHandlerLocalObraID, testFinalizarHandlerSubgrupoID).
+		WithArgs("40001234", testFinalizarHandlerLocalObraID, testFinalizarHandlerSubgrupoID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(&pq.Error{Code: "23505"})
 	mock.ExpectRollback()
 
 	handler := FinalizarSolicitacaoHandler(db)
-	corpo := `{"versao":1,"resultado":"sucesso","ordens_criadas":[{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":"SAP-0001"}]}`
+	corpo := `{"versao":1,"resultado":"sucesso","ordens_criadas":[{"linha_id":"` + testFinalizarHandlerLinhaCriarID + `","numero_ordem":"40001234","imobilizado_iea":"5000123"}]}`
 	req := newFinalizarRequest(testFinalizarHandlerSolicitacaoID, corpo)
 	rec := httptest.NewRecorder()
 	handler(rec, req)

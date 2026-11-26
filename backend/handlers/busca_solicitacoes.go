@@ -50,7 +50,7 @@ func BuscarSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 
 		if !perfilAtende(GetPerfilFromContext(r)) {
 			quem := arg(GetUserIDFromContext(r))
-			onde = append(onde, "(s.solicitante_id = "+quem+" OR EXISTS (SELECT 1 FROM solicitacao_compartilhamentos sc WHERE sc.solicitacao_id = s.id AND sc.usuario_id = "+quem+"))")
+			onde = append(onde, "(s.solicitante_id = "+quem+" OR "+sqlAcompanha(quem)+")")
 		}
 		if st := qs.Get("status"); st != "" {
 			if !statusBusca[st] {
@@ -107,8 +107,10 @@ func BuscarSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 		consulta := fmt.Sprintf(`
 			SELECT s.id, s.numero, s.tipo_solicitacao, s.status, s.created_at, cc.codigo, cc.nome, u.nome, a.nome,
 			       (SELECT lo.nome FROM solicitacao_obras_linhas ol JOIN locais_obra lo ON lo.id = ol.local_obra_id WHERE ol.solicitacao_id = s.id ORDER BY ol.created_at LIMIT 1),
-			       (SELECT cu.nome FROM solicitacao_compartilhamentos sc JOIN usuarios cu ON cu.id = sc.compartilhado_por WHERE sc.solicitacao_id = s.id AND sc.usuario_id = %s),
-			       COALESCE((SELECT SUM(l.valor) FROM solicitacao_lancamentos l WHERE l.solicitacao_id = s.id AND l.lado <> 'destino'), 0)::float8
+			       COALESCE((SELECT cu.nome FROM solicitacao_compartilhamentos sc JOIN usuarios cu ON cu.id = sc.compartilhado_por WHERE sc.solicitacao_id = s.id AND sc.usuario_id = %[1]s),
+			                (SELECT 'grupo ' || g.nome FROM solicitacao_grupos sg JOIN grupos g ON g.id = sg.grupo_id AND g.ativo WHERE sg.solicitacao_id = s.id
+			                   AND (g.gestor_id = %[1]s OR EXISTS (SELECT 1 FROM grupo_membros gm WHERE gm.grupo_id = g.id AND gm.usuario_id = %[1]s)) LIMIT 1)),
+			       COALESCE((SELECT SUM(l.valor) FROM solicitacao_lancamentos l WHERE l.solicitacao_id = s.id AND (l.lado = 'origem' OR s.tipo_solicitacao <> 'transferencia')), 0)::float8
 			       + COALESCE((SELECT SUM(ol.valor) FROM solicitacao_obras_linhas ol WHERE ol.solicitacao_id = s.id AND ol.lado IS DISTINCT FROM 'inclusao'), 0)::float8
 			FROM solicitacoes s
 			LEFT JOIN centros_custo cc ON cc.id = s.centro_custo_id
@@ -116,7 +118,7 @@ func BuscarSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 			LEFT JOIN usuarios a ON a.id = s.administrador_id
 			%s
 			ORDER BY s.numero DESC
-			LIMIT %s OFFSET %s`, arg(GetUserIDFromContext(r)), filtro, arg(tamanho+1), arg((pagina-1)*tamanho))
+			LIMIT %[3]s OFFSET %[4]s`, arg(GetUserIDFromContext(r)), filtro, arg(tamanho+1), arg((pagina-1)*tamanho))
 		rows, err := db.Query(consulta, args...)
 		if err != nil {
 			log.Printf("[Busca] erro: %v", err)

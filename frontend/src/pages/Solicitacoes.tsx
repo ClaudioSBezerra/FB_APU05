@@ -158,7 +158,7 @@ const Solicitacoes = () => {
                   {atende && <td className="p-2">{i.solicitante_nome ?? '—'}</td>}
                   <td className="p-2 tabular-nums">{dataHora(i.created_at)}</td>
                   <td className="p-2 text-right tabular-nums">{moeda.format(i.valor)}</td>
-                  <td className="p-2"><Badge variant={variante(i.status)}>{STATUS[i.status] ?? i.status}</Badge>{i.compartilhado_por && <span className="mt-1 block text-xs text-fg-helper">Compartilhado por {i.compartilhado_por}</span>}</td>
+                  <td className="p-2"><Badge variant={variante(i.status)}>{STATUS[i.status] ?? i.status}</Badge>{i.compartilhado_por && <span className="mt-1 block text-xs text-fg-helper">Em cópia{i.compartilhado_por.startsWith("grupo ") ? ` (${i.compartilhado_por})` : ` · incluído por ${i.compartilhado_por}`}</span>}</td>
                 </tr>
               ))}
             </tbody>

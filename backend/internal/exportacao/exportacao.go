@@ -91,6 +91,8 @@ type Aviso struct {
 type OrdemCriada struct {
 	LinhaID     string
 	NumeroOrdem string
+	// ImobilizadoIEA (24/11, item 3): o novo imobilizado criado junto com a ordem (4 a 20 dígitos).
+	ImobilizadoIEA string
 }
 
 // Solicitacao (Story 4.5) é a projeção mínima devolvida por Finalizar — só

@@ -87,7 +87,7 @@ func TestTransferencia_VariasOrigensParaDestinoEmOutroCC(t *testing.T) {
 		mock.ExpectQuery(regexp.QuoteMeta("SELECT valor FROM configuracoes WHERE chave = 'aprovacao_limite_transferencia'")).
 			WillReturnRows(sqlmock.NewRows([]string{"valor"}).AddRow("50000"))
 		mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO solicitacoes")).
-			WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), nil, nil, nil, false, nil, "aberta").
+			WithArgs("transferencia", testAtorID, testSolicitacaoCentroCustoID, sqlmock.AnyArg(), nil, "teste", nil, false, nil, "aberta", nil, nil).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(testRegrasSolicitacao))
 		for _, l := range []struct {
 			mes   string
@@ -140,7 +140,7 @@ func TestTransferencia_CCDestinoInexistente_Rejeita(t *testing.T) {
 }
 
 func TestAbertura_SemAnexo_Rejeita(t *testing.T) {
-	corpo := `{"tipo_solicitacao":"transferencia","lancamentos":[` +
+	corpo := `{"tipo_solicitacao":"transferencia","descricao":"teste","lancamentos":[` +
 		linhaJSON("origem", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaOrigem, "2026-01-01", 1000) + "," +
 		linhaJSON("destino", testSolicitacaoDivisaoID, testSolicitacaoCentroCustoID, testSolicitacaoContaDestino, "2026-10-01", 1000) + `]}`
 	rec := abrir(t, corpo, nil)

@@ -91,8 +91,8 @@ func TestSaldo_Origem_AvisoQuandoExcede_DestinoNaoConsulta(t *testing.T) {
 	if !l[1].Excede || *l[1].RetiradaAcum != 1700 || *l[1].Falta != 200 {
 		t.Errorf("fev: deveria avisar (retirada acumulada 1700 > 1500): %+v", l[1])
 	}
-	if l[2].Status != "nao_identificado" || l[2].DispAcum != nil || !strings.Contains(l[2].Motivo, "só para a origem") {
-		t.Errorf("o destino não pode devolver saldo: %+v", l[2])
+	if l[2].Status != "nao_identificado" || l[2].DispAcum != nil || !strings.Contains(l[2].Motivo, "sem permissão") {
+		t.Errorf("o destino de CC de outra pessoa não pode devolver saldo: %+v", l[2])
 	}
 	if len(chamadas) != 1 || !strings.HasPrefix(chamadas[0], "KSFC01") {
 		t.Errorf("só a origem é consultada (1 chave distinta): %v", chamadas)
@@ -160,7 +160,7 @@ func TestSaldo_CCAntigo_SemPermissao(t *testing.T) {
 	rec := httptest.NewRecorder()
 	SaldoOrcamentoHandler(db)(rec, reqSaldo(t, corpo))
 	l := decSaldo(t, rec)
-	if !strings.Contains(l[0].Motivo, "SAP") || !strings.Contains(l[1].Motivo, "só para a origem") || !strings.Contains(l[2].Motivo, "sem permissão") {
+	if !strings.Contains(l[0].Motivo, "SAP") || !strings.Contains(l[1].Motivo, "sem permissão") || !strings.Contains(l[2].Motivo, "sem permissão") {
 		t.Errorf("motivos: %q | %q | %q", l[0].Motivo, l[1].Motivo, l[2].Motivo)
 	}
 	for _, x := range l {

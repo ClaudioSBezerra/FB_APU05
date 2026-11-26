@@ -32,6 +32,7 @@ type PainelConsolidadoResponse = {
   por_status: PainelItem[]
   por_cc: PainelItem[]
   gerado_em: string | null
+  escopo?: 'meus'
   error?: string
 }
 
@@ -81,7 +82,7 @@ function BarrasRanqueadas({ titulo, itens, unidade }: { titulo: string; itens: P
                   <span className="truncate text-foreground">{item.rotulo}</span>
                   <span className="shrink-0 tabular-nums text-fg-secondary">
                     <span className="font-medium text-foreground">{numero.format(item.quantidade)}</span>
-                    <span className="ml-1.5 text-xs text-fg-muted">{percentual.format(share)}</span>
+                    <span className="ml-3 inline-block min-w-[3.75rem] border-l border-border pl-3 text-right text-xs text-fg-muted">{percentual.format(share)}</span>
                   </span>
                 </div>
                 <div className="h-2 w-full" aria-hidden>
@@ -181,8 +182,13 @@ function PainelConsolidado() {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <h1 className="text-lg font-semibold text-foreground">Painel consolidado de solicitações</h1>
-          {painel && (
+          <h1 className="text-lg font-semibold text-foreground">
+            {painel?.escopo === 'meus' ? 'Painel das minhas solicitações' : 'Painel consolidado de solicitações'}
+          </h1>
+          {painel?.escopo === 'meus' && (
+            <p className="text-xs text-fg-helper">Só os chamados que você abriu e os que foram compartilhados com você. Atualizado agora.</p>
+          )}
+          {painel && painel.escopo !== 'meus' && (
             <p className="text-xs text-fg-helper">
               {painel.gerado_em
                 ? `Atualizado em ${new Date(painel.gerado_em).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}. Recalculado automaticamente a cada 5 minutos.`

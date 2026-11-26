@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { Input } from '@/components/ui/input';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -171,8 +172,11 @@ const FilaAtendimento = () => {
   const navigate = useNavigate();
   const [pendenciaItem, setPendenciaItem] = useState<ItemFila | null>(null);
   const [pendenciaTexto, setPendenciaTexto] = useState('');
-  const [finalizarItem, setFinalizarItem] = useState<ItemFila | null>(null);
-  const [resultadoFinal, setResultadoFinal] = useState<'sucesso' | 'erro'>('sucesso');
+  // Abas e filtros (retorno de 25/11, seção 12): os cartões do topo são as abas; os filtros valem para todas.
+  const [aba, setAba] = useState<'fila' | 'comigo' | 'pendentes' | 'aprovacao'>('fila');
+  const [filtroTipo, setFiltroTipo] = useState('todos');
+  const [busca, setBusca] = useState('');
+  const [soAtrasadas, setSoAtrasadas] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
 
   const filaQuery = useQuery({
@@ -212,9 +216,17 @@ const FilaAtendimento = () => {
     queryFn: () => fetchTudoPaginado<ItemFila>('/api/fila/minhas'),
   });
 
+  // Pendentes: devolvidas ao solicitante, esperando a resposta dele.
+  const pendentesQuery = useQuery({
+    queryKey: ['fila-pendentes'],
+    queryFn: () =>
+      fetchJSON<{ items: (ItemFila & { solicitante_nome?: string; atendente_nome?: string })[] }>('/api/solicitacoes/busca?status=pendente&tamanho=100').then((r) => r.items),
+  });
+
   function invalidarFila() {
     queryClient.invalidateQueries({ queryKey: ['fila-aberta'] });
     queryClient.invalidateQueries({ queryKey: ['fila-minhas'] });
+    queryClient.invalidateQueries({ queryKey: ['fila-pendentes'] });
   }
 
   const assumirMutation = useMutation({
@@ -242,21 +254,6 @@ const FilaAtendimento = () => {
       toast.success('Solicitação devolvida ao solicitante');
       setPendenciaItem(null);
       setPendenciaTexto('');
-      invalidarFila();
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const finalizarMutation = useMutation({
-    mutationFn: ({ id, versao, resultado }: { id: string; versao: number; resultado: string }) =>
-      fetchJSON(`/api/solicitacoes/${id}/finalizar`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ versao, resultado, ordens_criadas: [] }),
-      }),
-    onSuccess: () => {
-      toast.success('Solicitação finalizada');
-      setFinalizarItem(null);
       invalidarFila();
     },
     onError: (err: Error) => toast.error(err.message),
@@ -351,7 +348,35 @@ const FilaAtendimento = () => {
     });
   }
 
-  const minhas = minhasQuery.data ?? [];
+  const filtrar = useMemo(() => {
+    const termos = busca
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    return <T extends ItemFila>(itens: T[] | undefined): T[] =>
+      (itens ?? []).filter((i) => {
+        if (filtroTipo !== 'todos' && i.tipo_solicitacao !== filtroTipo) return false;
+        if (soAtrasadas && !i.atrasada) return false;
+        if (termos.length === 0) return true;
+        const alvo = `${i.codigo ?? ''} ${i.centro_custo_codigo ?? ''} ${i.centro_custo_nome ?? ''} ${i.local_obra ?? ''} ${rotuloTipo(i.tipo_solicitacao)}`
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+        return termos.every((t) => alvo.includes(t));
+      });
+  }, [busca, filtroTipo, soAtrasadas]);
+  const atrasadasTotal = [...(filaQuery.data ?? []), ...(minhasQuery.data ?? [])].filter((i) => i.atrasada).length;
+  const cartoes: { chave: typeof aba | 'atrasadas'; rotulo: string; n?: number; alerta?: boolean }[] = [
+    { chave: 'fila', rotulo: 'Aguardando atendimento', n: filaQuery.data?.length },
+    { chave: 'comigo', rotulo: 'Comigo (em atendimento)', n: minhasQuery.data?.length },
+    { chave: 'pendentes', rotulo: 'Pendentes com o solicitante', n: pendentesQuery.data?.length },
+    { chave: 'aprovacao', rotulo: 'Aguardando aprovação', n: aguardandoQuery.data?.length },
+    { chave: 'atrasadas', rotulo: 'Atrasadas (fila + comigo)', n: atrasadasTotal, alerta: atrasadasTotal > 0 },
+  ];
+
+  const minhas = filtrar(minhasQuery.data);
   const todasSelecionadas = minhas.length > 0 && minhas.every((i) => selecionados.has(i.id));
   function alternarTodas() {
     setSelecionados(todasSelecionadas ? new Set() : new Set(minhas.map((i) => i.id)));
@@ -361,8 +386,95 @@ const FilaAtendimento = () => {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
       <h1 className="text-lg font-semibold text-foreground">Fila de atendimento</h1>
 
-      {(aguardandoQuery.data?.length ?? 0) > 0 && (
-        <SecaoFila titulo="Aguardando aprovação da diretoria" quantidade={aguardandoQuery.data?.length}>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5" role="tablist" aria-label="Situação dos chamados">
+        {cartoes.map((c) => {
+          const ativo = c.chave === 'atrasadas' ? soAtrasadas : aba === c.chave && !soAtrasadas;
+          return (
+            <button
+              key={c.chave}
+              type="button"
+              role="tab"
+              aria-selected={ativo}
+              onClick={() => {
+                if (c.chave === 'atrasadas') {
+                  setSoAtrasadas((v) => !v);
+                  if (aba !== 'fila' && aba !== 'comigo') setAba('fila');
+                } else {
+                  setAba(c.chave);
+                  setSoAtrasadas(false);
+                }
+              }}
+              className={`flex min-w-0 flex-col gap-1 rounded-lg border px-4 py-3 text-left transition-colors ${ativo ? 'border-ring bg-muted' : 'border-border bg-card hover:bg-muted/60'}`}
+            >
+              <span className="truncate text-xs text-fg-helper">{c.rotulo}</span>
+              <span className={`text-xl font-semibold tabular-nums ${c.alerta ? 'text-danger-text' : 'text-foreground'}`}>{c.n ?? '…'}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="grid gap-1">
+          <Label htmlFor="fila-busca" className="text-xs">Buscar</Label>
+          <Input id="fila-busca" className="h-9 w-64" placeholder="Código (GO-12), CC ou local da obra" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        </div>
+        <div className="grid gap-1">
+          <Label className="text-xs">Tipo</Label>
+          <Select value={filtroTipo} onValueChange={setFiltroTipo}>
+            <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos os tipos</SelectItem>
+              {Object.entries(TIPO_ROTULO).map(([v, r]) => <SelectItem key={v} value={v}>{r}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <label className="flex h-9 cursor-pointer items-center gap-2 text-sm text-fg-secondary">
+          <input type="checkbox" className="size-4 accent-[var(--blue-d50)]" checked={soAtrasadas} onChange={(e) => setSoAtrasadas(e.target.checked)} />
+          Só atrasadas
+        </label>
+        {(busca || filtroTipo !== 'todos' || soAtrasadas) && (
+          <Button size="sm" variant="ghost" onClick={() => { setBusca(''); setFiltroTipo('todos'); setSoAtrasadas(false); }}>Limpar filtros</Button>
+        )}
+        <Button size="sm" variant="ghost" className="ml-auto" onClick={() => navigate('/solicitacoes')}>Todas as solicitações →</Button>
+      </div>
+
+      {aba === 'pendentes' && (
+        <SecaoFila titulo="Pendentes com o solicitante" quantidade={filtrar(pendentesQuery.data).length}>
+          <EstadoLista carregando={pendentesQuery.isLoading} erro={pendentesQuery.error} />
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Tipo</TableHead>
+                <TableHead>Centro de custo</TableHead>
+                <TableHead>Solicitante</TableHead>
+                <TableHead>Atendente</TableHead>
+                <TableHead>Aberta em</TableHead>
+                <TableHead className="w-px" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtrar(pendentesQuery.data).map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell className="font-medium"><span className="block text-xs tabular-nums text-fg-helper">{item.codigo}</span>{rotuloTipo(item.tipo_solicitacao)}</TableCell>
+                  <TableCell><CentroCustoCell item={item} /></TableCell>
+                  <TableCell>{item.solicitante_nome ?? '—'}</TableCell>
+                  <TableCell>{item.atendente_nome ?? '—'}</TableCell>
+                  <TableCell className="tabular-nums text-fg-secondary">{dataHora(item.created_at)}</TableCell>
+                  <TableCell><Button size="sm" variant="outline" onClick={() => navigate(`/fila/${item.id}`)}>Ver</Button></TableCell>
+                </TableRow>
+              ))}
+              {filtrar(pendentesQuery.data).length === 0 && !pendentesQuery.isLoading && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={6} className="py-6 text-center text-sm text-fg-helper">Nenhuma solicitação pendente com o solicitante.</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </SecaoFila>
+      )}
+
+      {aba === 'aprovacao' && (
+        <SecaoFila titulo="Aguardando aprovação da diretoria" quantidade={filtrar(aguardandoQuery.data).length}>
           <Table>
             <TableHeader>
               <TableRow>
@@ -373,7 +485,7 @@ const FilaAtendimento = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(aguardandoQuery.data ?? []).map((item) => (
+              {filtrar(aguardandoQuery.data).map((item) => (
                 <TableRow key={item.id}>
                   <TableCell className="font-medium"><span className="block text-xs tabular-nums text-fg-helper">{item.codigo}</span>{rotuloTipo(item.tipo_solicitacao)}</TableCell>
                   <TableCell><CentroCustoCell item={item} /></TableCell>
@@ -416,7 +528,8 @@ const FilaAtendimento = () => {
         </DialogContent>
       </Dialog>
 
-      <SecaoFila titulo="Aguardando atendimento" quantidade={filaQuery.data?.length}>
+      {aba === 'fila' && (
+      <SecaoFila titulo="Aguardando atendimento" quantidade={filtrar(filaQuery.data).length}>
         <EstadoLista carregando={filaQuery.isLoading} erro={filaQuery.error} />
         <Table>
           <TableHeader>
@@ -429,7 +542,7 @@ const FilaAtendimento = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(filaQuery.data ?? []).map((item) => (
+            {filtrar(filaQuery.data).map((item) => (
               <TableRow key={item.id}>
                 <TableCell className="font-medium"><span className="block text-xs tabular-nums text-fg-helper">{item.codigo}</span>{rotuloTipo(item.tipo_solicitacao)}</TableCell>
                 <TableCell><CentroCustoCell item={item} /></TableCell>
@@ -446,20 +559,22 @@ const FilaAtendimento = () => {
                 </TableCell>
               </TableRow>
             ))}
-            {filaQuery.data?.length === 0 && (
+            {filtrar(filaQuery.data).length === 0 && !filaQuery.isLoading && (
               <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={5} className="py-6 text-center text-sm text-fg-helper">
-                  Nenhuma solicitação aguardando atendimento.
+                  Nenhuma solicitação aguardando atendimento{busca || filtroTipo !== 'todos' || soAtrasadas ? ' com estes filtros' : ''}.
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
       </SecaoFila>
+      )}
 
+      {aba === 'comigo' && (
       <SecaoFila
         titulo="Minhas solicitações em atendimento"
-        quantidade={minhasQuery.data?.length}
+        quantidade={minhas.length}
         acoes={
           <div className="flex flex-wrap items-center gap-2">
             {selecionados.size > 0 && (
@@ -527,23 +642,24 @@ const FilaAtendimento = () => {
                     <Button size="sm" variant="outline" onClick={() => setPendenciaItem(item)}>
                       Pendência
                     </Button>
-                    <Button size="sm" onClick={() => setFinalizarItem(item)}>
+                    <Button size="sm" onClick={() => navigate(`/fila/${item.id}`)} title="Abre o chamado: resultado, categoria do erro, ordens de Obras e confirmação">
                       Finalizar
                     </Button>
                   </div>
                 </TableCell>
               </TableRow>
             ))}
-            {minhasQuery.data?.length === 0 && (
+            {minhas.length === 0 && !minhasQuery.isLoading && (
               <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={6} className="py-6 text-center text-sm text-fg-helper">
-                  Nenhuma solicitação em atendimento. Assuma uma da fila acima.
+                  Nenhuma solicitação em atendimento{busca || filtroTipo !== 'todos' || soAtrasadas ? ' com estes filtros' : '. Assuma uma em "Aguardando atendimento"'}.
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
       </SecaoFila>
+      )}
 
       <Dialog open={Boolean(pendenciaItem)} onOpenChange={(o) => !o && setPendenciaItem(null)}>
         <DialogContent className="max-w-sm">
@@ -571,42 +687,6 @@ const FilaAtendimento = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(finalizarItem)} onOpenChange={(o) => !o && setFinalizarItem(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Finalizar solicitação</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-1.5">
-            <Label>Resultado</Label>
-            <Select value={resultadoFinal} onValueChange={(v) => setResultadoFinal(v as 'sucesso' | 'erro')}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="sucesso">Sucesso</SelectItem>
-                <SelectItem value="erro">Erro</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Para finalizar com sucesso, gere antes a exportação SAP (lote Despesa/Obra). Finalizar com erro não exige exportação.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFinalizarItem(null)}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={finalizarMutation.isPending}
-              onClick={() =>
-                finalizarItem &&
-                finalizarMutation.mutate({ id: finalizarItem.id, versao: finalizarItem.versao, resultado: resultadoFinal })
-              }
-            >
-              Finalizar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

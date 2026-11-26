@@ -2055,8 +2055,8 @@ func TestImportarCadastroHandler_ObraOrdens_Success(t *testing.T) {
 	const localObraID = "e0000000-0000-0000-0000-000000000003"
 	const subgrupoDespesaID = "e0000000-0000-0000-0000-000000000004"
 	const registroID = "e0000000-0000-0000-0000-000000000005"
-	csv := "numero_ordem;local_obra_codigo;subgrupo_despesa_codigo;tipo_despesa;tipo_faturamento\n" +
-		"OI-001;LO1;SG1;Reforma;Direto\n"
+	csv := "numero_ordem;local_obra_codigo;subgrupo_despesa_codigo;tipo_despesa;tipo_faturamento;imobilizado_iea\n" +
+		"OI-001;LO1;SG1;Reforma;Direto;\n"
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
@@ -2071,14 +2071,14 @@ func TestImportarCadastroHandler_ObraOrdens_Success(t *testing.T) {
 		WithArgs("SG1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(subgrupoDespesaID))
 	mock.ExpectQuery(regexp.QuoteMeta(
-		"INSERT INTO obra_ordens (numero_ordem, local_obra_id, subgrupo_despesa_id, tipo_despesa, tipo_faturamento) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+		"INSERT INTO obra_ordens (numero_ordem, local_obra_id, subgrupo_despesa_id, tipo_despesa, tipo_faturamento, imobilizado_iea) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
 	)).
-		WithArgs("OI-001", localObraID, subgrupoDespesaID, "Reforma", "Direto").
+		WithArgs("OI-001", localObraID, subgrupoDespesaID, "Reforma", "Direto", nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(registroID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
 		WithArgs(
 			"obra-ordens", registroID,
-			`{"local_obra_id":"`+localObraID+`","numero_ordem":"OI-001","subgrupo_despesa_id":"`+subgrupoDespesaID+`","tipo_despesa":"Reforma","tipo_faturamento":"Direto"}`,
+			`{"imobilizado_iea":null,"local_obra_id":"`+localObraID+`","numero_ordem":"OI-001","subgrupo_despesa_id":"`+subgrupoDespesaID+`","tipo_despesa":"Reforma","tipo_faturamento":"Direto"}`,
 			testAtorID,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -2106,8 +2106,8 @@ func TestImportarCadastroHandler_ObraOrdens_Success(t *testing.T) {
 func TestImportarCadastroHandler_ObraOrdens_LocalObraNaoEncontrado(t *testing.T) {
 	db, mock := newSQLMock(t)
 
-	csv := "numero_ordem;local_obra_codigo;subgrupo_despesa_codigo;tipo_despesa;tipo_faturamento\n" +
-		"OI-001;LO-INEXISTENTE;SG1;Reforma;Direto\n"
+	csv := "numero_ordem;local_obra_codigo;subgrupo_despesa_codigo;tipo_despesa;tipo_faturamento;imobilizado_iea\n" +
+		"OI-001;LO-INEXISTENTE;SG1;Reforma;Direto;\n"
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT pg_try_advisory_xact_lock(hashtext($1))")).
@@ -2349,16 +2349,16 @@ func TestAtualizarCadastroHandler_ObraOrdens_Success(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT COALESCE(MAX(versao), 0) + 1 FROM cadastro_historico WHERE tipo_cadastro = $1 AND registro_id = $2")).
 		WithArgs("obra-ordens", testCadastroID).
 		WillReturnRows(sqlmock.NewRows([]string{"coalesce"}).AddRow(2))
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE obra_ordens SET numero_ordem = $1, local_obra_id = $2, subgrupo_despesa_id = $3, tipo_despesa = $4, tipo_faturamento = $5, updated_at = now() WHERE id = $6")).
-		WithArgs("OI-001-novo", localObraID, subgrupoDespesaID, "Manutenção", "Direto", testCadastroID).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE obra_ordens SET numero_ordem = $1, local_obra_id = $2, subgrupo_despesa_id = $3, tipo_despesa = $4, tipo_faturamento = $5, imobilizado_iea = $6, updated_at = now() WHERE id = $7")).
+		WithArgs("OI-001-novo", localObraID, subgrupoDespesaID, "Manutenção", "Direto", nil, testCadastroID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO cadastro_historico")).
-		WithArgs("obra-ordens", testCadastroID, 2, `{"local_obra_id":"`+localObraID+`","numero_ordem":"OI-001-novo","subgrupo_despesa_id":"`+subgrupoDespesaID+`","tipo_despesa":"Manutenção","tipo_faturamento":"Direto"}`, testAtorID).
+		WithArgs("obra-ordens", testCadastroID, 2, `{"imobilizado_iea":null,"local_obra_id":"`+localObraID+`","numero_ordem":"OI-001-novo","subgrupo_despesa_id":"`+subgrupoDespesaID+`","tipo_despesa":"Manutenção","tipo_faturamento":"Direto"}`, testAtorID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	handler := AtualizarCadastroHandler(db)
-	body := `{"numero_ordem":"OI-001-novo","local_obra_id":"` + localObraID + `","subgrupo_despesa_id":"` + subgrupoDespesaID + `","tipo_despesa":"Manutenção","tipo_faturamento":"Direto"}`
+	body := `{"numero_ordem":"OI-001-novo","local_obra_id":"` + localObraID + `","subgrupo_despesa_id":"` + subgrupoDespesaID + `","tipo_despesa":"Manutenção","tipo_faturamento":"Direto","imobilizado_iea":null}`
 	req := newCadastroRequest(http.MethodPut, "obra-ordens", testCadastroID, body)
 	rec := httptest.NewRecorder()
 	handler(rec, req)

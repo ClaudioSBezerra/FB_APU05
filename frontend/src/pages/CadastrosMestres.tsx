@@ -226,13 +226,14 @@ const TIPOS_CADASTRO: TipoCadastroDef[] = [
   {
     tipo: 'obra-ordens',
     label: 'Ordens de obra',
-    csvCabecalho: 'numero_ordem;local_obra_codigo;subgrupo_despesa_codigo;tipo_despesa;tipo_faturamento',
+    csvCabecalho: 'numero_ordem;local_obra_codigo;subgrupo_despesa_codigo;tipo_despesa;tipo_faturamento;imobilizado_iea',
     campos: [
       { nome: 'numero_ordem', label: 'Número da ordem', kind: 'texto' },
       { nome: 'local_obra_id', label: 'Local de obra', kind: 'uuid', ref: 'locais-obra' },
       { nome: 'subgrupo_despesa_id', label: 'Subgrupo de despesa', kind: 'uuid', ref: 'subgrupos-despesa' },
       { nome: 'tipo_despesa', label: 'Tipo de despesa', kind: 'texto_opcional' },
       { nome: 'tipo_faturamento', label: 'Tipo de faturamento', kind: 'texto_opcional' },
+      { nome: 'imobilizado_iea', label: 'Imobilizado (IEA)', kind: 'texto_opcional' },
     ],
   },
   {

@@ -265,7 +265,7 @@ var cadastroRegistry = map[string]cadastroTipo{
 	"obra-ordens": {
 		Tabela: "obra_ordens",
 		CSVCabecalho: []string{
-			"numero_ordem", "local_obra_codigo", "subgrupo_despesa_codigo", "tipo_despesa", "tipo_faturamento",
+			"numero_ordem", "local_obra_codigo", "subgrupo_despesa_codigo", "tipo_despesa", "tipo_faturamento", "imobilizado_iea",
 		},
 		Colunas: []colunaDef{
 			{Nome: "numero_ordem", Kind: colString},
@@ -273,6 +273,8 @@ var cadastroRegistry = map[string]cadastroTipo{
 			{Nome: "subgrupo_despesa_id", Kind: colUUID},
 			{Nome: "tipo_despesa", Kind: colStringNulo},
 			{Nome: "tipo_faturamento", Kind: colStringNulo},
+			// 26/11: o imobilizado (IEA) que acompanha a ordem (4 a 20 dígitos), opcional
+			{Nome: "imobilizado_iea", Kind: colStringNulo},
 		},
 		DecodeCSV:  decodeCSVObraOrdens,
 		DecodeJSON: decodeJSONObraOrdens,
@@ -764,7 +766,14 @@ func decodeJSONObraOrdens(corpo map[string]interface{}) ([]interface{}, error) {
 			return nil, err
 		}
 	}
-	return []interface{}{numeroOrdem, localObraID, subgrupoDespesaID, tipoDespesa, tipoFaturamento}, nil
+	iea, err := extractStringOpcional(corpo, "imobilizado_iea")
+	if err != nil {
+		return nil, err
+	}
+	if s, ok := iea.(string); ok && !reDigitos4a20.MatchString(s) {
+		return nil, fmt.Errorf("campo 'imobilizado_iea' deve ter de 4 a 20 dígitos")
+	}
+	return []interface{}{numeroOrdem, localObraID, subgrupoDespesaID, tipoDespesa, tipoFaturamento, iea}, nil
 }
 
 // decodeJSONFornecedores (20/10) aceita cgc/razsoc/fantas/uf diretamente no
