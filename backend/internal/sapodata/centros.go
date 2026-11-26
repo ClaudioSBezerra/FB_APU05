@@ -20,7 +20,7 @@ import (
 )
 
 // Centros: a URL é a da coleção (gateway /sap/prd/centros ou direto .../zsd_plant/0001/Centros).
-var Centros = Servico{Chave: "wk", Nome: "Centros (filiais)", Segmento: "zsd_plant", Entidade: "", Chaves: "Centro,Nome", V4: true, Diaria: true}
+var Centros = Servico{Chave: "wk", Nome: "Filiais (Centros SAP / Plant)", Segmento: "zsd_plant", Entidade: "", Chaves: "Centro,Nome", V4: true, Diaria: true}
 
 // Centro é um centro (Plant) do SAP, já normalizado.
 type Centro struct {
