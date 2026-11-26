@@ -127,7 +127,7 @@ func MarcarPendencia(db *sql.DB, id string, versaoLida int, administradorID stri
 	var s Solicitacao
 	err = tx.QueryRow(`
 		UPDATE solicitacoes
-		SET status = 'pendente', versao = versao + 1
+		SET status = 'pendente', versao = versao + 1, respondido = false
 		WHERE id = $1 AND versao = $2 AND status = 'em_atendimento' AND administrador_id = $3
 		RETURNING id, tipo_solicitacao, status, versao, administrador_id
 	`, id, versaoLida, administradorID).Scan(&s.ID, &s.TipoSolicitacao, &s.Status, &s.Versao, &s.AdministradorID)
@@ -224,7 +224,11 @@ func Comentar(db *sql.DB, id string, versaoLida int, solicitanteID string, comen
 	var statusAnterior string
 	err = tx.QueryRow(`
 		UPDATE solicitacoes
-		SET status = CASE WHEN status IN ('aberta', 'em_atendimento') THEN status ELSE 'em_atendimento' END,
+		SET status = CASE WHEN status IN ('pendente', 'finalizada_sucesso', 'finalizada_erro', 'finalizada') THEN 'em_atendimento' ELSE status END,
+		    -- F12 (26/11): responder a pendência volta SEM prioridade e destaca "respondido"; comentar em finalizado
+		    -- reabre com prioridade ALTA (retrabalho). Cancelada, rejeitada e aguardando aprovação não mudam.
+		    prioridade = CASE WHEN status IN ('finalizada_sucesso', 'finalizada_erro', 'finalizada') THEN 'alta' ELSE prioridade END,
+		    respondido = CASE WHEN status = 'pendente' THEN true ELSE respondido END,
 		    versao = versao + 1
 		WHERE id = $1 AND versao = $2 AND solicitante_id = $3
 		RETURNING id, tipo_solicitacao, status, versao, administrador_id,
@@ -247,9 +251,9 @@ func Comentar(db *sql.DB, id string, versaoLida int, solicitanteID string, comen
 	`, id, solicitanteID, comentario); err != nil {
 		return Solicitacao{}, fmt.Errorf("inserir comentário em %s: %w", id, err)
 	}
-	// reabertura (resposta à pendência ou comentário em chamado finalizado) vira evento no histórico (item 16)
-	if statusAnterior != "aberta" && statusAnterior != "em_atendimento" {
-		if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'evento', 'Chamado reaberto pelo solicitante.')`, id, solicitanteID); err != nil {
+	// resposta à pendência e reabertura de chamado finalizado viram evento no histórico (item 16; F12)
+	if texto := eventoDoComentario(statusAnterior); texto != "" {
+		if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'evento', $3)`, id, solicitanteID, texto); err != nil {
 			return Solicitacao{}, fmt.Errorf("registrar reabertura de %s no histórico: %w", id, err)
 		}
 	}
@@ -273,7 +277,7 @@ func ComentarAtendimento(db *sql.DB, id string, versaoLida int, autorID string, 
 	var s Solicitacao
 	var administradorID sql.NullString
 	err = tx.QueryRow(`
-		UPDATE solicitacoes SET versao = versao + 1
+		UPDATE solicitacoes SET versao = versao + 1, respondido = false
 		WHERE id = $1 AND versao = $2
 		RETURNING id, tipo_solicitacao, status, versao, administrador_id
 	`, id, versaoLida).Scan(&s.ID, &s.TipoSolicitacao, &s.Status, &s.Versao, &administradorID)
@@ -323,4 +327,64 @@ func fallbackComentar(db *sql.DB, id string, solicitanteID string) error {
 		return ErrNaoAutorizado
 	}
 	return &ErrConflitoVersao{VersaoAtual: versaoAtual}
+}
+
+// eventoDoComentario (F12): o que o comentário do solicitante (ou de quem está em cópia) faz com o chamado.
+func eventoDoComentario(statusAnterior string) string {
+	switch statusAnterior {
+	case "pendente":
+		return "Solicitante respondeu a pendência."
+	case "finalizada_sucesso", "finalizada_erro", "finalizada":
+		return "Chamado reaberto por comentário (prioridade alta)."
+	}
+	return ""
+}
+
+// ComentarVisualizador (F12): quem está em cópia comenta sem mexer na pendência, mas o comentário em chamado
+// FINALIZADO reabre com prioridade alta, como o do solicitante (a Controladoria comenta sem reabrir).
+func ComentarVisualizador(db *sql.DB, id string, versaoLida int, autorID string, comentario string) (Solicitacao, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return Solicitacao{}, fmt.Errorf("iniciar transação para comentar em %s: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var s Solicitacao
+	var administradorID sql.NullString
+	var statusAnterior string
+	err = tx.QueryRow(`
+		UPDATE solicitacoes
+		SET status = CASE WHEN status IN ('finalizada_sucesso', 'finalizada_erro', 'finalizada') THEN 'em_atendimento' ELSE status END,
+		    prioridade = CASE WHEN status IN ('finalizada_sucesso', 'finalizada_erro', 'finalizada') THEN 'alta' ELSE prioridade END,
+		    versao = versao + 1
+		WHERE id = $1 AND versao = $2
+		RETURNING id, tipo_solicitacao, status, versao, administrador_id, (SELECT status FROM solicitacoes WHERE id = $1)
+	`, id, versaoLida).Scan(&s.ID, &s.TipoSolicitacao, &s.Status, &s.Versao, &administradorID, &statusAnterior)
+	s.AdministradorID = administradorID.String
+	if err != nil {
+		if err != sql.ErrNoRows {
+			return Solicitacao{}, fmt.Errorf("comentar (visualizador) em %s: %w", id, err)
+		}
+		_ = tx.Rollback()
+		var versaoAtual int
+		if e := db.QueryRow(`SELECT versao FROM solicitacoes WHERE id = $1`, id).Scan(&versaoAtual); e == sql.ErrNoRows {
+			return Solicitacao{}, ErrNaoEncontrada
+		} else if e != nil {
+			return Solicitacao{}, fmt.Errorf("consultar versão atual de %s: %w", id, e)
+		}
+		return Solicitacao{}, &ErrConflitoVersao{VersaoAtual: versaoAtual}
+	}
+	if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'comentario', $3)`, id, autorID, comentario); err != nil {
+		return Solicitacao{}, fmt.Errorf("inserir comentário em %s: %w", id, err)
+	}
+	if statusAnterior != "pendente" {
+		if texto := eventoDoComentario(statusAnterior); texto != "" {
+			if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'evento', $3)`, id, autorID, texto); err != nil {
+				return Solicitacao{}, fmt.Errorf("registrar reabertura de %s no histórico: %w", id, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Solicitacao{}, fmt.Errorf("confirmar transação de comentário em %s: %w", id, err)
+	}
+	return s, nil
 }

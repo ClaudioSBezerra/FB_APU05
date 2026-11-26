@@ -173,6 +173,7 @@ func TestTotalImobilizado(t *testing.T) {
 }
 
 func init() {
+	conferirNaoCadastrado = func(consultaRowCtx, sql.NullString, bool) (string, error) { return "", nil }
 	conferirGraoObras = func(*sql.Tx, string, []obraLinhaValidado) (string, error) { return "", nil }
 	conferirTipoDestino = func(consultaRowCtx, []lancamentoValidado, string) (string, error) { return "", nil }
 	avisarAcompanhantes = func(*sql.DB, string, string, string, string) {}

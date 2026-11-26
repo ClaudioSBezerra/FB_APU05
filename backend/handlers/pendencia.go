@@ -187,20 +187,24 @@ func ComentarSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		versao, comentario, ok := lerPendenciaOuComentarioRequest(w, r)
+		// F12 (26/11): o comentário pode levar anexos (ou ser só anexo)
+		reqC, arqs, ok := lerComentarioComAnexos(w, r, true)
 		if !ok {
 			return
 		}
+		versao, comentario := reqC.Versao, reqC.Comentario
 
 		solicitanteID := GetUserIDFromContext(r)
 
 		var statusAntes string
 		_ = db.QueryRow(`SELECT status FROM solicitacoes WHERE id = $1`, id).Scan(&statusAntes)
 		resultado, err := fila.Comentar(db, id, versao, solicitanteID, comentario)
-		if errors.Is(err, fila.ErrNaoAutorizado) && (perfilAtende(GetPerfilFromContext(r)) || compartilhadoCom(db, id, solicitanteID)) {
-			// atendente/administrador ou visualizador (§9.1, 26/11) comentando no chamado de outra pessoa: não reabre
-			// nem muda o status
+		if errors.Is(err, fila.ErrNaoAutorizado) && perfilAtende(GetPerfilFromContext(r)) {
+			// atendente/administrador comentando no chamado de outra pessoa: não reabre nem muda o status (F12, proposta 3)
 			resultado, err = fila.ComentarAtendimento(db, id, versao, solicitanteID, comentario)
+		} else if errors.Is(err, fila.ErrNaoAutorizado) && compartilhadoCom(db, id, solicitanteID) {
+			// quem está em cópia (§9.1): não mexe na pendência, mas reabre chamado finalizado com prioridade alta (F12)
+			resultado, err = fila.ComentarVisualizador(db, id, versao, solicitanteID, comentario)
 		}
 		if err != nil {
 			if tratarErroEscritaFila(w, err) {
@@ -211,7 +215,11 @@ func ComentarSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		log.Printf("[Fila] %s comentou em %s (versao=%d, status=%s)", solicitanteID, resultado.ID, resultado.Versao, resultado.Status)
+		if err := salvarAnexosComentarioPublico(db, id, solicitanteID, arqs); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "O comentário foi gravado, mas os anexos não. Tente anexar de novo.")
+			return
+		}
+		log.Printf("[Fila] %s comentou em %s (versao=%d, status=%s, anexos=%d)", solicitanteID, resultado.ID, resultado.Versao, resultado.Status, len(arqs))
 		if statusAntes == "pendente" && resultado.Status != "pendente" {
 			go avisarEvento(db, id, solicitanteID, "chamado reaberto pelo solicitante", comentario)
 		} else if perfilAtende(GetPerfilFromContext(r)) {
@@ -232,6 +240,8 @@ type comentarioDetalhe struct {
 	Tipo      string    `json:"tipo"`
 	Texto     string    `json:"texto"`
 	CreatedAt time.Time `json:"created_at"`
+	// F12 (26/11): anexos enviados junto com o comentário ou a nota
+	Anexos []anexoDetalhe `json:"anexos,omitempty"`
 }
 
 // anexoDetalhe (20/10) é o metadado de um anexo em GET /api/solicitacoes/{id}
@@ -339,15 +349,23 @@ func ObterSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
-		anexosResposta := make([]anexoDetalhe, len(anexosMeta))
-		for i, a := range anexosMeta {
-			anexosResposta[i] = anexoDetalhe{
+		// F12 (26/11): anexos de comentário/nota aparecem no próprio comentário; os de nota interna, só no atendimento
+		porComentario, deComentario := anexosDosComentarios(db, id)
+		anexosResposta := make([]anexoDetalhe, 0, len(anexosMeta))
+		for _, a := range anexosMeta {
+			if deComentario[a.ID] {
+				continue
+			}
+			anexosResposta = append(anexosResposta, anexoDetalhe{
 				ID:           a.ID,
 				NomeArquivo:  a.NomeArquivo,
 				ContentType:  a.ContentType,
 				TamanhoBytes: a.TamanhoBytes,
 				CreatedAt:    a.CreatedAt.Format(time.RFC3339),
-			}
+			})
+		}
+		for i := range comentarios {
+			comentarios[i].Anexos = porComentario[comentarios[i].ID]
 		}
 
 		extras := detalheExtras(db, id)
@@ -414,6 +432,11 @@ func BaixarAnexoHandler(db *sql.DB) http.HandlerFunc {
 		souAdministrador := administradorID.Valid && administradorID.String == chamadorID
 		var solicitacaoDoAnexo string
 		_ = db.QueryRow(`SELECT solicitacao_id FROM solicitacao_anexos WHERE id = $1`, anexoID).Scan(&solicitacaoDoAnexo)
+		// F12 (26/11): anexo de nota interna só para o atendimento/administração (404 para os demais)
+		if anexoInterno(db, anexoID) && !perfilAtende(GetPerfilFromContext(r)) {
+			jsonErr(w, http.StatusNotFound, "anexo não encontrado")
+			return
+		}
 		if chamadorID != solicitanteID && !souAdministrador && !perfilAtende(GetPerfilFromContext(r)) && !compartilhadoCom(db, solicitacaoDoAnexo, chamadorID) {
 			jsonErr(w, http.StatusForbidden, "você não tem permissão para baixar este anexo")
 			return
@@ -529,7 +552,7 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 	}
 	orows, err := db.Query(`
 		SELECT ol.id, COALESCE(ol.lado, ''), lo.nome, sg.nome, ol.ordem_investimento, COALESCE(ol.imobilizado_iea, ''), ol.valor::float8,
-		       ol.local_obra_id, ol.subgrupo_despesa_id, COALESCE(oo.tipo_faturamento, '')
+		       ol.local_obra_id, ol.subgrupo_despesa_id, COALESCE(oo.tipo_faturamento, ''), COALESCE(ol.tipo, '')
 		FROM solicitacao_obras_linhas ol
 		LEFT JOIN obra_ordens oo ON oo.numero_ordem = ol.ordem_investimento
 		JOIN locais_obra lo ON lo.id = ol.local_obra_id
@@ -543,13 +566,18 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 	defer orows.Close()
 	obras := make([]map[string]interface{}, 0)
 	for orows.Next() {
-		var linhaID, lado, local, subgrupo, ordem, iea, localID, subgrupoID, fat string
+		var linhaID, lado, local, subgrupo, ordem, iea, localID, subgrupoID, fat, tipoLinha string
 		var valor float64
-		if err := orows.Scan(&linhaID, &lado, &local, &subgrupo, &ordem, &iea, &valor, &localID, &subgrupoID, &fat); err != nil {
+		if err := orows.Scan(&linhaID, &lado, &local, &subgrupo, &ordem, &iea, &valor, &localID, &subgrupoID, &fat, &tipoLinha); err != nil {
 			log.Printf("[Fila] detalhe da solicitação %s: linha de obra ilegível: %v", id, err)
 			break
 		}
 		despesa := exportacao.DespesaDaClassificacao(classificacao.String)
+		if tipoLinha == "FL" {
+			despesa = exportacao.DespesaInterna
+		} else if tipoLinha == "Externa" {
+			despesa = exportacao.DespesaExterna
+		}
 		if ordem == "CRIAR" {
 			fat = exportacao.FaturamentoDerivado(db, localID, subgrupoID, despesa)
 		}
@@ -558,7 +586,8 @@ func detalheExtras(db *sql.DB, id string) map[string]interface{} {
 		if fat != "" {
 			tipos += " · " + exportacao.RotuloFaturamento(fat)
 		}
-		obras = append(obras, map[string]interface{}{"id": linhaID, "lado": lado, "local": local, "subgrupo": subgrupo, "ordem": ordem, "iea": iea, "valor": valor, "tipos": tipos})
+		obras = append(obras, map[string]interface{}{"id": linhaID, "lado": lado, "local": local, "subgrupo": subgrupo, "ordem": ordem, "iea": iea, "valor": valor, "tipos": tipos,
+			"local_obra_id": localID, "subgrupo_despesa_id": subgrupoID, "tipo": tipoLinha})
 	}
 	out["obras_linhas"] = obras
 	return out

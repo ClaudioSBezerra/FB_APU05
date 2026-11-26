@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/contexts/AuthContext';
+import { buscaCC, formatarCC, partesCC } from '@/lib/centroCusto';
+import { BuscaCombobox } from '@/components/BuscaCombobox';
 
 // Tela "Solicitações": quem atende vê todos os chamados (abertos e finalizados); o solicitante vê os próprios.
 // A busca procura por código (GO-12), centro de custo, conta, solicitante, fornecedor e local de obra.
@@ -41,6 +43,8 @@ function variante(status: string): 'default' | 'destructive' | 'secondary' {
   return 'default';
 }
 
+interface Opcao { codigo: string; nome: string }
+
 const Solicitacoes = () => {
   const { user } = useAuth();
   const atende = user?.perfil === 'administrador' || user?.perfil === 'atendente';
@@ -51,6 +55,26 @@ const Solicitacoes = () => {
   const [de, setDe] = useState('');
   const [ate, setAte] = useState('');
   const [pagina, setPagina] = useState(1);
+  // F11 (26/11): filial/divisão, CC e conta, no lado escolhido (origem, destino ou qualquer)
+  const [divisao, setDivisao] = useState('');
+  const [cc, setCc] = useState('');
+  const [conta, setConta] = useState('');
+  const [lado, setLado] = useState('qualquer');
+  const filtros = useQuery({
+    queryKey: ['solicitacoes-filtros'],
+    queryFn: async () => {
+      const resp = await fetch('/api/solicitacoes/filtros');
+      if (!resp.ok) throw new Error(`Erro HTTP ${resp.status}`);
+      return (await resp.json()) as { divisoes: Opcao[]; centros_custo: Opcao[]; contas: Opcao[] };
+    },
+  });
+  const opcoesCC = useMemo(
+    () =>
+      (filtros.data?.centros_custo ?? [])
+        .filter((c) => !divisao || partesCC(c.codigo).divisao === divisao)
+        .map((c) => ({ id: c.codigo, codigo: formatarCC(c.codigo), nome: c.nome, busca: buscaCC(c.codigo) })),
+    [filtros.data, divisao],
+  );
 
   useEffect(() => {
     const t = setTimeout(() => { setTermo(busca.trim()); setPagina(1); }, 400);
@@ -63,6 +87,10 @@ const Solicitacoes = () => {
   if (tipo !== TODOS) params.set('tipo', tipo);
   if (de) params.set('de', de);
   if (ate) params.set('ate', ate);
+  if (divisao) params.set('divisao', divisao);
+  if (cc) params.set('cc', cc);
+  if (conta) params.set('conta', conta);
+  if ((divisao || cc || conta) && lado !== 'qualquer') params.set('lado', lado);
   params.set('pagina', String(pagina));
 
   const q = useQuery({
@@ -75,8 +103,20 @@ const Solicitacoes = () => {
     },
   });
 
-  const limpar = () => { setBusca(''); setTermo(''); setStatus(TODOS); setTipo(TODOS); setDe(''); setAte(''); setPagina(1); };
-  const filtrando = !!(termo || status !== TODOS || tipo !== TODOS || de || ate);
+  const limpar = () => {
+    setBusca(''); setTermo(''); setStatus(TODOS); setTipo(TODOS); setDe(''); setAte('');
+    setDivisao(''); setCc(''); setConta(''); setLado('qualquer'); setPagina(1);
+  };
+  const filtrando = !!(termo || status !== TODOS || tipo !== TODOS || de || ate || divisao || cc || conta);
+  // etiquetas removíveis dos filtros aplicados
+  const etiquetas: { rotulo: string; tirar: () => void }[] = [];
+  if (status !== TODOS) etiquetas.push({ rotulo: `Status: ${STATUS[status] ?? status}`, tirar: () => setStatus(TODOS) });
+  if (tipo !== TODOS) etiquetas.push({ rotulo: `Tipo: ${TIPO[tipo] ?? tipo}`, tirar: () => setTipo(TODOS) });
+  if (de || ate) etiquetas.push({ rotulo: `Abertura: ${de || '…'} a ${ate || '…'}`, tirar: () => { setDe(''); setAte(''); } });
+  if (divisao) etiquetas.push({ rotulo: `Filial: ${divisao}`, tirar: () => { setDivisao(''); setCc(''); } });
+  if (cc) etiquetas.push({ rotulo: `CC: ${formatarCC(cc)}`, tirar: () => setCc('') });
+  if (conta) etiquetas.push({ rotulo: `Conta: ${conta}`, tirar: () => setConta('') });
+  if ((divisao || cc || conta) && lado !== 'qualquer') etiquetas.push({ rotulo: `Lado: ${lado === 'origem' ? 'Origem' : 'Destino'}`, tirar: () => setLado('qualquer') });
   // quem atende abre o chamado dentro da fila; o solicitante, na própria rota
   const destino = (id: string) => (atende ? `/fila/${id}` : `/solicitacoes/${id}`);
 
@@ -123,10 +163,67 @@ const Solicitacoes = () => {
           <Label htmlFor="ate">Aberta até</Label>
           <Input id="ate" type="date" value={ate} onChange={(e) => { setAte(e.target.value); setPagina(1); }} />
         </div>
+        <div className="grid min-w-0 gap-1.5">
+          <Label>Filial / divisão</Label>
+          <BuscaCombobox
+            value={divisao}
+            onChange={(v) => { setDivisao(v); setCc(''); setPagina(1); }}
+            opcoes={(filtros.data?.divisoes ?? []).map((d) => ({ id: d.codigo, codigo: d.codigo, nome: d.nome || 'Filial' }))}
+            placeholder="Todas"
+            vazio="Nenhuma filial nos seus chamados."
+            limparRotulo="Todas"
+            ariaLabel="Filial ou divisão"
+          />
+        </div>
+        <div className="grid min-w-0 gap-1.5">
+          <Label>Centro de custo</Label>
+          <BuscaCombobox
+            value={cc}
+            onChange={(v) => { setCc(v); setPagina(1); }}
+            opcoes={opcoesCC}
+            placeholder="Todos"
+            vazio="Nenhum centro de custo nos seus chamados."
+            limparRotulo="Todos"
+            ariaLabel="Centro de custo"
+          />
+        </div>
+        <div className="grid min-w-0 gap-1.5">
+          <Label>Conta</Label>
+          <BuscaCombobox
+            value={conta}
+            onChange={(v) => { setConta(v); setPagina(1); }}
+            opcoes={(filtros.data?.contas ?? []).map((c) => ({ id: c.codigo, codigo: c.codigo, nome: c.nome }))}
+            placeholder="Todas"
+            vazio="Nenhuma conta nos seus chamados."
+            limparRotulo="Todas"
+            ariaLabel="Conta"
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Lado (Transferência)</Label>
+          <Select value={lado} onValueChange={(v) => { setLado(v); setPagina(1); }} disabled={!divisao && !cc && !conta}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="qualquer">Qualquer lado</SelectItem>
+              <SelectItem value="origem">Origem</SelectItem>
+              <SelectItem value="destino">Destino</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="flex items-end">
           {filtrando && <Button variant="outline" size="sm" onClick={limpar}>Limpar filtros</Button>}
         </div>
       </section>
+      {etiquetas.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {etiquetas.map((e) => (
+            <span key={e.rotulo} className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs">
+              {e.rotulo}
+              <button type="button" aria-label={`Tirar o filtro ${e.rotulo}`} className="text-fg-helper hover:text-foreground" onClick={() => { e.tirar(); setPagina(1); }}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {q.isLoading && <p className="text-sm text-muted-foreground">Carregando…</p>}
       {q.error && <p className="text-sm text-destructive">{(q.error as Error).message}</p>}
@@ -152,7 +249,7 @@ const Solicitacoes = () => {
                   <td className="p-2">{TIPO[i.tipo_solicitacao] ?? i.tipo_solicitacao}</td>
                   <td className="max-w-[16rem] p-2">
                     {i.centro_custo_codigo ? (
-                      <span className="flex flex-col"><span>{i.centro_custo_codigo}</span><span className="truncate text-xs text-fg-helper">{i.centro_custo_nome}</span></span>
+                      <span className="flex flex-col"><span className="tabular-nums">{formatarCC(i.centro_custo_codigo)}</span><span className="truncate text-xs text-fg-helper">{i.centro_custo_nome}</span></span>
                     ) : (i.local_obra ?? '—')}
                   </td>
                   {atende && <td className="p-2">{i.solicitante_nome ?? '—'}</td>}

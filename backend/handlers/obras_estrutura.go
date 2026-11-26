@@ -26,6 +26,31 @@ import (
 
 var reOrdemDigitada = regexp.MustCompile(`^[0-9]{4,20}$`)
 
+// validarTipoLinhaObra (F16): "FL" ou "Externa" na retirada e na transferência de saldo.
+func validarTipoLinhaObra(v string) (string, string) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "fl":
+		return "FL", ""
+	case "externa", "externo":
+		return "Externa", ""
+	}
+	return "", "escolha o tipo da ordem (FL ou Externa)."
+}
+
+// despesaDoTipo: FL = aquisição interna; Externa = aquisição externa.
+func despesaDoTipo(tipo, classificacao string) string {
+	switch tipo {
+	case "FL":
+		return exportacao.DespesaInterna
+	case "Externa":
+		return exportacao.DespesaExterna
+	}
+	return exportacao.DespesaDaClassificacao(classificacao)
+}
+
+// familiaSemFL: Fortaleza não tem FL (MUDANCAS-2026-08-06; F16 de 26/11).
+func familiaSemFL(familia string) bool { return familia == "Fortaleza" }
+
 type localObraOpcao struct {
 	ID            string `json:"id"`
 	Codigo        string `json:"codigo"`
@@ -82,6 +107,8 @@ func listarSubgrupos(db *sql.DB) ([]subgrupoOpcao, error) {
 // ordemCandidata é uma ordem do cadastro para o grão, com o que a tela mostra.
 type ordemCandidata struct {
 	Ordem          string `json:"ordem"`
+	Bloqueada      bool   `json:"bloqueada"`  // F8b: bloqueada para lançamento no SAP — aparece, mas não se escolhe
+	Observacao     string `json:"observacao"` // motivo (planilha da Controladoria)
 	TipoDespesa    string `json:"tipo_despesa"`
 	TipoFaturament string `json:"tipo_faturamento"`
 	Colunas        string `json:"colunas"`
@@ -95,7 +122,8 @@ type grao struct {
 	SubgrupoNome  string
 	NaFamilia     bool // o subgrupo vale para a família da obra (sempre true sem estrutura)
 	Despesa       string
-	Candidatas    []ordemCandidata
+	Candidatas    []ordemCandidata // todas as ordens do grão, inclusive bloqueadas
+	Livres        []ordemCandidata // só as que aceitam lançamento
 	PermiteCriar  bool
 	SemEstrutura  bool
 	SubgrupoAchou bool
@@ -106,9 +134,10 @@ type consultaGrao interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }
 
-// resolverGrao consulta família, subgrupo e ordens do grão.
-func resolverGrao(q consultaGrao, localID, subgrupoID, classificacao, lado string) (grao, error) {
-	g := grao{Despesa: exportacao.DespesaDaClassificacao(classificacao)}
+// resolverGrao consulta família, subgrupo e ordens do grão. `tipo` (F16) é o tipo da linha ("FL"/"Externa"); vazio
+// = o da classificação.
+func resolverGrao(q consultaGrao, localID, subgrupoID, classificacao, lado, tipo string) (grao, error) {
+	g := grao{Despesa: despesaDoTipo(tipo, classificacao)}
 	if err := q.QueryRow(`SELECT COALESCE(tipo_estrutura, '') FROM locais_obra WHERE id = $1`, localID).Scan(&g.Familia); err != nil {
 		return g, err
 	}
@@ -126,7 +155,8 @@ func resolverGrao(q consultaGrao, localID, subgrupoID, classificacao, lado strin
 		}
 	}
 	rows, err := q.Query(`
-		SELECT numero_ordem, COALESCE(tipo_despesa, ''), COALESCE(tipo_faturamento, ''), COALESCE(imobilizado_iea, ''), COALESCE(codigo_nivel, '')
+		SELECT numero_ordem, COALESCE(tipo_despesa, ''), COALESCE(tipo_faturamento, ''), COALESCE(imobilizado_iea, ''), COALESCE(codigo_nivel, ''),
+		       bloqueada, COALESCE(observacao, '')
 		FROM obra_ordens WHERE local_obra_id = $1 AND subgrupo_despesa_id = $2 AND (tipo_despesa = $3 OR tipo_despesa IS NULL)
 		ORDER BY numero_ordem`, localID, subgrupoID, g.Despesa)
 	if err != nil {
@@ -135,11 +165,14 @@ func resolverGrao(q consultaGrao, localID, subgrupoID, classificacao, lado strin
 	defer rows.Close()
 	for rows.Next() {
 		var c ordemCandidata
-		if err := rows.Scan(&c.Ordem, &c.TipoDespesa, &c.TipoFaturament, &c.IEA, &c.CodigoNivel); err != nil {
+		if err := rows.Scan(&c.Ordem, &c.TipoDespesa, &c.TipoFaturament, &c.IEA, &c.CodigoNivel, &c.Bloqueada, &c.Observacao); err != nil {
 			return g, err
 		}
 		c.Colunas = exportacao.RotuloFaturamento(c.TipoFaturament)
 		g.Candidatas = append(g.Candidatas, c)
+		if !c.Bloqueada {
+			g.Livres = append(g.Livres, c)
+		}
 	}
 	// "CRIAR" só onde a ordem nasce (Inclusão, FL, lado de inclusão da transferência de saldo) e só em obra com estrutura
 	g.PermiteCriar = !g.SemEstrutura && classificacao != "retirada_saldo" && !(classificacao == classificacaoTransferenciaSaldo && lado == "retirada")
@@ -165,7 +198,7 @@ func ObraOrdensHandler(db *sql.DB) http.HandlerFunc {
 		if classificacao == "" {
 			classificacao = "inclusao"
 		}
-		g, err := resolverGrao(db, localID, subgrupoID, classificacao, qs.Get("lado"))
+		g, err := resolverGrao(db, localID, subgrupoID, classificacao, qs.Get("lado"), qs.Get("tipo"))
 		if err == sql.ErrNoRows {
 			jsonErr(w, http.StatusBadRequest, "local de obra não encontrado")
 			return
@@ -177,12 +210,16 @@ func ObraOrdensHandler(db *sql.DB) http.HandlerFunc {
 		tipo := exportacao.RotuloDespesa(g.Despesa)
 		var situacao, ordem, dica string
 		switch {
+		case familiaSemFL(g.Familia) && g.Despesa == exportacao.DespesaInterna:
+			situacao, dica = "fora_da_familia", "Fortaleza não tem FL: use o tipo Externa (ZPA)."
 		case g.SemEstrutura:
 			situacao, dica = "sem_estrutura", "A estrutura desta obra ainda não foi cadastrada — informe a ordem."
 		case !g.NaFamilia:
 			situacao, dica = "fora_da_familia", "Este subgrupo não pertence à estrutura desta obra ("+g.Familia+")."
-		case len(g.Candidatas) == 1:
-			c := g.Candidatas[0]
+		case len(g.Candidatas) > 0 && len(g.Livres) == 0:
+			situacao, dica = "bloqueada", "Todas as ordens deste subgrupo estão bloqueadas no SAP — procure a Controladoria."
+		case len(g.Livres) == 1 && len(g.Candidatas) == 1:
+			c := g.Livres[0]
 			situacao, ordem = "existe", c.Ordem
 			dica = "Ordem da estrutura"
 			if c.CodigoNivel != "" {
@@ -193,7 +230,12 @@ func ObraOrdensHandler(db *sql.DB) http.HandlerFunc {
 				dica += " · imobilizado " + c.IEA
 			}
 		case len(g.Candidatas) > 1:
-			situacao, dica = "ambigua", "Há mais de uma ordem de "+tipo+" para este subgrupo; escolha pela coluna de faturamento."
+			// F8 complemento: escolha obrigatória, sem pré-seleção; bloqueadas aparecem desabilitadas
+			situacao, dica = "ambigua", "Escolha a ordem deste subgrupo: Direto ou Sub-contratada."
+			if len(g.Livres) == 1 {
+				situacao, ordem = "existe", g.Livres[0].Ordem
+				dica = "Ordem da estrutura · " + tipo + " (a outra ordem deste subgrupo está bloqueada no SAP)"
+			}
 		case g.PermiteCriar:
 			situacao, ordem = "criar", "CRIAR"
 			dica = "Ainda não existe ordem de " + tipo + " para este subgrupo: será criada no SAP."
@@ -229,22 +271,34 @@ func verificarGraoObras(tx *sql.Tx, classificacao string, linhas []obraLinhaVali
 		if l.Lado.Valid {
 			lado = l.Lado.String
 		}
-		g, err := resolverGrao(tx, l.LocalObraID, l.SubgrupoDespesaID, classificacao, lado)
+		g, err := resolverGrao(tx, l.LocalObraID, l.SubgrupoDespesaID, classificacao, lado, l.Tipo)
 		if err == sql.ErrNoRows {
 			return fmt.Sprintf("linha %d: local de obra não encontrado", n), nil
 		} else if err != nil {
 			return "", err
 		}
+		if familiaSemFL(g.Familia) && g.Despesa == exportacao.DespesaInterna {
+			return fmt.Sprintf("linha %d: Fortaleza não tem FL — use a classificação Inclusão ou o tipo Externa (ZPA).", n), nil
+		}
 		if !g.NaFamilia {
 			return fmt.Sprintf("linha %d: o subgrupo %q não pertence à estrutura desta obra (%s).", n, g.SubgrupoNome, g.Familia), nil
+		}
+		todas := make([]string, 0, len(g.Candidatas))
+		for _, c := range g.Candidatas {
+			todas = append(todas, c.Ordem)
+			if c.Ordem == l.OrdemInvestimento && c.Bloqueada {
+				return fmt.Sprintf("linha %d: a ordem %s está bloqueada para lançamento no SAP.", n, c.Ordem), nil
+			}
 		}
 		tipo := exportacao.RotuloDespesa(g.Despesa)
 		if l.OrdemInvestimento == "CRIAR" {
 			switch {
 			case g.SemEstrutura:
 				return fmt.Sprintf("linha %d: a estrutura desta obra ainda não foi cadastrada — informe a ordem (\"CRIAR\" não vale).", n), nil
-			case len(g.Candidatas) > 0:
-				return fmt.Sprintf("linha %d: já existe a ordem %s para este subgrupo (%s); use-a em vez de \"CRIAR\".", n, g.Candidatas[0].Ordem, tipo), nil
+			case len(g.Candidatas) == 1:
+				return fmt.Sprintf("linha %d: já existe a ordem %s para este subgrupo (%s); use-a em vez de \"CRIAR\".", n, todas[0], tipo), nil
+			case len(g.Candidatas) > 1:
+				return fmt.Sprintf("linha %d: já existem as ordens %s para este subgrupo (%s); \"CRIAR\" não vale.", n, strings.Join(todas, " e "), tipo), nil
 			}
 			continue // retirada/origem com CRIAR já é recusada por validarCriarObras
 		}
@@ -254,6 +308,9 @@ func verificarGraoObras(tx *sql.Tx, classificacao string, linhas []obraLinhaVali
 			}
 			continue
 		}
+		if len(g.Candidatas) > 0 && len(g.Livres) == 0 {
+			return fmt.Sprintf("linha %d: todas as ordens deste subgrupo estão bloqueadas no SAP (%s) — procure a Controladoria.", n, strings.Join(todas, ", ")), nil
+		}
 		if len(g.Candidatas) == 0 {
 			if !g.PermiteCriar {
 				return fmt.Sprintf("linha %d: este subgrupo não tem ordem de %s cadastrada — sem ordem, não há saldo a retirar.", n, tipo), nil
@@ -262,7 +319,7 @@ func verificarGraoObras(tx *sql.Tx, classificacao string, linhas []obraLinhaVali
 		}
 		ok := false
 		var nums []string
-		for _, c := range g.Candidatas {
+		for _, c := range g.Livres {
 			nums = append(nums, c.Ordem)
 			ok = ok || c.Ordem == l.OrdemInvestimento
 		}

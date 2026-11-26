@@ -6,6 +6,11 @@ export interface OpcaoBusca {
   id: string;
   codigo: string;
   nome: string;
+  // texto extra só para a busca (ex.: o código do CC em outros formatos, F13)
+  busca?: string;
+  // opção visível mas não selecionável (ex.: ordem bloqueada), com o motivo
+  desabilitada?: boolean;
+  motivo?: string;
 }
 
 // Busca sem acento/caixa: "manutencao" acha "Manutenção".
@@ -41,7 +46,7 @@ export function BuscaCombobox({
   // índice normalizado uma vez por lista (listas de milhares de itens: não refazer a cada tecla)
   const indiceBusca = useMemo(() => {
     const base: OpcaoBusca[] = limparRotulo ? [{ id: '', codigo: '', nome: limparRotulo }, ...opcoes] : opcoes;
-    return base.map((o) => ({ o, alvo: normalizar(`${o.codigo} ${o.nome}`) }));
+    return base.map((o) => ({ o, alvo: normalizar(`${o.codigo} ${o.nome} ${o.busca ?? ''}`) }));
   }, [opcoes, limparRotulo]);
   const selecionada = indiceBusca.find((x) => x.o.id === value)?.o;
 
@@ -68,6 +73,7 @@ export function BuscaCombobox({
   }, [aberto]);
 
   function escolher(o: OpcaoBusca) {
+    if (o.desabilitada) return;
     onChange(o.id);
     fechar();
   }
@@ -137,7 +143,9 @@ export function BuscaCombobox({
               type="button"
               role="option"
               aria-selected={o.id === value}
-              className={`block w-full px-3 py-2 text-left text-sm ${i === indice ? 'bg-muted' : 'hover:bg-muted/60'}`}
+              aria-disabled={o.desabilitada || undefined}
+              title={o.motivo}
+              className={`block w-full px-3 py-2 text-left text-sm ${o.desabilitada ? 'cursor-not-allowed text-danger-text opacity-70' : i === indice ? 'bg-muted' : 'hover:bg-muted/60'}`}
               onMouseEnter={() => setIndice(i)}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => escolher(o)}

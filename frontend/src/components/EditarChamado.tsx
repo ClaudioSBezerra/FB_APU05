@@ -10,13 +10,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { BuscaCombobox, type OpcaoBusca } from '@/components/BuscaCombobox';
 import { MesAno } from '@/components/MesAno';
 import { ValorInput } from '@/components/ValorInput';
+import { buscaCC, formatarCC } from '@/lib/centroCusto';
+import { OrdemDaLinha, nomeSubgrupo, tipoDaLinha, type TipoOrdem } from '@/components/ObrasLinha';
 
 // Edição do chamado pela Controladoria (resposta de 26/11, §3). O servidor confere tudo de novo: na Transferência,
 // mudança de valor, conta, CC ou mês reconsulta o saldo com o mesmo bloqueio da abertura. O histórico guarda o antes e o
 // depois e o solicitante (e quem está em cópia) recebe o que mudou por e-mail.
 
 export interface LancEdicao { id?: string; lado: string; centro_custo_id?: string; conta_id?: string; mes: string; valor: number }
-export interface ObraEdicao { id?: string; lado: string; subgrupo: string; ordem: string; valor: number }
+export interface ObraEdicao {
+  id?: string; lado: string; subgrupo: string; ordem: string; valor: number;
+  local_obra_id?: string; subgrupo_despesa_id?: string; tipo?: string;
+}
 
 interface Props {
   aberto: boolean;
@@ -33,6 +38,8 @@ interface Props {
   valorUnitario?: number;
   lancamentos: LancEdicao[];
   obras: ObraEdicao[];
+  classificacao?: string | null;
+  anoOrcamento?: number;
 }
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -42,7 +49,14 @@ export function EditarChamado(p: Props) {
     queryKey: ['formulario-opcoes'],
     queryFn: async () => {
       const r = await fetch('/api/formulario/opcoes');
-      return (await r.json()) as { contas: OpcaoBusca[]; centros_custo_destino?: (OpcaoBusca & { divisao_id: string })[] };
+      return (await r.json()) as {
+        contas: OpcaoBusca[];
+        centros_custo_destino?: (OpcaoBusca & { divisao_id: string })[];
+        locais_obra?: (OpcaoBusca & { tipo_estrutura?: string })[];
+        subgrupos_despesa?: (OpcaoBusca & { familias?: string[] })[];
+        anos_obras?: number[];
+        ano_corrente?: number;
+      };
     },
     enabled: p.aberto,
   });
@@ -53,7 +67,23 @@ export function EditarChamado(p: Props) {
   const [quantidade, setQuantidade] = useState(p.quantidade ? String(p.quantidade) : '');
   const [unitario, setUnitario] = useState(p.valorUnitario != null ? String(p.valorUnitario) : '');
   const [linhas, setLinhas] = useState(p.lancamentos.map((l) => ({ ...l, valorTxt: String(l.valor) })));
-  const [obras, setObras] = useState(p.obras.map((o) => ({ ...o, valorTxt: String(o.valor) })));
+  // F15 (26/11): Obras completa — classificação, ano, local e as linhas (incluir e remover), com as regras da abertura
+  type LinhaEd = { subgrupoDespesaId: string; ordemInvestimento: string; valorTxt: string; lado: 'retirada' | 'inclusao'; tipo: TipoOrdem };
+  const linhasIniciais: LinhaEd[] = p.obras.map((o) => ({
+    subgrupoDespesaId: o.subgrupo_despesa_id ?? '', ordemInvestimento: o.ordem, valorTxt: String(o.valor),
+    lado: o.lado === 'inclusao' ? 'inclusao' : 'retirada', tipo: (o.tipo === 'FL' || o.tipo === 'Externa' ? o.tipo : '') as TipoOrdem,
+  }));
+  const [obClassif, setObClassif] = useState(p.classificacao ?? 'inclusao');
+  const [obAno, setObAno] = useState(p.anoOrcamento ? String(p.anoOrcamento) : '');
+  const [obLocal, setObLocal] = useState(p.obras[0]?.local_obra_id ?? '');
+  const [obLinhas, setObLinhas] = useState<LinhaEd[]>(linhasIniciais);
+  const familia = (opcoes?.locais_obra ?? []).find((l) => l.id === obLocal)?.tipo_estrutura ?? '';
+  const subgruposObra = (opcoes?.subgrupos_despesa ?? [])
+    .filter((sg) => !familia || (sg.familias ?? []).includes(familia))
+    .map((sg) => ({ ...sg, nome: nomeSubgrupo(sg.codigo, sg.nome), busca: sg.nome }));
+  const setLinhaOb = (i: number, campo: keyof LinhaEd, v: string) =>
+    setObLinhas((a) => a.map((l, j) => (j === i ? { ...l, [campo]: v, ...(campo === 'subgrupoDespesaId' || campo === 'tipo' ? { ordemInvestimento: '' } : {}) } : l)));
+  const usaTipo = obClassif === 'retirada_saldo' || obClassif === 'transferencia_saldo';
   const [erro, setErro] = useState('');
   const [salvando, setSalvando] = useState(false);
 
@@ -91,17 +121,24 @@ export function EditarChamado(p: Props) {
       })
       .filter(Boolean);
     if (lancs.length) corpo.lancamentos = lancs;
-    const obs = obras
-      .map((o, i) => {
-        const a = p.obras[i];
-        const m: Record<string, unknown> = { id: o.id };
-        const v = parseFloat(o.valorTxt);
-        if (v && Math.abs(v - a.valor) > 0.004) m.valor = v;
-        if (o.ordem.trim() && o.ordem.trim() !== a.ordem) m.ordem_investimento = o.ordem.trim();
-        return Object.keys(m).length > 1 ? m : null;
-      })
-      .filter(Boolean);
-    if (obs.length) corpo.obras_linhas = obs;
+    if (p.tipo === 'obras') {
+      const obrasNovo = {
+        classificacao: obClassif,
+        ano_orcamento: Number(obAno) || 0,
+        local_obra_id: obLocal,
+        linhas: obLinhas.map((l) => ({
+          subgrupo_despesa_id: l.subgrupoDespesaId,
+          ordem_investimento: l.ordemInvestimento,
+          valor: parseFloat(l.valorTxt) || 0,
+          tipo: tipoDaLinha(obClassif, l),
+          ...(obClassif === 'transferencia_saldo' ? { lado: l.lado } : {}),
+        })),
+      };
+      const mudouObras =
+        obClassif !== (p.classificacao ?? 'inclusao') || obAno !== (p.anoOrcamento ? String(p.anoOrcamento) : '') ||
+        obLocal !== (p.obras[0]?.local_obra_id ?? '') || JSON.stringify(obLinhas) !== JSON.stringify(linhasIniciais);
+      if (mudouObras) corpo.obras = obrasNovo;
+    }
     if (Object.keys(corpo).length === 1) {
       setErro('Nada mudou: altere algum campo antes de salvar.');
       return;
@@ -161,7 +198,7 @@ export function EditarChamado(p: Props) {
                 <div key={l.id ?? i} className="grid gap-2 rounded-md border border-border p-2 sm:grid-cols-2">
                   <p className="text-xs font-medium sm:col-span-2">{l.lado === 'origem' ? 'Origem' : l.lado === 'destino' ? 'Destino' : 'Linha'}</p>
                   <div className="grid min-w-0 gap-1"><Label className="text-xs">Centro de custo</Label>
-                    <BuscaCombobox value={l.centro_custo_id ?? ''} onChange={(v) => setLinha(i, 'centro_custo_id', v)} opcoes={opcoes?.centros_custo_destino ?? []} placeholder="Centro de custo" vazio="Nenhum centro de custo encontrado." />
+                    <BuscaCombobox value={l.centro_custo_id ?? ''} onChange={(v) => setLinha(i, 'centro_custo_id', v)} opcoes={(opcoes?.centros_custo_destino ?? []).map((c) => ({ ...c, codigo: formatarCC(c.codigo), busca: buscaCC(c.codigo) }))} placeholder="Centro de custo" vazio="Nenhum centro de custo encontrado." />
                   </div>
                   <div className="grid min-w-0 gap-1"><Label className="text-xs">Conta</Label>
                     <BuscaCombobox value={l.conta_id ?? ''} onChange={(v) => setLinha(i, 'conta_id', v)} opcoes={opcoes?.contas ?? []} />
@@ -178,16 +215,82 @@ export function EditarChamado(p: Props) {
             </div>
           )}
 
-          {obras.length > 0 && (
-            <div className="grid gap-2">
-              <h3 className="text-sm font-semibold">Linhas da obra</h3>
-              {obras.map((o, i) => (
-                <div key={o.id ?? i} className="grid gap-2 rounded-md border border-border p-2 sm:grid-cols-[1fr_10rem_10rem] sm:items-end">
-                  <p className="text-xs">{o.lado === 'retirada' ? 'Retirada · ' : o.lado === 'inclusao' ? 'Inclusão · ' : ''}{o.subgrupo}</p>
-                  <div className="grid gap-1"><Label className="text-xs">Ordem</Label><Input value={o.ordem} onChange={(e) => setObras((a) => a.map((x, j) => (j === i ? { ...x, ordem: e.target.value } : x)))} /></div>
-                  <div className="grid gap-1"><Label className="text-xs">Valor</Label><ValorInput value={o.valorTxt} onChange={(v) => setObras((a) => a.map((x, j) => (j === i ? { ...x, valorTxt: v } : x)))} /></div>
+          {p.tipo === 'obras' && (
+            <div className="grid gap-3">
+              <h3 className="text-sm font-semibold">Obras</h3>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="grid gap-1">
+                  <Label className="text-xs">Classificação</Label>
+                  <Select value={obClassif} onValueChange={(v) => { setObClassif(v); setObLinhas((a) => a.map((l) => ({ ...l, ordemInvestimento: '' }))); }}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="inclusao">Inclusão</SelectItem>
+                      <SelectItem value="fl" disabled={familia === 'Fortaleza'}>FL{familia === 'Fortaleza' ? ' (Fortaleza não tem FL)' : ''}</SelectItem>
+                      <SelectItem value="retirada_saldo">Retirada de saldo</SelectItem>
+                      <SelectItem value="transferencia_saldo">Transferência de saldo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {usaTipo && (
+                  <div className="grid gap-1">
+                    <Label className="text-xs">Ano do orçamento</Label>
+                    <Select value={obAno || String(opcoes?.ano_corrente ?? '')} onValueChange={setObAno}>
+                      <SelectTrigger><SelectValue placeholder="Ano" /></SelectTrigger>
+                      <SelectContent>{(opcoes?.anos_obras ?? []).map((a) => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <div className="grid gap-1">
+                  <Label className="text-xs">Local de obra</Label>
+                  <Select value={obLocal} onValueChange={(v) => { setObLocal(v); setObLinhas((a) => a.map((l) => ({ ...l, ordemInvestimento: '', subgrupoDespesaId: '' }))); }}>
+                    <SelectTrigger><SelectValue placeholder="Local" /></SelectTrigger>
+                    <SelectContent>{(opcoes?.locais_obra ?? []).map((l) => <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {obLinhas.map((l, i) => (
+                <div key={i} className="grid gap-2 rounded-md border border-border p-2 sm:grid-cols-2">
+                  <div className="flex items-center justify-between sm:col-span-2">
+                    <span className="text-xs font-medium">Linha {i + 1}</span>
+                    {obLinhas.length > 1 && <Button size="sm" variant="ghost" onClick={() => setObLinhas((a) => a.filter((_, j) => j !== i))}>Remover linha</Button>}
+                  </div>
+                  {obClassif === 'transferencia_saldo' && (
+                    <div className="grid gap-1">
+                      <Label className="text-xs">Lado</Label>
+                      <Select value={l.lado} onValueChange={(v) => setLinhaOb(i, 'lado', v)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="retirada">Retirada</SelectItem><SelectItem value="inclusao">Inclusão</SelectItem></SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {usaTipo && (
+                    <div className="grid gap-1">
+                      <Label className="text-xs">Tipo da ordem</Label>
+                      <Select value={familia === 'Fortaleza' ? 'Externa' : l.tipo} onValueChange={(v) => setLinhaOb(i, 'tipo', v)} disabled={familia === 'Fortaleza'}>
+                        <SelectTrigger><SelectValue placeholder="FL ou Externa" /></SelectTrigger>
+                        <SelectContent><SelectItem value="Externa">Externa</SelectItem><SelectItem value="FL">FL</SelectItem></SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="grid min-w-0 gap-1 sm:col-span-2">
+                    <Label className="text-xs">Subgrupo</Label>
+                    <BuscaCombobox value={l.subgrupoDespesaId} onChange={(v) => setLinhaOb(i, 'subgrupoDespesaId', v)} opcoes={subgruposObra}
+                      placeholder="Escolha o subgrupo" vazio="Nenhum subgrupo nesta estrutura." ariaLabel="Subgrupo" />
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="text-xs">Ordem</Label>
+                    <OrdemDaLinha localObraId={obLocal} subgrupoDespesaId={l.subgrupoDespesaId} classificacao={obClassif} lado={l.lado}
+                      tipo={familia === 'Fortaleza' && usaTipo ? 'Externa' : tipoDaLinha(obClassif, l)}
+                      value={l.ordemInvestimento} onChange={(v) => setLinhaOb(i, 'ordemInvestimento', v)} />
+                  </div>
+                  <div className="grid gap-1"><Label className="text-xs">Valor</Label><ValorInput value={l.valorTxt} onChange={(v) => setLinhaOb(i, 'valorTxt', v)} /></div>
                 </div>
               ))}
+              <Button size="sm" variant="outline" className="justify-self-start"
+                onClick={() => setObLinhas((a) => [...a, { subgrupoDespesaId: '', ordemInvestimento: '', valorTxt: '', lado: 'retirada', tipo: familia === 'Fortaleza' ? 'Externa' : '' }])}>
+                + linha
+              </Button>
+              <p className="text-xs text-fg-helper">O servidor confere de novo a estrutura da obra, as ordens (inclusive bloqueadas) e o "CRIAR", como na abertura.</p>
             </div>
           )}
 

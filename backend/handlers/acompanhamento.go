@@ -159,27 +159,34 @@ func NotaInternaHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusNotFound, "solicitação não encontrada")
 			return
 		}
-		var req struct {
-			Texto string `json:"texto"`
-		}
-		corpo, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<16))
-		if json.Unmarshal(corpo, &req) != nil || strings.TrimSpace(req.Texto) == "" {
-			jsonErr(w, http.StatusBadRequest, "Escreva a nota.")
+		// F12 (26/11): a nota pode levar anexos, só com o chamado aberto, em atendimento ou pendente
+		req, arqs, ok := lerComentarioComAnexos(w, r, false)
+		if !ok {
 			return
 		}
-		if utf8.RuneCountInString(req.Texto) > MaxDescricao {
-			jsonErr(w, http.StatusBadRequest, fmt.Sprintf("A nota passa do limite de %d caracteres.", MaxDescricao))
+		var status string
+		if err := db.QueryRow(`SELECT status FROM solicitacoes WHERE id = $1`, id).Scan(&status); err == sql.ErrNoRows {
+			jsonErr(w, http.StatusNotFound, "solicitação não encontrada")
+			return
+		} else if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
-		res, err := db.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto)
-			SELECT id, $2, 'nota_interna', $3 FROM solicitacoes WHERE id = $1`, id, GetUserIDFromContext(r), strings.TrimSpace(req.Texto))
-		if err != nil {
+		if len(arqs) > 0 && status != "aberta" && status != "em_atendimento" && status != "pendente" {
+			jsonErr(w, http.StatusBadRequest, "Anexo em nota interna não vale neste status.")
+			return
+		}
+		autor := GetUserIDFromContext(r)
+		var notaID string
+		if err := db.QueryRow(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'nota_interna', $3) RETURNING id`,
+			id, autor, req.Comentario).Scan(&notaID); err != nil {
 			log.Printf("[Nota] %s: %v", id, err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			jsonErr(w, http.StatusNotFound, "solicitação não encontrada")
+		if err := gravarAnexosDoComentario(db, id, notaID, autor, arqs, true); err != nil {
+			log.Printf("[Nota] anexos %s: %v", id, err)
+			jsonErr(w, http.StatusInternalServerError, "A nota foi gravada, mas os anexos não. Tente anexar de novo.")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

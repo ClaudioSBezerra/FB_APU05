@@ -26,6 +26,8 @@ import { BuscaCombobox, type OpcaoBusca } from '@/components/BuscaCombobox';
 import { DivisaoCentroCusto, type CentroCustoOpcao } from '@/components/DivisaoCentroCusto';
 import { TabelaSaldoMeses, rotuloMes } from '@/components/TabelaSaldoMeses';
 import { useSaldoMeses } from '@/hooks/useSaldoMeses';
+import { CampoAnexos, type Anexo } from '@/components/CampoAnexos';
+import { OrdemDaLinha, nomeSubgrupo, tipoDaLinha } from '@/components/ObrasLinha';
 import { BuscaPessoa, type Pessoa, type GrupoOpcao } from '@/components/CompartilharChamado';
 
 // Tela de abertura de solicitação (Epic 3 — Stories 3.1 a 3.5). Cobre os 5
@@ -87,13 +89,8 @@ interface LinhaObra {
   ordemInvestimento: string;
   valor: string;
   lado: 'retirada' | 'inclusao';
-}
-
-interface Anexo {
-  chave: number;
-  nome: string;
-  contentType: string;
-  base64: string;
+  // F16 (26/11): tipo da ordem na retirada e na transferência de saldo (por linha, logo por lado)
+  tipo: '' | 'FL' | 'Externa';
 }
 
 const classificacoesObras = [
@@ -108,7 +105,7 @@ function novaLinhaLancamento(lado: 'origem' | 'destino'): LinhaLancamento {
 }
 
 function novaLinhaObra(): LinhaObra {
-  return { subgrupoDespesaId: '', ordemInvestimento: '', valor: '', lado: 'retirada' };
+  return { subgrupoDespesaId: '', ordemInvestimento: '', valor: '', lado: 'retirada', tipo: '' };
 }
 
 // Obras (item 4 de 24/11): "CRIAR" só onde a ordem nasce — Inclusão, FL e o lado de inclusão da transferência de saldo.
@@ -125,126 +122,6 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(data?.error || `Erro HTTP ${resp.status}`);
   }
   return data as T;
-}
-
-function fileParaBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const resultado = reader.result as string;
-      resolve(resultado.split(',')[1] ?? '');
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-const EXTENSOES_ANEXO = /\.(pdf|jpe?g|png|docx?|xlsx?|msg|eml)$/i;
-const ACCEPT_ANEXO = '.pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.msg,.eml';
-const MAX_ANEXO_BYTES = 10 * 1024 * 1024;
-
-async function lerAnexo(file: File, chave: number): Promise<Anexo | null> {
-  // Avisa já na escolha (o servidor confere de novo pelo conteúdo do arquivo).
-  if (!EXTENSOES_ANEXO.test(file.name)) {
-    toast.error(`"${file.name}" não é um tipo aceito. Aceitos: PDF, imagem (JPG/PNG), Word, Excel e e-mail (.msg ou .eml).`);
-    return null;
-  }
-  if (file.size > MAX_ANEXO_BYTES) {
-    toast.error(`"${file.name}" passa de 10 MB.`);
-    return null;
-  }
-  return { chave, nome: file.name, contentType: file.type || 'application/octet-stream', base64: await fileParaBase64(file) };
-}
-
-// OrdemDaLinha (F7/F8, 26/11) — a ordem é resolvida pelo grão (local, subgrupo e tipo de despesa, que sai da
-// classificação), como na referência: existe → preenchida e travada; não existe e a classificação permite → "CRIAR"
-// travado; retirada/origem sem ordem → bloqueia; obra sem estrutura → digitada; duas ordens no grão → escolhe pela
-// coluna de faturamento. A linha de ajuda sob o campo diz de onde veio a ordem.
-interface OrdemCandidata { ordem: string; tipo_faturamento: string; colunas: string; iea: string }
-interface RespostaOrdem {
-  situacao: 'existe' | 'criar' | 'exige_existente' | 'sem_estrutura' | 'ambigua' | 'fora_da_familia';
-  ordem: string;
-  dica: string;
-  candidatas: OrdemCandidata[];
-}
-
-function OrdemDaLinha({
-  localObraId,
-  subgrupoDespesaId,
-  classificacao,
-  lado,
-  value,
-  onChange,
-}: {
-  localObraId: string;
-  subgrupoDespesaId: string;
-  classificacao: string;
-  lado: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const habilitado = Boolean(localObraId && subgrupoDespesaId);
-  const ladoEfetivo = classificacao === 'transferencia_saldo' ? lado : '';
-  const { data } = useQuery({
-    queryKey: ['obra-ordem', localObraId, subgrupoDespesaId, classificacao, ladoEfetivo],
-    queryFn: () =>
-      fetchJSON<RespostaOrdem>(
-        `/api/formulario/obra-ordens?local_obra_id=${localObraId}&subgrupo_despesa_id=${subgrupoDespesaId}&classificacao=${classificacao}&lado=${ladoEfetivo}`,
-      ),
-    enabled: habilitado,
-  });
-  // o sistema preenche o que sabe; nos demais casos limpa o que não vale mais
-  useEffect(() => {
-    if (!data) return;
-    if (data.situacao === 'existe' || data.situacao === 'criar') {
-      if (value !== data.ordem) onChange(data.ordem);
-    } else if (data.situacao === 'ambigua') {
-      if (value && !data.candidatas.some((c) => c.ordem === value)) onChange('');
-    } else if (data.situacao !== 'sem_estrutura' && value) {
-      onChange('');
-    } else if (data.situacao === 'sem_estrutura' && value === 'CRIAR') {
-      onChange('');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
-
-  if (!habilitado) {
-    return (
-      <div className="flex h-9 items-center rounded-md border border-input bg-[var(--bg-input-disabled)] px-3 text-sm text-fg-muted">
-        {!localObraId ? 'Escolha o local de obra' : 'Escolha o subgrupo'}
-      </div>
-    );
-  }
-  const travado = data?.situacao === 'existe' || data?.situacao === 'criar';
-  const erro = data?.situacao === 'exige_existente' || data?.situacao === 'fora_da_familia';
-  return (
-    <>
-      {data?.situacao === 'ambigua' ? (
-        <Select value={value} onValueChange={onChange}>
-          <SelectTrigger className="h-9">
-            <SelectValue placeholder="Escolha a ordem" />
-          </SelectTrigger>
-          <SelectContent>
-            {data.candidatas.map((c) => (
-              <SelectItem key={c.ordem} value={c.ordem}>
-                {c.ordem} · {c.colunas || c.tipo_faturamento}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : data?.situacao === 'sem_estrutura' ? (
-        <Input className="h-9" inputMode="numeric" placeholder="Ordem (4 a 20 dígitos)" value={value} onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 20))} />
-      ) : (
-        <div
-          className={`flex h-9 items-center rounded-md border px-3 text-sm tabular-nums ${travado ? 'border-input bg-[var(--bg-input-disabled)] text-foreground' : 'border-danger-border text-fg-muted'}`}
-          title={travado ? 'Definida pela estrutura da obra' : undefined}
-        >
-          {data ? (travado ? data.ordem : '—') : 'Consultando…'}
-        </div>
-      )}
-      {data && <p className={`text-xs ${erro ? 'text-danger-text' : 'text-fg-helper'}`}>{data.dica}</p>}
-    </>
-  );
 }
 
 // CNPJ (14) / CPF (11) com máscara — só exibição; o backend guarda dígitos.
@@ -289,6 +166,13 @@ function CampoFornecedor({
   // CNPJ procurado e não achado no cadastro (o aviso só aparece enquanto o campo tem esse mesmo CNPJ)
   const [cnpjNaoAchado, setCnpjNaoAchado] = useState('');
   const ultimoCnpjBuscado = useRef('');
+  // F9 (26/11): CNPJ do fornecedor escolhido do cadastro — enquanto o campo tiver esse CNPJ, nome e "não cadastrado"
+  // ficam travados; "Trocar fornecedor" é o único caminho de volta
+  const [cnpjDoCadastro, setCnpjDoCadastro] = useState('');
+  const digitosCnpj = cnpj.replace(/\D/g, '');
+  const travado = !!cnpjDoCadastro && cnpjDoCadastro === digitosCnpj;
+  const naoAchado = !!cnpjNaoAchado && cnpjNaoAchado === digitosCnpj;
+  const nomeLivre = naoCadastrado || naoAchado;
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -311,6 +195,7 @@ function CampoFornecedor({
         if (achado) {
           onChange(achado.razsoc);
           onNaoCadastradoChange(false);
+          setCnpjDoCadastro(d);
         } else {
           setCnpjNaoAchado(d);
         }
@@ -339,6 +224,7 @@ function CampoFornecedor({
   // A consulta traz o CNPJ junto (11/11, item 4) e desmarca "não cadastrado".
   function selecionar(f: FornecedorOpcao) {
     ultimoCnpjBuscado.current = f.cgc.replace(/\D/g, '');
+    setCnpjDoCadastro(f.cgc.replace(/\D/g, ''));
     onChange(f.razsoc);
     onCnpjChange(f.cgc);
     onNaoCadastradoChange(false);
@@ -358,35 +244,71 @@ function CampoFornecedor({
     }
   }
 
+  function trocarFornecedor() {
+    setCnpjDoCadastro('');
+    setCnpjNaoAchado('');
+    ultimoCnpjBuscado.current = '';
+    onChange('');
+    onCnpjChange('');
+  }
+
   return (
     <div className="grid gap-1.5">
       <Label>{rotulo}</Label>
       <div className="grid gap-2 sm:grid-cols-[1fr_200px]">
         <div className="flex gap-2">
-          <Input value={valor} onChange={(e) => onChange(e.target.value)} placeholder="Opcional" maxLength={255} />
-          <Button type="button" variant="outline" size="icon" onClick={abrirPopup} title="Consultar fornecedor cadastrado">
+          <Input
+            value={valor}
+            onChange={(e) => onChange(e.target.value)}
+            readOnly={!nomeLivre}
+            maxLength={255}
+            className={nomeLivre ? undefined : 'bg-[var(--bg-input-disabled)]'}
+            placeholder={nomeLivre ? 'Nome do fornecedor' : 'Busque na lupa ou digite o CNPJ'}
+            aria-label="Nome do fornecedor"
+          />
+          <Button type="button" variant="outline" size="icon" onClick={abrirPopup} disabled={travado || naoCadastrado} title="Consultar fornecedor cadastrado">
             <Search className="h-4 w-4" />
           </Button>
         </div>
         <Input
           value={formatarDocumento(cnpj)}
           onChange={(e) => onCnpjChange(e.target.value.replace(/\D/g, '').slice(0, 14))}
-          placeholder="CNPJ"
+          placeholder={naoCadastrado ? 'não se aplica' : 'CNPJ'}
           inputMode="numeric"
           aria-label="CNPJ do fornecedor"
+          disabled={travado || naoCadastrado}
         />
       </div>
-      {cnpjNaoAchado && cnpjNaoAchado === cnpj.replace(/\D/g, '') && (
+      {travado ? (
+        <p className="text-xs text-fg-helper">
+          Fornecedor do cadastro.{' '}
+          <button type="button" className="text-link underline underline-offset-2" onClick={trocarFornecedor}>
+            Trocar fornecedor
+          </button>
+        </p>
+      ) : naoAchado ? (
         <p className="text-xs text-fg-helper">CNPJ não encontrado no cadastro de fornecedores. Digite o nome.</p>
-      )}
-      <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-fg-secondary">
+      ) : !naoCadastrado ? (
+        <p className="text-xs text-fg-helper">
+          Busque pelo nome na lupa ou digite o CNPJ. Se o fornecedor não existir, marque "Fornecedor não cadastrado" e digite o nome.
+        </p>
+      ) : null}
+      <label className={`flex w-fit items-center gap-2 text-sm text-fg-secondary ${travado ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
         <input
           type="checkbox"
-          className="size-4 cursor-pointer accent-[var(--blue-d50)]"
+          className="size-4 cursor-pointer accent-[var(--blue-d50)] disabled:cursor-not-allowed"
           checked={naoCadastrado}
-          onChange={(e) => onNaoCadastradoChange(e.target.checked)}
+          disabled={travado}
+          onChange={(e) => {
+            onNaoCadastradoChange(e.target.checked);
+            // F9: "não cadastrado" limpa e desabilita o CNPJ; o nome fica livre
+            if (e.target.checked) {
+              onCnpjChange('');
+              setCnpjNaoAchado('');
+            }
+          }}
         />
-        Fornecedor não cadastrado
+        Fornecedor não cadastrado{travado && ' (desabilitado: fornecedor escolhido do cadastro)'}
       </label>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -428,66 +350,6 @@ function CampoFornecedor({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-// B2 (26/11): vários anexos; cada um pode ser removido ou trocado antes do envio. O envio leva só o que ficou.
-function CampoAnexos({ anexos, onChange }: { anexos: Anexo[]; onChange: (a: Anexo[]) => void }) {
-  const [chaveInput, setChaveInput] = useState(0);
-  const proxima = useRef(1);
-  const trocarInput = useRef<HTMLInputElement>(null);
-  const [trocando, setTrocando] = useState<number | null>(null);
-
-  async function adicionar(e: React.ChangeEvent<HTMLInputElement>) {
-    const arquivos = Array.from(e.target.files ?? []);
-    setChaveInput((k) => k + 1); // limpa o campo de arquivo: o nome fica só na lista abaixo
-    const lidos = (await Promise.all(arquivos.map((f) => lerAnexo(f, proxima.current++)))).filter(Boolean) as Anexo[];
-    if (lidos.length) onChange([...anexos, ...lidos]);
-  }
-
-  async function trocar(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    e.target.value = '';
-    if (!f || trocando === null) return;
-    const novo = await lerAnexo(f, proxima.current++);
-    if (novo) onChange(anexos.map((a) => (a.chave === trocando ? novo : a)));
-    setTrocando(null);
-  }
-
-  return (
-    <div className="grid gap-1.5">
-      <Label>
-        Anexos <span className="text-destructive" aria-hidden>*</span>
-      </Label>
-      <Input key={chaveInput} type="file" multiple accept={ACCEPT_ANEXO} onChange={adicionar} aria-label="Adicionar anexo" />
-      <input ref={trocarInput} type="file" accept={ACCEPT_ANEXO} className="hidden" onChange={trocar} aria-hidden tabIndex={-1} />
-      <p className="text-xs text-fg-helper">Aceitos: PDF, imagem (JPG/PNG), Word, Excel e e-mail (.msg ou .eml), até 10 MB cada.</p>
-      {anexos.length > 0 && (
-        <ul className="divide-y divide-border rounded-md border border-border">
-          {anexos.map((a) => (
-            <li key={a.chave} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-              <span className="min-w-0 flex-1 truncate" title={a.nome}>
-                {a.nome}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setTrocando(a.chave);
-                  trocarInput.current?.click();
-                }}
-              >
-                Trocar
-              </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={() => onChange(anexos.filter((x) => x.chave !== a.chave))}>
-                Remover
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }
@@ -602,6 +464,9 @@ const AbrirSolicitacao = () => {
   const [obrasLinhas, setObrasLinhas] = useState<LinhaObra[]>([novaLinhaObra()]);
   const [obraLocalId, setObraLocalId] = useState('');
   const [enviando, setEnviando] = useState(false);
+  // F10 (26/11): depois da 1ª tentativa de envio, os campos faltando ficam em vermelho e o resumo aparece
+  const [tentou, setTentou] = useState(false);
+  const [erroServidor, setErroServidor] = useState('');
   const [emCopia, setEmCopia] = useState<Pessoa[]>([]);
   const [gruposCopia, setGruposCopia] = useState<string[]>([]);
 
@@ -611,6 +476,8 @@ const AbrirSolicitacao = () => {
   });
 
   function limparCampos(novoTipo: TipoSolicitacao) {
+    setTentou(false);
+    setErroServidor('');
     setEmCopia([]);
     setGruposCopia([]);
     setAutorizadorId('');
@@ -654,7 +521,9 @@ const AbrirSolicitacao = () => {
 
   // F7: a família da obra filtra os subgrupos (obra sem estrutura: todos)
   const familiaObra = (opcoes?.locais_obra ?? []).find((o) => o.id === obraLocalId)?.tipo_estrutura ?? '';
-  const subgruposDaObra = (opcoes?.subgrupos_despesa ?? []).filter((sg) => !familiaObra || (sg.familias ?? []).includes(familiaObra));
+  const subgruposDaObra = (opcoes?.subgrupos_despesa ?? [])
+    .filter((sg) => !familiaObra || (sg.familias ?? []).includes(familiaObra))
+    .map((sg) => ({ ...sg, nome: nomeSubgrupo(sg.codigo, sg.nome), busca: sg.nome }));
 
   const opcoesOrigemTodas = (tipo === 'transferencia' ? opcoes?.centros_custo_origem : undefined) ?? opcoes?.centros_custo ?? [];
   const centroCustoSelecionado = opcoesOrigemTodas.find((cc) => cc.id === centroCustoId);
@@ -820,6 +689,7 @@ const AbrirSolicitacao = () => {
             subgrupo_despesa_id: l.subgrupoDespesaId,
             ordem_investimento: l.ordemInvestimento,
             valor: num(l.valor),
+            tipo: tipoDaLinha(classificacao, l),
             ...(classificacao === 'transferencia_saldo' ? { lado: l.lado } : {}),
           })),
         };
@@ -857,70 +727,106 @@ const AbrirSolicitacao = () => {
         body: JSON.stringify(payload),
       });
 
+      setErroServidor('');
       toast.success(`Solicitação aberta com sucesso. Aprovador: ${resp.aprovador_snapshot.nome} (${resp.aprovador_snapshot.motivo})`);
       resetarFormulario();
       // F3: o valor da origem já está reservado — a tabela de saldo precisa mostrar o desconto
       queryClient.invalidateQueries({ queryKey: ['saldo-meses'] });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Erro ao abrir solicitação');
+      const msg = err instanceof Error ? err.message : 'Erro ao abrir solicitação';
+      setErroServidor(msg);
+      toast.error(msg);
     } finally {
       setEnviando(false);
     }
   }
 
   // ---------------------------------------------------------------- o que falta (o botão nunca fica cinza sem dizer)
-  const faltando: string[] = [];
+  // F10 (26/11): cada pendência aponta o campo (id) — o resumo leva até ele e o campo fica marcado em vermelho
+  const pendencias: { rotulo: string; alvo: string }[] = [];
+  const falta = (alvo: string, rotulo: string) => pendencias.push({ alvo, rotulo });
   const valoresDigitados: number[] = [];
   if (tipo === 'obras') {
-    if (!autorizadorId) faltando.push('Autorizador');
-    if (!obraLocalId) faltando.push('Local de obra');
-    if (obrasLinhas.some((l) => !l.subgrupoDespesaId || !l.ordemInvestimento)) faltando.push('Subgrupo e ordem de investimento de todas as linhas');
-    if (obrasLinhas.some((l) => !(num(l.valor) > 0))) faltando.push('Valor maior que zero em todas as linhas');
+    if (!autorizadorId) falta('campo-autorizador', 'Autorizador');
+    if (!obraLocalId) falta('campo-local-obra', 'Local de obra');
+    if ((classificacao === 'retirada_saldo' || classificacao === 'transferencia_saldo') && obrasLinhas.some((l) => !l.tipo))
+      falta('campo-linhas-obra', 'Tipo da ordem (FL ou Externa) em todas as linhas');
+    if (obrasLinhas.some((l) => !l.subgrupoDespesaId || !l.ordemInvestimento)) falta('campo-linhas-obra', 'Subgrupo e ordem de investimento de todas as linhas');
+    if (obrasLinhas.some((l) => !(num(l.valor) > 0))) falta('campo-linhas-obra', 'Valor maior que zero em todas as linhas');
     if (classificacao === 'transferencia_saldo') {
       const r = obrasLinhas.filter((l) => l.lado === 'retirada').reduce((a, l) => a + num(l.valor), 0);
       const inc = obrasLinhas.filter((l) => l.lado === 'inclusao').reduce((a, l) => a + num(l.valor), 0);
-      if (Math.abs(r - inc) > 0.01) faltando.push(`Retirada (${moeda.format(r)}) e inclusão (${moeda.format(inc)}) com o mesmo total`);
+      if (Math.abs(r - inc) > 0.01) falta('campo-linhas-obra', `Retirada (${moeda.format(r)}) e inclusão (${moeda.format(inc)}) com o mesmo total`);
     }
     obrasLinhas.forEach((l) => valoresDigitados.push(num(l.valor)));
   } else if (tipo === 'transferencia') {
-    if (!centroCustoId) faltando.push('Centro de custo de origem');
-    if (!tipoTransferencia) faltando.push('Tipo da transferência (FL ou Externo)');
-    if (destinoForaDoTipo) faltando.push(`Destino de uma divisão que faz ${tipoTransferencia === 'FL' ? 'FL' : 'compra externa'}`);
-    if (!contaOrigem) faltando.push('Conta de origem');
-    if (!contaDestino) faltando.push('Conta de destino');
-    if (indicesOrigem.some((i) => !linhas[i].mes)) faltando.push('Mês de todas as linhas de origem');
-    if (indicesDestino.some((i) => !linhas[i].mes)) faltando.push('Mês de todas as linhas de destino');
-    if (indicesOrigem.some((i) => !(num(linhas[i].valor) > 0))) faltando.push('Valor maior que zero em todas as origens');
-    if (!destinoUnico && indicesDestino.some((i) => !(num(linhas[i].valor) > 0))) faltando.push('Valor maior que zero em todos os destinos');
+    if (!centroCustoId) falta('campo-cc-origem', 'Centro de custo de origem');
+    if (!tipoTransferencia) falta('campo-tipo-transferencia', 'Tipo da transferência (FL ou Externo)');
+    if (destinoForaDoTipo) falta('campo-cc-destino', `Destino de uma divisão que faz ${tipoTransferencia === 'FL' ? 'FL' : 'compra externa'}`);
+    if (!contaOrigem) falta('campo-conta-origem', 'Conta de origem');
+    if (!contaDestino) falta('campo-conta-destino', 'Conta de destino');
+    if (indicesOrigem.some((i) => !linhas[i].mes)) falta('campo-meses-origem', 'Mês de todas as linhas de origem');
+    if (indicesDestino.some((i) => !linhas[i].mes)) falta('campo-meses-destino', 'Mês de todas as linhas de destino');
+    if (indicesOrigem.some((i) => !(num(linhas[i].valor) > 0))) falta('campo-meses-origem', 'Valor maior que zero em todas as origens');
+    if (!destinoUnico && indicesDestino.some((i) => !(num(linhas[i].valor) > 0))) falta('campo-meses-destino', 'Valor maior que zero em todos os destinos');
     if (!destinoUnico && Math.abs(somaDestinos - somaOrigens) > 0.01)
-      faltando.push(`Destino (${moeda.format(somaDestinos)}) igual à origem (${moeda.format(somaOrigens)})`);
-    if (mesesRepetidos(indicesOrigem) || mesesRepetidos(indicesDestino)) faltando.push('Um mês só uma vez em cada lado');
-    if (Object.keys(errosSaldo).length) faltando.push('Retirada dentro do saldo da origem (veja a tabela)');
+      falta('campo-meses-destino', `Destino (${moeda.format(somaDestinos)}) igual à origem (${moeda.format(somaOrigens)})`);
+    if (mesesRepetidos(indicesOrigem) || mesesRepetidos(indicesDestino)) falta('campo-meses-origem', 'Um mês só uma vez em cada lado');
+    if (Object.keys(errosSaldo).length) falta('campo-meses-origem', 'Retirada dentro do saldo da origem (veja a tabela)');
     indicesOrigem.forEach((i) => valoresDigitados.push(num(linhas[i].valor)));
     indicesDestino.forEach((i) => valoresDigitados.push(num(linhas[i].valor)));
   } else {
-    if (!centroCustoId) faltando.push('Centro de custo');
+    if (!centroCustoId) falta('campo-cc', 'Centro de custo');
     if (tipo === 'imobilizado') {
-      if (!tipoCompra) faltando.push('Tipo de compra (FL ou Externa)');
-      if (linhas.some((l) => !l.classeImobilizadoId)) faltando.push('Classe de imobilizado');
-      if (linhas.some((l) => !l.mes)) faltando.push('Mês de competência');
-      if (!(parseInt(quantidadeMaterial, 10) > 0) || /[.,]/.test(quantidadeMaterial)) faltando.push('Quantidade do material (número inteiro)');
-      if (!(num(valorUnitario) > 0)) faltando.push('Valor unitário maior que zero');
+      if (!tipoCompra) falta('campo-tipo-compra', 'Tipo de compra (FL ou Externa)');
+      if (linhas.some((l) => !l.classeImobilizadoId)) falta('campo-classe', 'Classe de imobilizado');
+      if (linhas.some((l) => !l.mes)) falta('campo-mes', 'Mês de competência');
+      if (!(parseInt(quantidadeMaterial, 10) > 0) || /[.,]/.test(quantidadeMaterial)) falta('campo-quantidade', 'Quantidade do material (número inteiro)');
+      if (!(num(valorUnitario) > 0)) falta('campo-valor-unitario', 'Valor unitário maior que zero');
       valoresDigitados.push(num(valorUnitario), valorImobilizado);
     } else {
-      if (linhas.some((l) => !l.contaId)) faltando.push('Conta');
-      if (linhas.some((l) => !l.mes)) faltando.push('Mês de competência');
-      if (linhas.some((l) => !(num(l.valor) > 0))) faltando.push('Valor maior que zero');
-      if (new Set(linhas.map((l) => l.mes).filter(Boolean)).size < linhas.filter((l) => l.mes).length) faltando.push('Um mês só uma vez');
+      if (linhas.some((l) => !l.contaId)) falta('campo-conta', 'Conta');
+      if (linhas.some((l) => !l.mes)) falta('campo-mes', 'Mês de competência');
+      if (linhas.some((l) => !(num(l.valor) > 0))) falta('campo-valor', 'Valor maior que zero');
+      if (new Set(linhas.map((l) => l.mes).filter(Boolean)).size < linhas.filter((l) => l.mes).length) falta('campo-mes', 'Um mês só uma vez');
       linhas.forEach((l) => valoresDigitados.push(num(l.valor)));
     }
-    if ((tipo === 'inclusao' || tipo === 'imobilizado') && !autorizadorId) faltando.push('Autorizador');
+    if ((tipo === 'inclusao' || tipo === 'imobilizado') && !autorizadorId) falta('campo-autorizador', 'Autorizador');
   }
-  if (valoresDigitados.some((v) => v > MAX_VALOR)) faltando.push(`Valor até ${moeda.format(MAX_VALOR)}`);
-  if (!descricao.trim()) faltando.push(tipo === 'obras' ? 'Detalhe' : 'Descrição detalhada');
-  if (descricao.trim().length > MAX_DESCRICAO) faltando.push(`Descrição com até ${MAX_DESCRICAO} caracteres`);
-  if (anexos.length === 0) faltando.push('Anexo');
+  if (valoresDigitados.some((v) => v > MAX_VALOR)) falta(tipo === 'obras' ? 'campo-linhas-obra' : tipo === 'transferencia' ? 'campo-meses-origem' : tipo === 'imobilizado' ? 'campo-valor-unitario' : 'campo-valor', `Valor até ${moeda.format(MAX_VALOR)}`);
+  if (!descricao.trim()) falta('campo-descricao', tipo === 'obras' ? 'Detalhe' : 'Descrição detalhada');
+  if (descricao.trim().length > MAX_DESCRICAO) falta('campo-descricao', `Descrição com até ${MAX_DESCRICAO} caracteres`);
+  if (anexos.length === 0) falta('campo-anexos', 'Anexo');
+  const faltando = pendencias.map((p) => p.rotulo);
   const podeEnviar = faltando.length === 0;
+  const alvosComErro = tentou ? [...new Set(pendencias.map((p) => p.alvo))].join(',') : '';
+
+  // F10: marca os blocos com pendência (borda vermelha e "Obrigatório", pela classe campo-erro do index.css)
+  useEffect(() => {
+    const alvos = new Set(alvosComErro ? alvosComErro.split(',') : []);
+    document.querySelectorAll('.campo-erro').forEach((el) => {
+      if (!alvos.has(el.id)) el.classList.remove('campo-erro');
+    });
+    alvos.forEach((id) => document.getElementById(id)?.classList.add('campo-erro'));
+  }, [alvosComErro]);
+
+  function irPara(alvo: string) {
+    const el = document.getElementById(alvo);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const foco = el.querySelector<HTMLElement>('input:not([type=hidden]):not([disabled]), button:not([disabled]), textarea, [role=combobox]');
+    foco?.focus({ preventScroll: true });
+  }
+
+  function tentarEnviar() {
+    if (!podeEnviar) {
+      setTentou(true);
+      setErroServidor('');
+      irPara(pendencias[0].alvo);
+      return;
+    }
+    handleSubmit();
+  }
 
   const rotuloFornecedor = tipo === 'inclusao' || tipo === 'transferencia' ? 'Nome Fornecedor da despesa' : 'Fornecedor da despesa';
   const rotuloDescricao = tipo === 'obras' ? 'Detalhe' : tipo === 'imobilizado' ? 'Descrição do imobilizado' : 'Descrição detalhada';
@@ -974,7 +880,7 @@ const AbrirSolicitacao = () => {
       )}
 
       {tipo !== 'obras' && tipo !== 'transferencia' && (
-        <div className="grid min-w-0 gap-1.5">
+        <div className="grid min-w-0 gap-1.5" id="campo-cc">
           <DivisaoCentroCusto value={centroCustoId} onChange={setCentroCustoId} centros={opcoesOrigemTodas} divisoes={divisoes} />
           {opcoes && opcoesOrigemTodas.length === 0 && (
             <p className="text-xs text-destructive">Seu usuário não tem nenhum centro de custo autorizado ainda — fale com o administrador.</p>
@@ -986,6 +892,7 @@ const AbrirSolicitacao = () => {
         <>
           <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
             <h2 className="text-sm font-semibold text-foreground">Origem</h2>
+            <div id="campo-cc-origem">
             <DivisaoCentroCusto
               value={centroCustoId}
               onChange={setCentroCustoId}
@@ -993,14 +900,16 @@ const AbrirSolicitacao = () => {
               divisoes={divisoes}
               rotuloCC="Centro de custo de origem"
             />
+            </div>
             {opcoes && opcoesOrigemTodas.length === 0 && (
               <p className="text-xs text-destructive">Seu usuário não tem nenhum centro de custo autorizado ainda — fale com o administrador.</p>
             )}
-            <div className="grid min-w-0 gap-1.5">
+            <div className="grid min-w-0 gap-1.5" id="campo-conta-origem">
               <Label>Conta de origem</Label>
               <BuscaCombobox value={contaOrigem} onChange={setContaOrigem} opcoes={contasDisponiveis} ariaLabel="Conta de origem" />
             </div>
             <p className="text-xs text-fg-helper">Uma conta só; uma linha por mês de onde o valor sai (de 1 a 12 meses).</p>
+            <div id="campo-meses-origem" className="grid gap-3">
             {indicesOrigem.map((i) => {
               const linha = linhas[i];
               const erro = linha.mes ? errosSaldo[linha.mes] : '';
@@ -1040,6 +949,7 @@ const AbrirSolicitacao = () => {
                 </div>
               );
             })}
+            </div>
             <Button
               type="button"
               variant="outline"
@@ -1065,7 +975,7 @@ const AbrirSolicitacao = () => {
 
           <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
             <h2 className="text-sm font-semibold text-foreground">Destino</h2>
-            <div className="grid gap-1.5 sm:max-w-[14rem]">
+            <div className="grid gap-1.5 sm:max-w-[14rem]" id="campo-tipo-transferencia">
               <Label>Tipo</Label>
               <Select value={tipoTransferencia} onValueChange={(v) => trocarTipoTransferencia(v as 'FL' | 'Externo')}>
                 <SelectTrigger aria-label="Tipo da transferência">
@@ -1078,6 +988,7 @@ const AbrirSolicitacao = () => {
               </Select>
               <p className="text-xs text-fg-helper">Vale só para o destino: lista as divisões que fazem {tipoTransferencia === 'FL' ? 'FL' : tipoTransferencia === 'Externo' ? 'compra externa' : 'o tipo escolhido'}.</p>
             </div>
+            <div id="campo-cc-destino">
             <DivisaoCentroCusto
               divisaoPermitida={tipoTransferencia ? divisaoFazTipo : undefined}
               value={ccDestinoId}
@@ -1087,10 +998,12 @@ const AbrirSolicitacao = () => {
               rotuloCC="Centro de custo de destino"
               limparRotulo="Mesmo centro de custo da origem"
             />
-            <div className="grid min-w-0 gap-1.5">
+            </div>
+            <div className="grid min-w-0 gap-1.5" id="campo-conta-destino">
               <Label>Conta de destino</Label>
               <BuscaCombobox value={contaDestino} onChange={setContaDestino} opcoes={contasDisponiveis} ariaLabel="Conta de destino" />
             </div>
+            <div id="campo-meses-destino" className="grid gap-3">
             {indicesDestino.map((i) => (
               <div key={i} className="grid grid-cols-1 gap-3 p-2 sm:grid-cols-[10rem_11rem_auto] sm:items-end">
                 <div className="grid gap-1.5">
@@ -1121,6 +1034,7 @@ const AbrirSolicitacao = () => {
                 </Button>
               </div>
             ))}
+            </div>
             <Button
               type="button"
               variant="outline"
@@ -1146,7 +1060,7 @@ const AbrirSolicitacao = () => {
           <div key={i} className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card p-4">
             {tipo === 'imobilizado' ? (
               <>
-                <div className="grid gap-1.5">
+                <div className="grid gap-1.5" id="campo-tipo-compra">
                   <Label>Tipo de compra</Label>
                   <Select value={tipoCompra} onValueChange={setTipoCompra}>
                     <SelectTrigger aria-label="Tipo de compra">
@@ -1158,7 +1072,7 @@ const AbrirSolicitacao = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid gap-1.5">
+                <div className="grid gap-1.5" id="campo-classe">
                   <Label>Classe de imobilizado</Label>
                   <Select value={linha.classeImobilizadoId} onValueChange={(v) => atualizarLinha(i, 'classeImobilizadoId', v)}>
                     <SelectTrigger>
@@ -1173,11 +1087,11 @@ const AbrirSolicitacao = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid gap-1.5">
+                <div className="grid gap-1.5" id={i === 0 ? 'campo-mes' : undefined}>
                   <Label>Mês de competência</Label>
                   <MesAno value={linha.mes} ano={anoParaMes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
                 </div>
-                <div className="grid gap-1.5">
+                <div className="grid gap-1.5" id="campo-quantidade">
                   <Label>Quantidade do material</Label>
                   <Input
                     inputMode="numeric"
@@ -1191,7 +1105,7 @@ const AbrirSolicitacao = () => {
                     </p>
                   )}
                 </div>
-                <div className="grid gap-1.5">
+                <div className="grid gap-1.5" id="campo-valor-unitario">
                   <Label>Valor unitário (R$)</Label>
                   <ValorInput value={valorUnitario} onChange={setValorUnitario} />
                 </div>
@@ -1216,7 +1130,7 @@ const AbrirSolicitacao = () => {
                     </Button>
                   </div>
                 ) : (
-                  <div className="col-span-2 grid min-w-0 gap-1.5">
+                  <div className="col-span-2 grid min-w-0 gap-1.5" id={i === 0 ? 'campo-conta' : undefined}>
                     <Label>Conta</Label>
                     <BuscaCombobox
                       value={linha.contaId}
@@ -1227,11 +1141,11 @@ const AbrirSolicitacao = () => {
                     />
                   </div>
                 )}
-                <div className="grid gap-1.5">
+                <div className="grid gap-1.5" id={i === 0 ? 'campo-mes' : undefined}>
                   <Label>Mês de competência</Label>
                   <MesAno value={linha.mes} ano={anoParaMes} onChange={(v) => atualizarLinha(i, 'mes', v)} />
                 </div>
-                <div className="grid gap-1.5">
+                <div className="grid gap-1.5" id={i === 0 ? 'campo-valor' : undefined}>
                   <Label>Valor (R$)</Label>
                   <ValorInput value={linha.valor} onChange={(v) => atualizarLinha(i, 'valor', v)} />
                 </div>
@@ -1268,8 +1182,9 @@ const AbrirSolicitacao = () => {
               </SelectTrigger>
               <SelectContent>
                 {classificacoesObras.map((c) => (
-                  <SelectItem key={c.value} value={c.value}>
+                  <SelectItem key={c.value} value={c.value} disabled={c.value === 'fl' && familiaObra === 'Fortaleza'}>
                     {c.label}
+                    {c.value === 'fl' && familiaObra === 'Fortaleza' ? ' (Fortaleza não tem FL)' : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1294,7 +1209,7 @@ const AbrirSolicitacao = () => {
             </div>
           )}
 
-          <div className="grid gap-1.5">
+          <div className="grid gap-1.5" id="campo-local-obra">
             <Label>Local de obra</Label>
             <Select
               value={obraLocalId}
@@ -1305,8 +1220,18 @@ const AbrirSolicitacao = () => {
                 const valeNaObra = (sid: string) => !fam || (opcoes?.subgrupos_despesa ?? []).find((sg) => sg.id === sid)?.familias?.includes(fam);
                 const invalidas = obrasLinhas.filter((l) => l.subgrupoDespesaId && !valeNaObra(l.subgrupoDespesaId)).length;
                 if (invalidas) toast.warning(`${invalidas} linha(s) com subgrupo que não existe na estrutura desta obra: o subgrupo foi limpo.`);
+                // F16: Fortaleza não tem FL — classificação FL sai e o tipo das linhas fica Externa
+                if (fam === 'Fortaleza' && classificacao === 'fl') {
+                  setClassificacao('inclusao');
+                  toast.warning('Fortaleza não tem FL: a classificação passou para Inclusão.');
+                }
                 setObrasLinhas((atual) =>
-                  atual.map((l) => ({ ...l, ordemInvestimento: '', subgrupoDespesaId: valeNaObra(l.subgrupoDespesaId) ? l.subgrupoDespesaId : '' })),
+                  atual.map((l) => ({
+                    ...l,
+                    ordemInvestimento: '',
+                    subgrupoDespesaId: valeNaObra(l.subgrupoDespesaId) ? l.subgrupoDespesaId : '',
+                    tipo: fam === 'Fortaleza' ? 'Externa' : l.tipo,
+                  })),
                 );
               }}
             >
@@ -1327,6 +1252,7 @@ const AbrirSolicitacao = () => {
             </p>
           </div>
 
+          <div id="campo-linhas-obra" className="flex flex-col gap-6">
           {obrasLinhas.map((linha, i) => (
             <div key={i} className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card p-4">
               <div className="col-span-2 flex items-center justify-between">
@@ -1351,6 +1277,21 @@ const AbrirSolicitacao = () => {
                   </Select>
                 </div>
               )}
+              {(classificacao === 'retirada_saldo' || classificacao === 'transferencia_saldo') && (
+                <div className="col-span-2 grid gap-1.5 sm:max-w-[14rem]" id={`obra-tipo-${i}`}>
+                  <Label>Tipo da ordem</Label>
+                  <Select value={linha.tipo} onValueChange={(v) => atualizarLinhaObra(i, 'tipo', v)} disabled={familiaObra === 'Fortaleza'}>
+                    <SelectTrigger aria-label="Tipo da ordem">
+                      <SelectValue placeholder="FL ou Externa" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Externa">Externa</SelectItem>
+                      <SelectItem value="FL">FL</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {familiaObra === 'Fortaleza' && <p className="text-xs text-fg-helper">Fortaleza não tem FL: sempre Externa (ZPA).</p>}
+                </div>
+              )}
               <div className="grid gap-1.5">
                 <Label>Subgrupo de despesa</Label>
                 <BuscaCombobox
@@ -1370,6 +1311,7 @@ const AbrirSolicitacao = () => {
                   subgrupoDespesaId={linha.subgrupoDespesaId}
                   classificacao={classificacao}
                   lado={linha.lado}
+                  tipo={tipoDaLinha(classificacao, linha)}
                   value={linha.ordemInvestimento}
                   onChange={(v) => atualizarLinhaObra(i, 'ordemInvestimento', v)}
                 />
@@ -1381,7 +1323,9 @@ const AbrirSolicitacao = () => {
             </div>
           ))}
 
-          <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setObrasLinhas((a) => [...a, novaLinhaObra()])}>
+          </div>
+
+          <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setObrasLinhas((a) => [...a, { ...novaLinhaObra(), tipo: familiaObra === 'Fortaleza' ? 'Externa' : '' }])}>
             + linha
           </Button>
         </>
@@ -1399,7 +1343,7 @@ const AbrirSolicitacao = () => {
         />
       )}
 
-      <div className="grid gap-1.5">
+      <div className="grid gap-1.5" id="campo-descricao">
         <Label>
           {rotuloDescricao} <span className="text-destructive" aria-hidden>*</span>
         </Label>
@@ -1415,12 +1359,14 @@ const AbrirSolicitacao = () => {
         </p>
       </div>
 
-      <CampoAnexos anexos={anexos} onChange={setAnexos} />
+      <div id="campo-anexos">
+        <CampoAnexos anexos={anexos} onChange={setAnexos} />
+      </div>
 
       <CampoVisualizadores pessoas={emCopia} onPessoas={setEmCopia} grupos={gruposCopia} onGrupos={setGruposCopia} />
 
       {precisaAutorizador && (
-        <div className="grid gap-1.5">
+        <div className="grid gap-1.5" id="campo-autorizador">
           <Label>Autorizador</Label>
           <Select value={autorizadorId} onValueChange={setAutorizadorId}>
             <SelectTrigger>
@@ -1440,12 +1386,33 @@ const AbrirSolicitacao = () => {
         </div>
       )}
 
-      <Button onClick={handleSubmit} disabled={!podeEnviar || enviando}>
+      {(tentou && !podeEnviar) || erroServidor ? (
+        <div role="alert" className="grid gap-2 rounded-md border-2 border-danger-border bg-danger-bg px-4 py-3 text-danger-text">
+          {erroServidor && <p className="text-sm font-semibold">⚠ Não foi possível abrir: {erroServidor}</p>}
+          {tentou && !podeEnviar && (
+            <>
+              <p className="text-sm font-semibold">
+                ⚠ {pendencias.length === 1 ? 'Falta 1 campo obrigatório' : `Faltam ${pendencias.length} campos obrigatórios`}:
+              </p>
+              <ul className="grid gap-1 text-sm">
+                {pendencias.map((p, k) => (
+                  <li key={k}>
+                    <button type="button" className="text-left underline underline-offset-2" onClick={() => irPara(p.alvo)}>
+                      {p.rotulo}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      ) : null}
+      <Button onClick={tentarEnviar} disabled={enviando}>
         {enviando ? 'Enviando...' : 'Abrir solicitação'}
       </Button>
-      {!podeEnviar && (
-        <p className="-mt-3 text-xs text-fg-helper" role="status">
-          Para abrir a solicitação falta: {faltando.join(' · ')}.
+      {!podeEnviar && !tentou && (
+        <p className="-mt-3 text-sm text-fg-secondary" role="status">
+          Para abrir a solicitação ainda falta: {faltando.join(' · ')}.
         </p>
       )}
     </div>

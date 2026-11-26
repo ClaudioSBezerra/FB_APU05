@@ -176,6 +176,9 @@ type obraLinhaRequest struct {
 	SubgrupoDespesaID string  `json:"subgrupo_despesa_id"`
 	OrdemInvestimento string  `json:"ordem_investimento"`
 	Valor             float64 `json:"valor"`
+	// Tipo (F16, 26/11): "FL" ou "Externa" — escolhido na retirada e na transferência de saldo (por linha, então por
+	// lado); na Inclusão é sempre Externa e na FL sempre FL. Define qual ordem do subgrupo vale.
+	Tipo string `json:"tipo"`
 }
 
 // obraLinhaValidado é uma linha de Obras já validada estruturalmente
@@ -189,6 +192,7 @@ type obraLinhaValidado struct {
 	SubgrupoDespesaID string
 	OrdemInvestimento string
 	Valor             float64
+	Tipo              string // "FL" | "Externa"
 }
 
 // AbrirSolicitacaoHandler — POST /api/solicitacoes. Registrado em main.go
@@ -311,6 +315,14 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		fornecedorCNPJ, msgErro := validarCNPJFornecedor(req.FornecedorCNPJ)
 		if msgErro != "" {
 			jsonErr(w, http.StatusBadRequest, msgErro)
+			return
+		}
+		if msg, err := conferirNaoCadastrado(db, fornecedorCNPJ, req.FornecedorNaoCadastrado); err != nil {
+			log.Printf("[Solicitacoes] Erro ao conferir o fornecedor: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		} else if msg != "" {
+			jsonErr(w, http.StatusBadRequest, msg)
 			return
 		}
 
@@ -1204,6 +1216,14 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 		jsonErr(w, http.StatusBadRequest, msgErroCNPJ)
 		return
 	}
+	if msg, err := conferirNaoCadastrado(db, fornecedorCNPJ, req.FornecedorNaoCadastrado); err != nil {
+		log.Printf("[Solicitacoes] Erro ao conferir o fornecedor (obras): %v", err)
+		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+		return
+	} else if msg != "" {
+		jsonErr(w, http.StatusBadRequest, msg)
+		return
+	}
 
 	solicitanteID := GetUserIDFromContext(r)
 
@@ -1312,9 +1332,9 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 
 	for _, l := range linhas {
 		if _, err := tx.Exec(`
-			INSERT INTO solicitacao_obras_linhas (solicitacao_id, lado, local_obra_id, subgrupo_despesa_id, ordem_investimento, valor)
-			VALUES ($1, $2, $3, $4, $5, $6)
-		`, solicitacaoID, l.Lado, l.LocalObraID, l.SubgrupoDespesaID, l.OrdemInvestimento, l.Valor); err != nil {
+			INSERT INTO solicitacao_obras_linhas (solicitacao_id, lado, local_obra_id, subgrupo_despesa_id, ordem_investimento, valor, tipo)
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))
+		`, solicitacaoID, l.Lado, l.LocalObraID, l.SubgrupoDespesaID, l.OrdemInvestimento, l.Valor, l.Tipo); err != nil {
 			log.Printf("[Solicitacoes] Erro ao inserir linha de obras (solicitacao=%s): %v", solicitacaoID, err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
@@ -1407,6 +1427,20 @@ func validarObrasLinhasEstrutura(linhas []obraLinhaRequest, classificacao string
 			SubgrupoDespesaID: l.SubgrupoDespesaID,
 			OrdemInvestimento: strings.TrimSpace(l.OrdemInvestimento),
 			Valor:             l.Valor,
+		}
+		// F16 (26/11): o tipo da ordem — definido pela classificação na Inclusão (Externa) e na FL (FL); escolhido
+		// linha a linha na retirada e na transferência de saldo.
+		switch classificacao {
+		case "inclusao":
+			validada.Tipo = "Externa"
+		case "fl":
+			validada.Tipo = "FL"
+		default:
+			t, msg := validarTipoLinhaObra(l.Tipo)
+			if msg != "" {
+				return nil, fmt.Sprintf("linha %d: %s", n, msg)
+			}
+			validada.Tipo = t
 		}
 
 		if classificacao == classificacaoTransferenciaSaldo {

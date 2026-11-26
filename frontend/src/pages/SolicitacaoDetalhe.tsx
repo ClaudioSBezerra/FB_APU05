@@ -12,11 +12,16 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useAuth } from '@/contexts/AuthContext';
 import { CompartilharChamado } from '@/components/CompartilharChamado';
 import { EditarChamado } from '@/components/EditarChamado';
+import { CampoAnexos, type Anexo } from '@/components/CampoAnexos';
+import { formatarCC } from '@/lib/centroCusto';
 
 // Página do chamado (substitui o pop-up "Ver e comentar"): quem abriu, como foi preenchido, aprovador,
 // anexos, histórico e as ações do atendimento (assumir, pendência, comentar, finalizar).
 interface Lanc { id?: string; centro_custo_id?: string; conta_id?: string; lado: string; centro_custo: string; conta: string; conta_nome: string; classe_imobilizado: string; mes: string; valor: number }
-interface LinhaObra { id?: string; lado: string; local: string; subgrupo: string; ordem: string; iea?: string; valor: number; tipos?: string }
+interface LinhaObra {
+  id?: string; lado: string; local: string; subgrupo: string; ordem: string; iea?: string; valor: number; tipos?: string;
+  local_obra_id?: string; subgrupo_despesa_id?: string; tipo?: string;
+}
 const reOrdem = /^\d{4,20}$/;
 interface Extras {
   codigo?: string;
@@ -48,7 +53,10 @@ interface Detalhe {
   quantidade_material?: number | null;
   descricao: string | null;
   anexos: { id: string; nome_arquivo: string; tamanho_bytes: number }[];
-  comentarios: { id: string; autor_id: string; autor_nome?: string; tipo: string; texto: string; created_at: string }[];
+  comentarios: {
+    id: string; autor_id: string; autor_nome?: string; tipo: string; texto: string; created_at: string;
+    anexos?: { id: string; nome_arquivo: string; tamanho_bytes: number }[];
+  }[];
   extras?: Extras;
 }
 
@@ -130,6 +138,9 @@ export default function SolicitacaoDetalhe() {
   const [nota, setNota] = useState('');
   const [editando, setEditando] = useState(false);
   const [cancelando, setCancelando] = useState(false);
+  const [anexosComent, setAnexosComent] = useState<Anexo[]>([]);
+  const [anexosNota, setAnexosNota] = useState<Anexo[]>([]);
+  const paraEnvio = (as: Anexo[]) => as.map((a) => ({ nome_arquivo: a.nome, content_type: a.contentType, conteudo_base64: a.base64 }));
   const [motivoCancel, setMotivoCancel] = useState('');
   // Obras com "CRIAR" (24/11, item 3): por linha, a nova ordem de investimento e o novo imobilizado (IEA)
   const [novasOrdens, setNovasOrdens] = useState<Record<string, { ordem: string; iea: string }>>({});
@@ -177,7 +188,7 @@ export default function SolicitacaoDetalhe() {
             <tbody>
               {linhas.map((l, i) => (
                 <tr key={i} className="border-t border-border">
-                  <td className="p-2">{l.centro_custo}</td>
+                  <td className="p-2">{(() => { const [cod, ...nome] = l.centro_custo.split(' — '); return `${formatarCC(cod)} — ${nome.join(' — ')}`; })()}</td>
                   <td className="p-2">{l.conta ? `${l.conta} — ${l.conta_nome}` : l.classe_imobilizado || '—'}</td>
                   <td className="p-2 tabular-nums">{mesAno(l.mes)}</td>
                   <td className="p-2 text-right tabular-nums">{moeda.format(l.valor)}</td>
@@ -203,7 +214,7 @@ export default function SolicitacaoDetalhe() {
       <section className="grid gap-4 rounded-lg border border-border bg-card p-4 sm:grid-cols-2">
         <Campo rotulo="Aberta por">{x?.solicitante_nome ?? '—'}{x?.solicitante_email && <span className="text-muted-foreground"> · {x.solicitante_email}</span>}</Campo>
         <Campo rotulo="Aberta em">{dataHora(x?.created_at)}</Campo>
-        <Campo rotulo="Centro de custo">{x?.centro_custo_codigo ? `${x.centro_custo_codigo} — ${x.centro_custo_nome}` : '—'}</Campo>
+        <Campo rotulo="Centro de custo">{x?.centro_custo_codigo ? `${formatarCC(x.centro_custo_codigo)} — ${x.centro_custo_nome}` : '—'}</Campo>
         <Campo rotulo="Atendente">{x?.atendente_nome ?? 'Ainda não assumida'}</Campo>
         <Campo rotulo="Aprovador">{x?.aprovador?.nome || '—'}{x?.aprovador?.motivo && <span className="text-muted-foreground"> · {x.aprovador.motivo}</span>}</Campo>
         {d.fornecedor && (
@@ -269,16 +280,27 @@ export default function SolicitacaoDetalhe() {
         {d.comentarios.map((c) => (
           <div key={c.id} className={`rounded-lg border p-2 text-sm ${c.tipo === 'nota_interna' ? 'border-warning-border bg-warning-bg' : 'border-border'}`}>
             <p className="text-xs text-muted-foreground">{c.autor_nome || 'Usuário'} · {TIPO_HISTORICO[c.tipo] ?? c.tipo} · {dataHora(c.created_at)}</p>
-            <p className="whitespace-pre-wrap">{c.texto}</p>
+            {c.texto !== '(anexo)' && <p className="whitespace-pre-wrap">{c.texto}</p>}
+            {(c.anexos ?? []).map((a) => (
+              <button key={a.id} type="button" onClick={() => baixarAnexo(a)} className="mr-3 mt-1 inline-block text-left text-xs text-link underline underline-offset-2">
+                📎 {a.nome_arquivo} ({Math.ceil(a.tamanho_bytes / 1024)} KB)
+              </button>
+            ))}
           </div>
         ))}
         {somenteLeitura && <p className="text-xs text-muted-foreground">Você está em cópia neste chamado: acompanha e pode comentar.</p>}
         {<div className="grid gap-1.5">
           <Label htmlFor="coment">Novo comentário</Label>
           <Textarea id="coment" value={comentario} onChange={(e) => setComentario(e.target.value)} />
+          {/* F12 (26/11): o comentário pode levar anexos (ou ir só com anexo) */}
+          <CampoAnexos anexos={anexosComent} onChange={setAnexosComent} rotulo="Anexos do comentário" obrigatorio={false} />
+          {d.status === 'pendente' && dono && <p className="text-xs text-fg-helper">Responder volta o chamado para o atendimento.</p>}
+          {['finalizada_sucesso', 'finalizada_erro'].includes(d.status) && !atende && (
+            <p className="text-xs text-fg-helper">Comentar reabre o chamado finalizado, com prioridade alta.</p>
+          )}
           <div>
-            <Button size="sm" disabled={!comentario.trim() || mut.isPending}
-              onClick={() => mut.mutate(() => post('comentarios', { versao: d.versao, comentario: comentario.trim() }, 'Comentário adicionado', () => setComentario('')))}>
+            <Button size="sm" disabled={(!comentario.trim() && anexosComent.length === 0) || mut.isPending}
+              onClick={() => mut.mutate(() => post('comentarios', { versao: d.versao, comentario: comentario.trim(), anexos: paraEnvio(anexosComent) }, 'Comentário adicionado', () => { setComentario(''); setAnexosComent([]); }))}>
               Comentar
             </Button>
           </div>
@@ -290,11 +312,17 @@ export default function SolicitacaoDetalhe() {
           <Label htmlFor="nota-interna">Nota interna</Label>
           <p className="text-xs text-muted-foreground">Só o atendimento e a administração veem. Fica no histórico como "Nota adicionada", com autor e data.</p>
           <Textarea id="nota-interna" maxLength={2000} value={nota} onChange={(e) => setNota(e.target.value)} />
+          {/* F12: anexo na nota só com o chamado aberto, em atendimento ou pendente */}
+          {['aberta', 'em_atendimento', 'pendente'].includes(d.status) ? (
+            <CampoAnexos anexos={anexosNota} onChange={setAnexosNota} rotulo="Anexos da nota (só o atendimento vê)" obrigatorio={false} />
+          ) : (
+            <p className="text-xs text-fg-helper">Neste status a nota interna aceita só texto (sem anexo).</p>
+          )}
           <div>
-            <Button size="sm" variant="outline" disabled={!nota.trim() || mut.isPending}
+            <Button size="sm" variant="outline" disabled={(!nota.trim() && anexosNota.length === 0) || mut.isPending}
               onClick={() => mut.mutate(() =>
-                api(`/api/chamados/${id}/notas`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texto: nota.trim() }) })
-                  .then(() => { toast.success('Nota interna adicionada'); setNota(''); refrescar(); })
+                api(`/api/chamados/${id}/notas`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texto: nota.trim(), anexos: paraEnvio(anexosNota) }) })
+                  .then(() => { toast.success('Nota interna adicionada'); setNota(''); setAnexosNota([]); refrescar(); })
                   .catch((e: Error) => toast.error(e.message)))}>
               Adicionar nota interna
             </Button>
@@ -398,7 +426,9 @@ export default function SolicitacaoDetalhe() {
           quantidade={d.quantidade_material}
           valorUnitario={x?.valor_unitario}
           lancamentos={(x?.lancamentos ?? []).map((l) => ({ id: l.id, lado: l.lado, centro_custo_id: l.centro_custo_id, conta_id: l.conta_id, mes: l.mes, valor: l.valor }))}
-          obras={(x?.obras_linhas ?? []).map((o) => ({ id: o.id, lado: o.lado, subgrupo: o.subgrupo, ordem: o.ordem, valor: o.valor }))}
+          obras={(x?.obras_linhas ?? []).map((o) => ({ id: o.id, lado: o.lado, subgrupo: o.subgrupo, ordem: o.ordem, valor: o.valor, local_obra_id: o.local_obra_id, subgrupo_despesa_id: o.subgrupo_despesa_id, tipo: o.tipo }))}
+          classificacao={x?.classificacao}
+          anoOrcamento={x?.ano_orcamento}
         />
       )}
       {(() => {

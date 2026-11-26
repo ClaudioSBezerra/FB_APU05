@@ -1052,3 +1052,135 @@ func TestPG_SegundaLeva(t *testing.T) {
 		t.Errorf("cancelada não reserva: %v", res3[11])
 	}
 }
+
+// Terceira leva (26/11): F12 comentário (pendência e reabertura), nota com anexo interno, F14 atribuir, F11 filtros
+// com lado, F8b ordem bloqueada.
+func TestPG_TerceiraLeva(t *testing.T) {
+	e := pgSetup(t)
+	b := e.seed(t)
+	suf := fmt.Sprint(os.Getpid())
+	var atend string
+	_ = e.admin.QueryRow(`INSERT INTO usuarios (email, nome, perfil) VALUES ('at3'||$1||'@teste.local', 'Atendente Três', 'atendente')
+		ON CONFLICT (LOWER(email)) DO UPDATE SET nome = EXCLUDED.nome RETURNING id`, suf).Scan(&atend)
+	chamar := func(h http.HandlerFunc, id, usuario, perfil, corpo string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/", strings.NewReader(corpo))
+		req.SetPathValue("id", id)
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": usuario, "perfil": perfil}))
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		return rec
+	}
+	prio := func(id string) (string, string, bool) {
+		var st, p string
+		var resp bool
+		_ = e.admin.QueryRow(`SELECT status, prioridade, respondido FROM solicitacoes WHERE id = $1`, id).Scan(&st, &p, &resp)
+		return st, p, resp
+	}
+	// pendência → resposta do solicitante: em atendimento, prioridade normal, respondido
+	id := e.solicitacao(t, b, "pendente")
+	if rec := chamar(ComentarSolicitacaoHandler(e.priv), id, b.usuario, "solicitante", `{"versao":1,"comentario":"segue o documento","anexos":[`+anexoJSON("doc.pdf", "application/pdf", testAnexoConteudoBase64)+`]}`); rec.Code != 200 {
+		t.Fatalf("responder pendência: %d %s", rec.Code, rec.Body.String())
+	}
+	if st, p, r := prio(id); st != "em_atendimento" || p != "normal" || !r {
+		t.Fatalf("resposta à pendência: %s %s %v", st, p, r)
+	}
+	var nAnexos int
+	_ = e.admin.QueryRow(`SELECT count(*) FROM comentario_anexos ca JOIN solicitacao_anexos a ON a.id = ca.anexo_id WHERE a.solicitacao_id = $1`, id).Scan(&nAnexos)
+	if nAnexos != 1 {
+		t.Fatalf("anexo do comentário: %d", nAnexos)
+	}
+	// finalizado → comentário do solicitante reabre com prioridade alta; o do atendimento não reabre
+	fin := e.solicitacao(t, b, "finalizada_sucesso")
+	if rec := chamar(ComentarSolicitacaoHandler(e.priv), fin, atend, "atendente", `{"versao":1,"comentario":"só registro"}`); rec.Code != 200 {
+		t.Fatalf("atendimento comenta: %d", rec.Code)
+	}
+	if st, _, _ := prio(fin); st != "finalizada_sucesso" {
+		t.Fatalf("comentário do atendimento não reabre: %s", st)
+	}
+	if rec := chamar(ComentarSolicitacaoHandler(e.priv), fin, b.usuario, "solicitante", `{"versao":2,"comentario":"voltou a dar problema"}`); rec.Code != 200 {
+		t.Fatalf("solicitante comenta finalizado: %d %s", rec.Code, rec.Body.String())
+	}
+	if st, p, _ := prio(fin); st != "em_atendimento" || p != "alta" {
+		t.Fatalf("reabertura: %s %s", st, p)
+	}
+	// nota interna com anexo: atendimento vê; solicitante não vê nem baixa
+	if rec := chamar(NotaInternaHandler(e.app), id, atend, "atendente", `{"texto":"conferido","anexos":[`+anexoJSON("interno.pdf", "application/pdf", testAnexoConteudoBase64)+`]}`); rec.Code != 201 {
+		t.Fatalf("nota com anexo: %d %s", rec.Code, rec.Body.String())
+	}
+	var anexoInt string
+	_ = e.admin.QueryRow(`SELECT id FROM solicitacao_anexos WHERE solicitacao_id = $1 AND interno`, id).Scan(&anexoInt)
+	ver := func(usuario, perfil string) string {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.SetPathValue("id", id)
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": usuario, "perfil": perfil}))
+		rec := httptest.NewRecorder()
+		ObterSolicitacaoHandler(e.app)(rec, req)
+		return rec.Body.String()
+	}
+	if strings.Contains(ver(b.usuario, "solicitante"), "interno.pdf") || !strings.Contains(ver(atend, "atendente"), "interno.pdf") {
+		t.Fatalf("anexo interno: visibilidade errada")
+	}
+	baixar := func(usuario, perfil string) int {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.SetPathValue("anexoId", anexoInt)
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": usuario, "perfil": perfil}))
+		rec := httptest.NewRecorder()
+		BaixarAnexoHandler(e.app)(rec, req)
+		return rec.Code
+	}
+	if c := baixar(b.usuario, "solicitante"); c != 404 {
+		t.Fatalf("solicitante baixando anexo interno: %d", c)
+	}
+	// nota com anexo em chamado finalizado: recusada
+	fin2 := e.solicitacao(t, b, "finalizada_erro")
+	if rec := chamar(NotaInternaHandler(e.app), fin2, atend, "atendente", `{"texto":"x","anexos":[`+anexoJSON("a.pdf", "application/pdf", testAnexoConteudoBase64)+`]}`); rec.Code != 400 {
+		t.Fatalf("anexo em nota de finalizado: %d", rec.Code)
+	}
+	// F14: atribuir 2 abertos ao atendente; um com versão velha falha só ele
+	a1, a2 := e.solicitacao(t, b, "aberta"), e.solicitacao(t, b, "aberta")
+	corpo := fmt.Sprintf(`{"atendente_id":"%s","itens":[{"id":"%s","versao":1},{"id":"%s","versao":9}]}`, atend, a1, a2)
+	rec := chamar(AtribuirHandler(e.priv), "", b.usuario, "atendente", corpo)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"ok":true`) || !strings.Contains(rec.Body.String(), "o chamado mudou") {
+		t.Fatalf("atribuir: %d %s", rec.Code, rec.Body.String())
+	}
+	if st, _ := statusDe(t, e.admin, a1); st != "em_atendimento" {
+		t.Fatalf("atribuído: %s", st)
+	}
+	// F11: filtro por conta com lado (o chamado de exemplo tem origem e destino na conta4)
+	busca := func(qs string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/solicitacoes/busca?"+qs, nil)
+		req = req.WithContext(context.WithValue(req.Context(), ClaimsContextKey, jwt.MapClaims{"user_id": atend, "perfil": "atendente"}))
+		rec := httptest.NewRecorder()
+		BuscarSolicitacoesHandler(e.app)(rec, req)
+		return rec
+	}
+	var conta4 string
+	_ = e.admin.QueryRow(`SELECT codigo FROM contas WHERE id = $1`, b.conta4).Scan(&conta4)
+	_ = conta4
+	if rec := busca("filial=zzz"); rec.Code != 400 {
+		t.Fatalf("filtro desconhecido: %d", rec.Code)
+	}
+	if rec := busca("lado=destino&cc=9999"); rec.Code != 200 || strings.Contains(rec.Body.String(), a1) {
+		t.Fatalf("cc inexistente não acha: %d", rec.Code)
+	}
+	// F8b: ordem bloqueada é recusada
+	var loc, sub string
+	_ = e.admin.QueryRow(`INSERT INTO locais_obra (codigo, nome, tipo_estrutura) VALUES ('TF3'||$1, 'Fortaleza teste', 'Fortaleza') RETURNING id`, suf).Scan(&loc)
+	_ = e.admin.QueryRow(`INSERT INTO subgrupos_despesa (codigo, nome, familias) VALUES ('TD1LOJA.1'||$1, 'TERRAPLANAGEM LOJA', '{Fortaleza}') RETURNING id`, suf).Scan(&sub)
+	_, _ = e.admin.Exec(`INSERT INTO obra_ordens (numero_ordem, local_obra_id, subgrupo_despesa_id, tipo_despesa, tipo_faturamento, bloqueada, observacao) VALUES
+		('T60125'||$3, $1, $2, 'aquisicao_externa', 'direto', true, 'Ordem bloqueada'), ('T60126'||$3, $1, $2, 'aquisicao_externa', 'sub_contratada', true, 'Ordem bloqueada')`, loc, sub, suf)
+	tx, _ := e.app.Begin()
+	m, err := verificarGraoObras(tx, "inclusao", []obraLinhaValidado{{LocalObraID: loc, SubgrupoDespesaID: sub, OrdemInvestimento: "T60125" + suf, Valor: 1, Tipo: "Externa"}})
+	m2, _ := verificarGraoObras(tx, "fl", []obraLinhaValidado{{LocalObraID: loc, SubgrupoDespesaID: sub, OrdemInvestimento: "CRIAR", Valor: 1, Tipo: "FL"}})
+	m3, _ := verificarGraoObras(tx, "inclusao", []obraLinhaValidado{{LocalObraID: loc, SubgrupoDespesaID: sub, OrdemInvestimento: "CRIAR", Valor: 1, Tipo: "Externa"}})
+	_ = tx.Rollback()
+	if err != nil || !strings.Contains(m, "bloqueada para lançamento") {
+		t.Fatalf("ordem bloqueada: %q %v", m, err)
+	}
+	if !strings.Contains(m2, "Fortaleza não tem FL") {
+		t.Fatalf("FL em Fortaleza: %q", m2)
+	}
+	if !strings.Contains(m3, "já existem as ordens") {
+		t.Fatalf("CRIAR cita as duas ordens: %q", m3)
+	}
+}

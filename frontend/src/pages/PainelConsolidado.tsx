@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
+import { formatarCC } from '@/lib/centroCusto'
 
 // PainelConsolidado — Story 5.1 (Epic 5, FR-17). Página autenticada que
 // busca o painel agregado pré-calculado em GET /api/paineis/consolidado
@@ -295,7 +296,7 @@ function PainelConsolidado() {
           <TabelaFiliais itens={painel.por_filial ?? []} />
           <div className="grid gap-4 lg:grid-cols-2">
             <BarrasRanqueadas titulo="Por tipo de solicitação" itens={painel.por_tipo} unidade="solicitações" />
-            <BarrasRanqueadas titulo="Por centro de custo" itens={painel.por_cc} unidade="solicitações" />
+            <BarrasRanqueadas titulo="Por centro de custo" itens={painel.por_cc.map((i) => ({ ...i, rotulo: `${formatarCC(i.chave)} — ${i.rotulo}` }))} unidade="solicitações" />
           </div>
         </div>
       )}

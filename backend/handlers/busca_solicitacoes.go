@@ -6,9 +6,11 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -58,6 +60,21 @@ func BuscarSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 				return
 			}
 			onde = append(onde, "s.status = "+arg(st))
+		}
+		// F11 (26/11): filtro desconhecido é 400 — nunca "parece filtrado e não está"
+		for k := range qs {
+			if !filtrosBusca[k] {
+				jsonErr(w, http.StatusBadRequest, "Filtro desconhecido: "+SanitizarNome(k, 30)+".")
+				return
+			}
+		}
+		// F11: filial/divisão, centro de custo e conta, no lado escolhido (origem, destino ou qualquer). Fora da
+		// Transferência só existe o destino, e o lado fica sem efeito.
+		if cond, msg := filtroLancamentos(qs, arg); msg != "" {
+			jsonErr(w, http.StatusBadRequest, msg)
+			return
+		} else if cond != "" {
+			onde = append(onde, cond)
 		}
 		if tp := qs.Get("tipo"); tp != "" {
 			if !tiposBusca[tp] {
@@ -158,5 +175,107 @@ func BuscarSolicitacoesHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "pagina": pagina, "tamanho": tamanho, "tem_mais": temMais})
+	}
+}
+
+// filtrosBusca: os únicos parâmetros aceitos em /api/solicitacoes/busca.
+var filtrosBusca = map[string]bool{
+	"q": true, "status": true, "tipo": true, "de": true, "ate": true, "pagina": true, "tamanho": true,
+	"divisao": true, "cc": true, "conta": true, "lado": true,
+}
+
+var (
+	reDivisaoFiltro = regexp.MustCompile(`^[0-9]{1,4}$`)
+	reCCFiltro      = regexp.MustCompile(`^[0-9]{4,10}$`)
+	reContaFiltro   = regexp.MustCompile(`^[0-9]{4,12}$`)
+)
+
+// sqlDivisaoDoCC (F13): a divisão é o código do CC sem os 4 últimos dígitos, com zeros à esquerda até 4
+// (1016000 → 0101; 816000 → 0081). CC de 4 dígitos (corporativo) não tem divisão.
+func sqlDivisaoDoCC(col string) string {
+	return "(CASE WHEN length(" + col + ") > 4 AND " + col + " ~ '^[0-9]+$' THEN lpad(left(" + col + ", length(" + col + ") - 4), 4, '0') END)"
+}
+
+// filtroLancamentos monta o EXISTS sobre as linhas do chamado.
+func filtroLancamentos(qs url.Values, arg func(any) string) (string, string) {
+	div, cc, conta, lado := strings.TrimSpace(qs.Get("divisao")), strings.TrimSpace(qs.Get("cc")), strings.TrimSpace(qs.Get("conta")), strings.TrimSpace(qs.Get("lado"))
+	if div == "" && cc == "" && conta == "" {
+		if lado != "" && lado != "qualquer" && lado != "origem" && lado != "destino" {
+			return "", "Lado inválido no filtro (use origem, destino ou qualquer)."
+		}
+		return "", ""
+	}
+	var conds []string
+	switch lado {
+	case "", "qualquer":
+	case "origem", "destino":
+		conds = append(conds, "(s.tipo_solicitacao <> 'transferencia' OR l.lado = "+arg(lado)+")")
+	default:
+		return "", "Lado inválido no filtro (use origem, destino ou qualquer)."
+	}
+	if div != "" {
+		if !reDivisaoFiltro.MatchString(div) {
+			return "", "Divisão inválida no filtro (até 4 dígitos)."
+		}
+		conds = append(conds, sqlDivisaoDoCC("ccl.codigo")+" = "+arg(CodigoDivisao4(div)))
+	}
+	if cc != "" {
+		if !reCCFiltro.MatchString(cc) {
+			return "", "Centro de custo inválido no filtro (4 dígitos, ou o código completo)."
+		}
+		conds = append(conds, "right(ccl.codigo, 4) = "+arg(cc[len(cc)-4:]))
+		if len(cc) > 4 { // código completo (6, 7 ou 8 dígitos, com ou sem zero à esquerda): fixa também a divisão
+			conds = append(conds, sqlDivisaoDoCC("ccl.codigo")+" = "+arg(CodigoDivisao4(strings.TrimLeft(cc[:len(cc)-4], "0"))))
+		}
+	}
+	if conta != "" {
+		if !reContaFiltro.MatchString(conta) {
+			return "", "Conta inválida no filtro."
+		}
+		conds = append(conds, "ct.codigo = "+arg(conta))
+	}
+	return "EXISTS (SELECT 1 FROM solicitacao_lancamentos l JOIN centros_custo ccl ON ccl.id = l.centro_custo_id LEFT JOIN contas ct ON ct.id = l.conta_id WHERE l.solicitacao_id = s.id AND " +
+		strings.Join(conds, " AND ") + ")", ""
+}
+
+// FiltrosBuscaHandler — GET /api/solicitacoes/filtros: as opções dos filtros (divisões, CCs e contas) só do que o
+// usuário pode ver — o solicitante nunca recebe a lista inteira de CCs.
+func FiltrosBuscaHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var args []any
+		vis := "true"
+		if !perfilAtende(GetPerfilFromContext(r)) {
+			args = append(args, GetUserIDFromContext(r))
+			vis = "(s.solicitante_id = $1 OR " + sqlAcompanha("$1") + ")"
+		}
+		base := ` FROM solicitacoes s JOIN solicitacao_lancamentos l ON l.solicitacao_id = s.id JOIN centros_custo ccl ON ccl.id = l.centro_custo_id
+			LEFT JOIN contas ct ON ct.id = l.conta_id WHERE ` + vis
+		lista := func(q string) ([]map[string]string, error) {
+			rows, err := db.Query(q, args...)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			out := []map[string]string{}
+			for rows.Next() {
+				var cod, nome string
+				if rows.Scan(&cod, &nome) == nil && cod != "" {
+					out = append(out, map[string]string{"codigo": cod, "nome": nome})
+				}
+			}
+			return out, rows.Err()
+		}
+		divs, err1 := lista(`SELECT DISTINCT d.codigo, COALESCE(c.nome || COALESCE(' — ' || initcap(lower(c.cidade)) || '/' || c.uf, ''), '')` + base[:strings.Index(base, " WHERE")] +
+			` JOIN divisoes d ON d.codigo = ` + sqlDivisaoDoCC("ccl.codigo") + ` LEFT JOIN centros c ON c.codigo = d.codigo WHERE ` + vis + ` ORDER BY 1`)
+		ccs, err2 := lista(`SELECT DISTINCT ccl.codigo, ccl.nome` + base + ` ORDER BY 1`)
+		contas, err3 := lista(`SELECT DISTINCT ct.codigo, ct.nome` + base + ` AND ct.codigo IS NOT NULL ORDER BY 1`)
+		if err := errors.Join(err1, err2, err3); err != nil {
+			log.Printf("[Busca] filtros: %v", err)
+			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]any{"divisoes": divs, "centros_custo": ccs, "contas": contas})
 	}
 }

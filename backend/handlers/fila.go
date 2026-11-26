@@ -51,8 +51,14 @@ func ListarFilaHandler(db *sql.DB) http.HandlerFunc {
 		pagina, tamanho := paginacaoDaQuery(r)
 		// ?status=aguardando_aprovacao lista as transferências esperando aprovação (decisão manual pelo atendente)
 		statusFila := "aberta"
-		if r.URL.Query().Get("status") == "aguardando_aprovacao" {
+		switch r.URL.Query().Get("status") {
+		case "", "aberta":
+		case "aguardando_aprovacao":
 			statusFila = "aguardando_aprovacao"
+		default:
+			// F14 (26/11): status desconhecido é 400 (antes era ignorado em silêncio); em atendimento/pendente: /api/fila/andamento
+			jsonErr(w, http.StatusBadRequest, "Status inválido para a fila (use aberta ou aguardando_aprovacao; em atendimento e pendentes ficam em /api/fila/andamento).")
+			return
 		}
 
 		// Calendário carregado uma vez por requisição e reaproveitado para

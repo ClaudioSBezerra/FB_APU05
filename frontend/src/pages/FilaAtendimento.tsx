@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Input } from '@/components/ui/input';
+import { formatarCC } from '@/lib/centroCusto';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -112,7 +113,7 @@ function CentroCustoCell({ item }: { item: ItemFila }) {
   if (item.centro_custo_codigo) {
     return (
       <span className="flex min-w-0 flex-col">
-        <span className="font-medium text-foreground">{item.centro_custo_codigo}</span>
+        <span className="font-medium tabular-nums text-foreground">{formatarCC(item.centro_custo_codigo)}</span>
         {item.centro_custo_nome && <span className="truncate text-xs text-fg-helper">{item.centro_custo_nome}</span>}
       </span>
     );
@@ -173,7 +174,12 @@ const FilaAtendimento = () => {
   const [pendenciaItem, setPendenciaItem] = useState<ItemFila | null>(null);
   const [pendenciaTexto, setPendenciaTexto] = useState('');
   // Abas e filtros (retorno de 25/11, seção 12): os cartões do topo são as abas; os filtros valem para todas.
-  const [aba, setAba] = useState<'fila' | 'comigo' | 'pendentes' | 'aprovacao'>('fila');
+  const [aba, setAba] = useState<'fila' | 'comigo' | 'andamento' | 'pendentes' | 'aprovacao'>('fila');
+  // F14 (26/11): seleção para atribuir em lote (aguardando) ou reatribuir (em andamento)
+  const [selFila, setSelFila] = useState<Set<string>>(new Set());
+  const [selAndamento, setSelAndamento] = useState<Set<string>>(new Set());
+  const [atribuirPara, setAtribuirPara] = useState('');
+  const [motivoReatrib, setMotivoReatrib] = useState('');
   const [filtroTipo, setFiltroTipo] = useState('todos');
   const [busca, setBusca] = useState('');
   const [soAtrasadas, setSoAtrasadas] = useState(false);
@@ -227,6 +233,7 @@ const FilaAtendimento = () => {
     queryClient.invalidateQueries({ queryKey: ['fila-aberta'] });
     queryClient.invalidateQueries({ queryKey: ['fila-minhas'] });
     queryClient.invalidateQueries({ queryKey: ['fila-pendentes'] });
+    queryClient.invalidateQueries({ queryKey: ['fila-andamento'] });
   }
 
   const assumirMutation = useMutation({
@@ -367,16 +374,57 @@ const FilaAtendimento = () => {
         return termos.every((t) => alvo.includes(t));
       });
   }, [busca, filtroTipo, soAtrasadas]);
+  // F14: em andamento — todos os atendentes (em atendimento e pendentes), com prioridade e "respondido"
+  const andamentoQuery = useQuery({
+    queryKey: ['fila-andamento'],
+    queryFn: () => fetchJSON<{ items: (ItemFila & { atendente_id: string; atendente_nome: string; assumido_em?: string; prioridade: string; respondido: boolean })[] }>('/api/fila/andamento').then((r) => r.items),
+  });
+  const atendentesQuery = useQuery({
+    queryKey: ['fila-atendentes'],
+    queryFn: () => fetchJSON<{ items: { id: string; nome: string }[] }>('/api/fila/atendentes').then((r) => r.items),
+  });
+  const infoAndamento = useMemo(() => new Map((andamentoQuery.data ?? []).map((i) => [i.id, i])), [andamentoQuery.data]);
+  const atribuirMutation = useMutation({
+    mutationFn: (p: { itens: ItemFila[]; atendente: string; motivo?: string }) =>
+      fetchJSON<{ resultados: { codigo: string; ok: boolean; motivo?: string }[] }>('/api/fila/atribuir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itens: p.itens.map((i) => ({ id: i.id, versao: i.versao })), atendente_id: p.atendente, motivo: p.motivo ?? '' }),
+      }),
+    onSuccess: (r) => {
+      const ok = r.resultados.filter((x) => x.ok);
+      const falhas = r.resultados.filter((x) => !x.ok);
+      if (ok.length) toast.success(`${ok.length} chamado(s) atribuído(s): ${ok.map((x) => x.codigo).join(', ')}`);
+      if (falhas.length) toast.error(`Não atribuídos: ${falhas.map((x) => `${x.codigo || '?'} (${x.motivo})`).join('; ')}`, { duration: 10000 });
+      setSelFila(new Set());
+      setSelAndamento(new Set());
+      setMotivoReatrib('');
+      invalidarFila();
+      queryClient.invalidateQueries({ queryKey: ['fila-andamento'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const alternar = (setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string) =>
+    setter((a) => {
+      const n = new Set(a);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
   const atrasadasTotal = [...(filaQuery.data ?? []), ...(minhasQuery.data ?? [])].filter((i) => i.atrasada).length;
   const cartoes: { chave: typeof aba | 'atrasadas'; rotulo: string; n?: number; alerta?: boolean }[] = [
     { chave: 'fila', rotulo: 'Aguardando atendimento', n: filaQuery.data?.length },
     { chave: 'comigo', rotulo: 'Comigo (em atendimento)', n: minhasQuery.data?.length },
+    { chave: 'andamento', rotulo: 'Em andamento (todos)', n: andamentoQuery.data?.length },
     { chave: 'pendentes', rotulo: 'Pendentes com o solicitante', n: pendentesQuery.data?.length },
     { chave: 'aprovacao', rotulo: 'Aguardando aprovação', n: aguardandoQuery.data?.length },
     { chave: 'atrasadas', rotulo: 'Atrasadas (fila + comigo)', n: atrasadasTotal, alerta: atrasadasTotal > 0 },
   ];
 
-  const minhas = filtrar(minhasQuery.data);
+  // prioridade alta e "respondido" primeiro (F12)
+  const peso = (id: string) => (infoAndamento.get(id)?.prioridade === 'alta' ? 2 : 0) + (infoAndamento.get(id)?.respondido ? 1 : 0);
+  const minhas = [...filtrar(minhasQuery.data)].sort((a, b) => peso(b.id) - peso(a.id));
   const todasSelecionadas = minhas.length > 0 && minhas.every((i) => selecionados.has(i.id));
   function alternarTodas() {
     setSelecionados(todasSelecionadas ? new Set() : new Set(minhas.map((i) => i.id)));
@@ -386,7 +434,7 @@ const FilaAtendimento = () => {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
       <h1 className="text-lg font-semibold text-foreground">Fila de atendimento</h1>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5" role="tablist" aria-label="Situação dos chamados">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-6" role="tablist" aria-label="Situação dos chamados">
         {cartoes.map((c) => {
           const ativo = c.chave === 'atrasadas' ? soAtrasadas : aba === c.chave && !soAtrasadas;
           return (
@@ -529,11 +577,36 @@ const FilaAtendimento = () => {
       </Dialog>
 
       {aba === 'fila' && (
-      <SecaoFila titulo="Aguardando atendimento" quantidade={filtrar(filaQuery.data).length}>
+      <SecaoFila
+        titulo="Aguardando atendimento"
+        quantidade={filtrar(filaQuery.data).length}
+        acoes={
+          selFila.size > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-fg-helper">{selFila.size} selecionado(s)</span>
+              <Button size="sm" disabled={atribuirMutation.isPending}
+                onClick={() => atribuirMutation.mutate({ itens: (filaQuery.data ?? []).filter((i) => selFila.has(i.id)), atendente: '' })}>
+                Assumir para mim
+              </Button>
+              <Select value={atribuirPara} onValueChange={setAtribuirPara}>
+                <SelectTrigger className="h-8 w-48"><SelectValue placeholder="Atribuir a…" /></SelectTrigger>
+                <SelectContent>
+                  {(atendentesQuery.data ?? []).map((a) => <SelectItem key={a.id} value={a.id}>{a.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button size="sm" variant="outline" disabled={!atribuirPara || atribuirMutation.isPending}
+                onClick={() => atribuirMutation.mutate({ itens: (filaQuery.data ?? []).filter((i) => selFila.has(i.id)), atendente: atribuirPara })}>
+                Atribuir
+              </Button>
+            </div>
+          ) : undefined
+        }
+      >
         <EstadoLista carregando={filaQuery.isLoading} erro={filaQuery.error} />
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-px" />
               <TableHead>Tipo</TableHead>
               <TableHead>Centro de custo</TableHead>
               <TableHead>Aberta em</TableHead>
@@ -543,7 +616,11 @@ const FilaAtendimento = () => {
           </TableHeader>
           <TableBody>
             {filtrar(filaQuery.data).map((item) => (
-              <TableRow key={item.id}>
+              <TableRow key={item.id} data-state={selFila.has(item.id) ? 'selected' : undefined}>
+                <TableCell>
+                  <input type="checkbox" aria-label={`Selecionar ${item.codigo}`} className="size-4 cursor-pointer accent-[var(--blue-d50)]"
+                    checked={selFila.has(item.id)} onChange={() => alternar(setSelFila, item.id)} />
+                </TableCell>
                 <TableCell className="font-medium"><span className="block text-xs tabular-nums text-fg-helper">{item.codigo}</span>{rotuloTipo(item.tipo_solicitacao)}</TableCell>
                 <TableCell><CentroCustoCell item={item} /></TableCell>
                 <TableCell className="tabular-nums text-fg-secondary">{dataHora(item.created_at)}</TableCell>
@@ -561,7 +638,7 @@ const FilaAtendimento = () => {
             ))}
             {filtrar(filaQuery.data).length === 0 && !filaQuery.isLoading && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={5} className="py-6 text-center text-sm text-fg-helper">
+                <TableCell colSpan={6} className="py-6 text-center text-sm text-fg-helper">
                   Nenhuma solicitação aguardando atendimento{busca || filtroTipo !== 'todos' || soAtrasadas ? ' com estes filtros' : ''}.
                 </TableCell>
               </TableRow>
@@ -569,6 +646,75 @@ const FilaAtendimento = () => {
           </TableBody>
         </Table>
       </SecaoFila>
+      )}
+
+      {aba === 'andamento' && (
+        <SecaoFila
+          titulo="Em andamento — todos os atendentes"
+          quantidade={filtrar(andamentoQuery.data).length}
+          acoes={
+            selAndamento.size > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-fg-helper">{selAndamento.size} selecionado(s)</span>
+                <Select value={atribuirPara} onValueChange={setAtribuirPara}>
+                  <SelectTrigger className="h-8 w-48"><SelectValue placeholder="Reatribuir a…" /></SelectTrigger>
+                  <SelectContent>
+                    {(atendentesQuery.data ?? []).map((a) => <SelectItem key={a.id} value={a.id}>{a.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Input className="h-8 w-56" placeholder="Motivo (obrigatório)" value={motivoReatrib} onChange={(e) => setMotivoReatrib(e.target.value)} />
+                <Button size="sm" variant="outline" disabled={!atribuirPara || !motivoReatrib.trim() || atribuirMutation.isPending}
+                  onClick={() => atribuirMutation.mutate({ itens: (andamentoQuery.data ?? []).filter((i) => selAndamento.has(i.id)), atendente: atribuirPara, motivo: motivoReatrib.trim() })}>
+                  Reatribuir
+                </Button>
+              </div>
+            ) : undefined
+          }
+        >
+          <EstadoLista carregando={andamentoQuery.isLoading} erro={andamentoQuery.error} />
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-px" />
+                <TableHead>Tipo</TableHead>
+                <TableHead>Centro de custo</TableHead>
+                <TableHead>Atendente</TableHead>
+                <TableHead>Assumido</TableHead>
+                <TableHead>Prazo</TableHead>
+                <TableHead className="w-px" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtrar(andamentoQuery.data).map((item) => (
+                <TableRow key={item.id} data-state={selAndamento.has(item.id) ? 'selected' : undefined}>
+                  <TableCell>
+                    <input type="checkbox" aria-label={`Selecionar ${item.codigo}`} className="size-4 cursor-pointer accent-[var(--blue-d50)]"
+                      checked={selAndamento.has(item.id)} onChange={() => alternar(setSelAndamento, item.id)} />
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <span className="block text-xs tabular-nums text-fg-helper">{item.codigo}</span>
+                    {rotuloTipo(item.tipo_solicitacao)}
+                    <span className="mt-1 flex flex-wrap gap-1">
+                      {item.prioridade === 'alta' && <Badge variant="destructive">Reaberto · prioridade alta</Badge>}
+                      {item.respondido && <Badge variant="warning">Respondido pelo solicitante</Badge>}
+                      {item.status === 'pendente' && <Badge variant="secondary">Pendente</Badge>}
+                    </span>
+                  </TableCell>
+                  <TableCell><CentroCustoCell item={item} /></TableCell>
+                  <TableCell>{item.atendente_nome || '—'}</TableCell>
+                  <TableCell className="tabular-nums text-fg-secondary">{item.assumido_em ? dataHora(item.assumido_em) : '—'}</TableCell>
+                  <TableCell><PrazoCell atrasada={item.atrasada} prazo={item.prazo_limite} /></TableCell>
+                  <TableCell><Button size="sm" variant="outline" onClick={() => navigate(`/fila/${item.id}`)}>Ver</Button></TableCell>
+                </TableRow>
+              ))}
+              {filtrar(andamentoQuery.data).length === 0 && !andamentoQuery.isLoading && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="py-6 text-center text-sm text-fg-helper">Nenhum chamado em andamento.</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </SecaoFila>
       )}
 
       {aba === 'comigo' && (
@@ -630,7 +776,13 @@ const FilaAtendimento = () => {
                     onChange={() => toggleSelecionado(item.id)}
                   />
                 </TableCell>
-                <TableCell className="font-medium"><span className="block text-xs tabular-nums text-fg-helper">{item.codigo}</span>{rotuloTipo(item.tipo_solicitacao)}</TableCell>
+                <TableCell className="font-medium">
+                  <span className="block text-xs tabular-nums text-fg-helper">{item.codigo}</span>
+                  {rotuloTipo(item.tipo_solicitacao)}
+                  {/* F12: reaberto (prioridade alta) e respondido pelo solicitante aparecem destacados */}
+                  {infoAndamento.get(item.id)?.prioridade === 'alta' && <Badge variant="destructive" className="ml-1">Reaberto</Badge>}
+                  {infoAndamento.get(item.id)?.respondido && <Badge variant="warning" className="ml-1">Respondido</Badge>}
+                </TableCell>
                 <TableCell><CentroCustoCell item={item} /></TableCell>
                 <TableCell className="tabular-nums text-fg-secondary">{dataHora(item.created_at)}</TableCell>
                 <TableCell><PrazoCell atrasada={item.atrasada} prazo={item.prazo_limite} /></TableCell>

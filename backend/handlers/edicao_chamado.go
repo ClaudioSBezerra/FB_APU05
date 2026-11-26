@@ -49,6 +49,15 @@ type edicaoRequest struct {
 	ValorUnitario           *float64           `json:"valor_unitario"`
 	Lancamentos             []edicaoLancamento `json:"lancamentos"`
 	ObrasLinhas             []edicaoObraLinha  `json:"obras_linhas"`
+	// F15 (26/11): edição completa de Obras — local, classificação, ano e a lista inteira de linhas (incluir e remover)
+	ObrasCompleta *edicaoObras `json:"obras"`
+}
+
+type edicaoObras struct {
+	Classificacao string             `json:"classificacao"`
+	AnoOrcamento  int                `json:"ano_orcamento"`
+	LocalObraID   string             `json:"local_obra_id"`
+	Linhas        []obraLinhaRequest `json:"linhas"`
 }
 
 type linhaEdicao struct {
@@ -156,6 +165,15 @@ func EditarChamadoHandler(dbApp, dbPriv *sql.DB) http.HandlerFunc {
 		if req.FornecedorNaoCadastrado != nil && *req.FornecedorNaoCadastrado != naoCadastrado {
 			novoNaoCad = *req.FornecedorNaoCadastrado
 			mudou("Fornecedor não cadastrado", map[bool]string{true: "sim", false: "não"}[naoCadastrado], map[bool]string{true: "sim", false: "não"}[novoNaoCad])
+		}
+		if novoNaoCad || req.FornecedorCNPJ != nil {
+			if msg, err := conferirNaoCadastrado(tx, novoCNPJ, novoNaoCad); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			} else if msg != "" {
+				jsonErr(w, http.StatusBadRequest, msg)
+				return
+			}
 		}
 		novaQtd, novoUnit := qtd, unit
 		if tipo == "imobilizado" {
@@ -351,20 +369,20 @@ func EditarChamadoHandler(dbApp, dbPriv *sql.DB) http.HandlerFunc {
 
 		// ---------------- linhas de Obras
 		type obraEd struct {
-			id, lado, local, subgrupo, ordem string
-			valor                            float64
-			alterada                         bool
+			id, lado, local, subgrupo, ordem, tipo string
+			valor                                  float64
+			alterada                               bool
 		}
 		var obras []*obraEd
 		if tipo == "obras" && len(req.ObrasLinhas) > 0 {
-			rows, err := tx.Query(`SELECT id, COALESCE(lado, ''), local_obra_id, subgrupo_despesa_id, ordem_investimento, valor::float8 FROM solicitacao_obras_linhas WHERE solicitacao_id = $1`, id)
+			rows, err := tx.Query(`SELECT id, COALESCE(lado, ''), local_obra_id, subgrupo_despesa_id, ordem_investimento, valor::float8, COALESCE(tipo, '') FROM solicitacao_obras_linhas WHERE solicitacao_id = $1`, id)
 			if err != nil {
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 				return
 			}
 			for rows.Next() {
 				o := &obraEd{}
-				if rows.Scan(&o.id, &o.lado, &o.local, &o.subgrupo, &o.ordem, &o.valor) == nil {
+				if rows.Scan(&o.id, &o.lado, &o.local, &o.subgrupo, &o.ordem, &o.valor, &o.tipo) == nil {
 					obras = append(obras, o)
 				}
 			}
@@ -405,7 +423,7 @@ func EditarChamadoHandler(dbApp, dbPriv *sql.DB) http.HandlerFunc {
 			ov := make([]obraLinhaValidado, len(obras))
 			for i, o := range obras {
 				ov[i] = obraLinhaValidado{OrdemInvestimento: o.ordem, Valor: o.valor, Lado: sql.NullString{String: o.lado, Valid: o.lado != ""},
-					LocalObraID: o.local, SubgrupoDespesaID: o.subgrupo}
+					LocalObraID: o.local, SubgrupoDespesaID: o.subgrupo, Tipo: o.tipo}
 			}
 			if msg, err := conferirGraoObras(tx, classificacao, ov); err != nil {
 				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
@@ -424,6 +442,85 @@ func EditarChamadoHandler(dbApp, dbPriv *sql.DB) http.HandlerFunc {
 					return
 				}
 			}
+		}
+
+		// ---------------- F15: Obras completa (substitui as linhas)
+		var obrasNovas []obraLinhaValidado
+		var classifNova string
+		var anoNovo sql.NullInt64
+		if tipo == "obras" && req.ObrasCompleta != nil {
+			oc := req.ObrasCompleta
+			classifNova = strings.TrimSpace(oc.Classificacao)
+			if classifNova == "" {
+				classifNova = classificacao
+			}
+			if msg := validarClassificacaoObras(classifNova); msg != "" {
+				jsonErr(w, http.StatusBadRequest, "Classificação de Obras inválida.")
+				return
+			}
+			if !uuidFormatRegexp.MatchString(oc.LocalObraID) {
+				jsonErr(w, http.StatusBadRequest, "Escolha o local de obra.")
+				return
+			}
+			for i := range oc.Linhas {
+				oc.Linhas[i].LocalObraID = oc.LocalObraID
+			}
+			novas, msg := validarObrasLinhasEstrutura(oc.Linhas, classifNova)
+			if msg != "" {
+				jsonErr(w, http.StatusBadRequest, msg)
+				return
+			}
+			if classifNova == classificacaoTransferenciaSaldo {
+				if msg := validarBlocosObras(novas); msg != "" {
+					jsonErr(w, http.StatusBadRequest, msg)
+					return
+				}
+			}
+			if msg := validarCriarObras(classifNova, novas); msg != "" {
+				jsonErr(w, http.StatusBadRequest, msg)
+				return
+			}
+			for _, l := range novas {
+				if msg := validarValorMaximo(l.Valor); msg != "" {
+					jsonErr(w, http.StatusBadRequest, msg)
+					return
+				}
+			}
+			if msg, err := validarLocalSubgrupoOrdemObras(tx, novas); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			} else if msg != "" {
+				jsonErr(w, http.StatusBadRequest, msg)
+				return
+			}
+			if msg, err := conferirGraoObras(tx, classifNova, novas); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			} else if msg != "" {
+				jsonErr(w, http.StatusBadRequest, msg)
+				return
+			}
+			var anoAtual sql.NullInt64
+			_ = tx.QueryRow(`SELECT ano_orcamento FROM solicitacoes WHERE id = $1`, id).Scan(&anoAtual)
+			if classificacaoUsaAno(classifNova) {
+				a, msg := resolverAnoObras(oc.AnoOrcamento, agoraRecife().Year())
+				if msg != "" {
+					jsonErr(w, http.StatusBadRequest, msg)
+					return
+				}
+				anoNovo = sql.NullInt64{Int64: int64(a), Valid: true}
+			}
+			if classifNova != classificacao {
+				mudou("Classificação", classificacao, classifNova)
+			}
+			if anoNovo != anoAtual {
+				mudou("Ano do orçamento", fmt.Sprint(anoAtual.Int64), fmt.Sprint(anoNovo.Int64))
+			}
+			antes, depois := descreverLinhasObras(tx, id, nil), descreverLinhasObras(tx, "", novas)
+			if antes != depois {
+				mudancas = append(mudancas, "Linhas de Obras: "+textoOuTraco(antes)+" → "+textoOuTraco(depois))
+			}
+			obrasNovas = novas
 		}
 
 		if len(mudancas) == 0 {
@@ -464,6 +561,26 @@ func EditarChamadoHandler(dbApp, dbPriv *sql.DB) http.HandlerFunc {
 				return
 			}
 		}
+		if obrasNovas != nil {
+			if _, err := tx.Exec(`UPDATE solicitacoes SET classificacao = $2, ano_orcamento = $3 WHERE id = $1`, id, classifNova, anoNovo); err != nil {
+				log.Printf("[Edicao] gravar classificação de obras %s: %v", id, err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+			if _, err := tx.Exec(`DELETE FROM solicitacao_obras_linhas WHERE solicitacao_id = $1`, id); err != nil {
+				log.Printf("[Edicao] apagar linhas de obras %s: %v", id, err)
+				jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+				return
+			}
+			for _, l := range obrasNovas {
+				if _, err := tx.Exec(`INSERT INTO solicitacao_obras_linhas (solicitacao_id, lado, local_obra_id, subgrupo_despesa_id, ordem_investimento, valor, tipo)
+					VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))`, id, l.Lado, l.LocalObraID, l.SubgrupoDespesaID, l.OrdemInvestimento, l.Valor, l.Tipo); err != nil {
+					log.Printf("[Edicao] gravar linha de obras %s: %v", id, err)
+					jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
+					return
+				}
+			}
+		}
 		texto := "Editou o chamado:\n- " + strings.Join(mudancas, "\n- ")
 		if _, err := tx.Exec(`INSERT INTO solicitacao_comentarios (solicitacao_id, autor_id, tipo, texto) VALUES ($1, $2, 'edicao', $3)`, id, autor, texto); err != nil {
 			log.Printf("[Edicao] histórico %s: %v", id, err)
@@ -492,4 +609,51 @@ func mesAnoSeguro(t time.Time) string {
 		return ""
 	}
 	return mesAno(t)
+}
+
+// descreverLinhasObras: "Local · Subgrupo · ordem · tipo · lado · R$ valor; ..." (do banco, ou das linhas novas).
+func descreverLinhasObras(tx *sql.Tx, solicitacaoID string, novas []obraLinhaValidado) string {
+	type l struct {
+		local, sub, ordem, tipo, lado string
+		valor                         float64
+	}
+	var ls []l
+	if novas == nil {
+		rows, err := tx.Query(`SELECT lo.nome, sg.nome, ol.ordem_investimento, COALESCE(ol.tipo, ''), COALESCE(ol.lado, ''), ol.valor::float8
+			FROM solicitacao_obras_linhas ol JOIN locais_obra lo ON lo.id = ol.local_obra_id JOIN subgrupos_despesa sg ON sg.id = ol.subgrupo_despesa_id
+			WHERE ol.solicitacao_id = $1 ORDER BY ol.created_at`, solicitacaoID)
+		if err != nil {
+			return ""
+		}
+		for rows.Next() {
+			var x l
+			if rows.Scan(&x.local, &x.sub, &x.ordem, &x.tipo, &x.lado, &x.valor) == nil {
+				ls = append(ls, x)
+			}
+		}
+		rows.Close()
+	} else {
+		for _, n := range novas {
+			var x l
+			_ = tx.QueryRow(`SELECT nome FROM locais_obra WHERE id = $1`, n.LocalObraID).Scan(&x.local)
+			_ = tx.QueryRow(`SELECT nome FROM subgrupos_despesa WHERE id = $1`, n.SubgrupoDespesaID).Scan(&x.sub)
+			x.ordem, x.tipo, x.valor = n.OrdemInvestimento, n.Tipo, n.Valor
+			if n.Lado.Valid {
+				x.lado = n.Lado.String
+			}
+			ls = append(ls, x)
+		}
+	}
+	partes := make([]string, 0, len(ls))
+	for _, x := range ls {
+		p := x.local + " · " + x.sub + " · " + x.ordem
+		if x.tipo != "" {
+			p += " · " + x.tipo
+		}
+		if x.lado != "" {
+			p += " · " + x.lado
+		}
+		partes = append(partes, p+" · "+moedaBR(x.valor))
+	}
+	return strings.Join(partes, "; ")
 }

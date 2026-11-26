@@ -258,7 +258,7 @@ func TestObraOrdensHandler_ResolvePeloGrao(t *testing.T) {
 		mock.ExpectQuery(regexp.QuoteMeta("FROM subgrupos_despesa WHERE id = $1")).WithArgs(subgrupoID).
 			WillReturnRows(sqlmock.NewRows([]string{"nome", "familias"}).AddRow("Fundações", "{Anexo Central,Antiga}"))
 		mock.ExpectQuery(regexp.QuoteMeta("FROM obra_ordens WHERE local_obra_id = $1")).WithArgs(localID, subgrupoID, c.despesa).
-			WillReturnRows(sqlmock.NewRows([]string{"o", "d", "f", "i", "n"}).AddRow(c.ordem, c.despesa, "aquisicao_externa", "900000001", "91F1"))
+			WillReturnRows(sqlmock.NewRows([]string{"o", "d", "f", "i", "n", "b", "obs"}).AddRow(c.ordem, c.despesa, "aquisicao_externa", "900000001", "91F1", false, ""))
 		rec := httptest.NewRecorder()
 		ObraOrdensHandler(db)(rec, newFormularioRequest(http.MethodGet, "/api/formulario/obra-ordens?local_obra_id="+localID+"&subgrupo_despesa_id="+subgrupoID+"&classificacao="+c.classificacao))
 		var resp struct {

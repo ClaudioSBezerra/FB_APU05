@@ -53,3 +53,18 @@
     line-height: var(--lh-base);
   }
 }
+
+/* F10 (26/11): campo obrigatório pendente — borda vermelha e a palavra "Obrigatório" (não depende só da cor) */
+.campo-erro {
+  border-radius: 0.375rem;
+  outline: 2px solid var(--err-br, #dc2626);
+  outline-offset: 4px;
+}
+.campo-erro::after {
+  content: "⚠ Obrigatório";
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--err-tx, #b91c1c);
+}

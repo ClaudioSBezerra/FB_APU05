@@ -125,12 +125,12 @@ func corpoObras(autorizadorID, classificacao, linhasJSON string) string {
 func linhaObraJSON(lado, localObraID, subgrupoDespesaID, ordemInvestimento string, valor float64) string {
 	if lado == "" {
 		return fmt.Sprintf(
-			`{"local_obra_id":"%s","subgrupo_despesa_id":"%s","ordem_investimento":"%s","valor":%g}`,
+			`{"local_obra_id":"%s","subgrupo_despesa_id":"%s","ordem_investimento":"%s","valor":%g,"tipo":"Externa"}`,
 			localObraID, subgrupoDespesaID, ordemInvestimento, valor,
 		)
 	}
 	return fmt.Sprintf(
-		`{"lado":"%s","local_obra_id":"%s","subgrupo_despesa_id":"%s","ordem_investimento":"%s","valor":%g}`,
+		`{"lado":"%s","local_obra_id":"%s","subgrupo_despesa_id":"%s","ordem_investimento":"%s","valor":%g,"tipo":"Externa"}`,
 		lado, localObraID, subgrupoDespesaID, ordemInvestimento, valor,
 	)
 }
@@ -1828,7 +1828,7 @@ func TestAbrirSolicitacaoHandler_Obras_OrdemCasaLocalSubgrupoCaseInsensitive(t *
 		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao", sqlmock.AnyArg(), sqlmock.AnyArg(), nil, false, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
-		WithArgs(solicitacaoID, nil, testObraLocalObraID, testObraSubgrupoDespesaID, "OI-001", 1000.0).
+		WithArgs(solicitacaoID, nil, testObraLocalObraID, testObraSubgrupoDespesaID, "OI-001", 1000.0, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	esperarAnexoPadrao(mock)
 	mock.ExpectCommit()
@@ -1923,7 +1923,7 @@ func TestAbrirSolicitacaoHandler_Obras_Success(t *testing.T) {
 		WithArgs(testAtorID, sqlmock.AnyArg(), "inclusao", sqlmock.AnyArg(), sqlmock.AnyArg(), nil, false, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
-		WithArgs(solicitacaoID, nil, testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).
+		WithArgs(solicitacaoID, nil, testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	esperarAnexoPadrao(mock)
 	mock.ExpectCommit()
@@ -1998,10 +1998,10 @@ func TestAbrirSolicitacaoHandler_Obras_TransferenciaSaldoBalanceada_Success(t *t
 		WithArgs(testAtorID, sqlmock.AnyArg(), classificacaoTransferenciaSaldo, sqlmock.AnyArg(), sqlmock.AnyArg(), nil, false, int64(2026)).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(solicitacaoID))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
-		WithArgs(solicitacaoID, "retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "123456", 1000.0).
+		WithArgs(solicitacaoID, "retirada", testObraLocalObraID, testObraSubgrupoDespesaID, "123456", 1000.0, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO solicitacao_obras_linhas")).
-		WithArgs(solicitacaoID, "inclusao", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0).
+		WithArgs(solicitacaoID, "inclusao", testObraLocalObraID, testObraSubgrupoDespesaID, "CRIAR", 1000.0, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	esperarAnexoPadrao(mock)
 	mock.ExpectCommit()

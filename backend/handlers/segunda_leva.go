@@ -248,3 +248,24 @@ func CancelarChamadoHandler(db *sql.DB) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "status": "cancelada", "versao": versao + 1})
 	}
 }
+
+// ---------------------------------------------------------------- F9 (terceira leva): fornecedor
+
+// conferirNaoCadastrado é trocável nos testes do handler.
+var conferirNaoCadastrado = verificarNaoCadastrado
+
+// verificarNaoCadastrado: "Fornecedor não cadastrado" junto com um CNPJ que ESTÁ no cadastro de fornecedores é
+// recusado (a tela trava a caixa depois de escolher um cadastrado; o servidor confere de novo).
+func verificarNaoCadastrado(q consultaRowCtx, cnpj sql.NullString, naoCadastrado bool) (string, error) {
+	if !naoCadastrado || !cnpj.Valid {
+		return "", nil
+	}
+	var existe bool
+	if err := q.QueryRow(`SELECT EXISTS(SELECT 1 FROM fornecedores WHERE regexp_replace(cgc, '[^0-9]', '', 'g') = $1)`, cnpj.String).Scan(&existe); err != nil {
+		return "", err
+	}
+	if existe {
+		return "Este CNPJ está no cadastro de fornecedores: escolha o fornecedor cadastrado ou use \"Trocar fornecedor\" antes de marcar \"Fornecedor não cadastrado\".", nil
+	}
+	return "", nil
+}

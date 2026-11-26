@@ -471,6 +471,10 @@ func main() {
 	// Minhas solicitações em atendimento (suporte de front-end às Stories
 	// 4.2-4.5) — só leitura, mesma conexão geral; nunca estende
 	// ListarFilaHandler (escopo fechado da Story 4.1, só status='aberta').
+	// F14 (26/11): em andamento (todos os atendentes), atendentes e atribuição em lote
+	http.HandleFunc("GET /api/fila/andamento", handlers.RequireAuth(withDB(handlers.FilaAndamentoHandler), "administrador,atendente"))
+	http.HandleFunc("GET /api/fila/atendentes", handlers.RequireAuth(withDB(handlers.AtendentesHandler), "administrador,atendente"))
+	http.HandleFunc("POST /api/fila/atribuir", handlers.RequireAuth(withPrivilegedDB(handlers.AtribuirHandler), "administrador,atendente"))
 	http.HandleFunc("GET /api/fila/minhas", handlers.RequireAuth(withDB(handlers.MinhasSolicitacoesHandler), "administrador,atendente"))
 	http.HandleFunc("POST /api/solicitacoes/{id}/assumir", handlers.RequireAuth(withPrivilegedDB(handlers.AssumirSolicitacaoHandler), "administrador,atendente"))
 
@@ -503,6 +507,7 @@ func main() {
 
 	// tela "Solicitações": todos os chamados para quem atende; só os próprios para o solicitante (precisa vir antes de {id})
 	http.HandleFunc("GET /api/solicitacoes/busca", handlers.RequireAuth(withDB(handlers.BuscarSolicitacoesHandler), ""))
+	http.HandleFunc("GET /api/solicitacoes/filtros", handlers.RequireAuth(withDB(handlers.FiltrosBuscaHandler), ""))
 	http.HandleFunc("GET /api/usuarios/busca", handlers.RequireAuth(withDB(handlers.BuscarUsuariosHandler), ""))
 	http.HandleFunc("GET /api/compartilhamentos/{id}", handlers.RequireAuth(withDB(handlers.CompartilhamentosHandler), ""))
 	http.HandleFunc("POST /api/compartilhamentos/{id}", handlers.RequireAuth(withDB(handlers.CompartilharHandler), ""))

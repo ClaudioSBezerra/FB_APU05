@@ -20,6 +20,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"fb_apu05/internal/sapodata"
 )
@@ -195,6 +196,9 @@ func OpcoesFormularioHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
+
+		// F13 (26/11): os CCs de teste (CC-TESTE-01/02) não aparecem para o usuário
+		centrosCusto, centrosCustoDestino, centrosCustoOrigem = semCCTeste(centrosCusto), semCCTeste(centrosCustoDestino), semCCTeste(centrosCustoOrigem)
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -378,3 +382,13 @@ func FornecedoresHandler(db *sql.DB) http.HandlerFunc {
 // provisões/reversões 4229000011–022. Conta nova dentro de uma faixa que fica entra sozinha.
 const filtroContasDespesa = `(codigo LIKE '411%' OR codigo LIKE '421%' OR codigo LIKE '422%')
  AND NOT (codigo BETWEEN '4229000004' AND '4229000008') AND NOT (codigo BETWEEN '4229000011' AND '4229000022')`
+
+func semCCTeste(ccs []centroCustoOpcao) []centroCustoOpcao {
+	out := ccs[:0:0]
+	for _, c := range ccs {
+		if !strings.HasPrefix(strings.ToUpper(c.Codigo), "CC-TESTE") {
+			out = append(out, c)
+		}
+	}
+	return out
+}

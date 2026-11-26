@@ -67,7 +67,7 @@ func (e ExportadorVBA) Finalizar(db *sql.DB, solicitacaoID string, versaoLida in
 	var s Solicitacao
 	err = tx.QueryRow(`
 		UPDATE solicitacoes
-		SET status = $1, versao = versao + 1
+		SET status = $1, versao = versao + 1, prioridade = 'normal', respondido = false
 		WHERE id = $2 AND versao = $3 AND administrador_id = $4 AND status = 'em_atendimento'
 		RETURNING id, tipo_solicitacao, status, versao, administrador_id
 	`, novoStatus, solicitacaoID, versaoLida, administradorID).Scan(&s.ID, &s.TipoSolicitacao, &s.Status, &s.Versao, &s.AdministradorID)

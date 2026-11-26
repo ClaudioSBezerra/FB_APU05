@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Label } from '@/components/ui/label';
 import { BuscaCombobox, type OpcaoBusca } from '@/components/BuscaCombobox';
+import { buscaCC, partesCC } from '@/lib/centroCusto';
 
 export interface CentroCustoOpcao extends OpcaoBusca {
   divisao_id: string;
@@ -9,7 +10,8 @@ export interface CentroCustoOpcao extends OpcaoBusca {
 // B3 (26/11): divisão e centro de custo em campos separados. O código do CC no SAP tem 8 dígitos: os 4 da esquerda
 // são a divisão (filial) e os 4 da direita, o centro de custo. Os seletores não mostram os 8 dígitos juntos; a lista
 // de CC respeita a divisão escolhida. O valor continua sendo o id do CC (o que o servidor espera).
-const parteCC = (codigo: string) => (/^\d{8}$/.test(codigo) ? codigo.slice(4) : codigo);
+// F13: o CC são sempre os 4 últimos dígitos (o código tem 6, 7 ou 8 dígitos; a divisão perde os zeros à esquerda)
+const parteCC = (codigo: string) => partesCC(codigo).cc;
 
 export function DivisaoCentroCusto({
   value,
@@ -49,7 +51,11 @@ export function DivisaoCentroCusto({
     () =>
       centros
         .filter((c) => (!divisaoId || c.divisao_id === divisaoId) && (!divisaoPermitida || divisaoPermitida(c.divisao_id)))
-        .map((c) => ({ id: c.id, codigo: parteCC(c.codigo), nome: c.nome })),
+        .map((c) => {
+          const { divisao } = partesCC(c.codigo);
+          // sem divisão escolhida, o CC mostra a divisão junto (6000 existe em várias): "0101 · 6000"
+          return { id: c.id, codigo: divisaoId || !divisao ? parteCC(c.codigo) : `${divisao} · ${parteCC(c.codigo)}`, nome: c.nome, busca: buscaCC(c.codigo) };
+        }),
     [centros, divisaoId, divisaoPermitida],
   );
 
