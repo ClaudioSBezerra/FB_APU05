@@ -26,6 +26,9 @@ interface ServicoSAP {
   ativo: boolean;
   url_base: string;
   apikey_definida: boolean;
+  apikey_header?: string;
+  sap_client?: string;
+  apikey_origem?: 'servico' | 'geral' | 'ambiente' | '';
   ultima_execucao: string;
   ultimo_resultado?: ResultadoSAP;
 }
@@ -98,6 +101,13 @@ function Formulario({ data }: { data: Config }) {
   const [apikey, setApikey] = useState('');
   const [sapClient, setSapClient] = useState(() => data.sap.sap_client);
   const [apikeysSv, setApikeysSv] = useState<Record<string, string>>({});
+  // 26/11: cada API tem o seu header, a sua chave e o seu mandante (QAS e PRD são diferentes)
+  const [headersSv, setHeadersSv] = useState<Record<string, string>>(() =>
+    Object.fromEntries(data.sap.servicos.map((s) => [s.chave, s.apikey_header ?? 'apikey'])),
+  );
+  const [clientesSv, setClientesSv] = useState<Record<string, string>>(() =>
+    Object.fromEntries(data.sap.servicos.map((s) => [s.chave, s.sap_client ?? ''])),
+  );
   const [urls, setUrls] = useState<Record<string, string>>(() =>
     Object.fromEntries(data.sap.servicos.map((s) => [s.chave, s.url_base])),
   );
@@ -139,10 +149,16 @@ function Formulario({ data }: { data: Config }) {
   });
 
   function salvarSAP() {
-    const servicos: Record<string, { ativo: boolean; url_base: string; apikey?: string }> = {};
+    const servicos: Record<string, { ativo: boolean; url_base: string; apikey?: string; apikey_header: string; sap_client: string }> = {};
     for (const s of data?.sap.servicos ?? []) {
       const k = (apikeysSv[s.chave] ?? '').trim();
-      servicos[s.chave] = { ativo: !!ativos[s.chave], url_base: (urls[s.chave] ?? '').trim(), ...(k ? { apikey: k } : {}) };
+      servicos[s.chave] = {
+        ativo: !!ativos[s.chave],
+        url_base: (urls[s.chave] ?? '').trim(),
+        apikey_header: (headersSv[s.chave] ?? '').trim(),
+        sap_client: (clientesSv[s.chave] ?? '').trim(),
+        ...(k ? { apikey: k } : {}),
+      };
     }
     salvar.mutate({
       sap: {
@@ -219,7 +235,7 @@ function Formulario({ data }: { data: Config }) {
 
         <div className="grid gap-3 rounded-md border bg-muted/30 p-4">
           <div>
-            <h3 className="text-sm font-semibold">Gateway SAP (Kong) — apikey</h3>
+            <h3 className="text-sm font-semibold">Gateway SAP (Kong) — apikey padrão</h3>
             <p className="text-xs text-muted-foreground">
               Se a apikey estiver preenchida, o sistema lê o SAP pelo gateway interno (URL <code>http://10.131.1.80:8000/sap/…</code>) e
               ignora o usuário e a senha acima. Sem apikey, usa o usuário e a senha direto no SAP.
@@ -306,25 +322,72 @@ function Formulario({ data }: { data: Config }) {
                   produção quando for liberada.
                 </p>
               </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor={`sap-apikey-${s.chave}`}>Apikey deste serviço (opcional)</Label>
-                <Input
-                  id={`sap-apikey-${s.chave}`}
-                  type="password"
-                  autoComplete="new-password"
-                  value={apikeysSv[s.chave] ?? ''}
-                  onChange={(e) => setApikeysSv((a) => ({ ...a, [s.chave]: e.target.value }))}
-                  placeholder={s.apikey_definida ? '•••••••• (definida para este serviço)' : 'vazio = usa a apikey geral acima'}
-                />
-                {s.apikey_definida && (
-                  <button
-                    type="button"
-                    className="w-fit text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                    onClick={() => salvar.mutate({ sap: { servicos: { [s.chave]: { limpar_apikey: true } } } })}
-                  >
-                    Remover a apikey deste serviço (volta a usar a geral)
-                  </button>
-                )}
+              <div className="grid gap-3 rounded-md border border-dashed p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-medium">Chave desta API no gateway</p>
+                  <span className="text-xs text-muted-foreground">
+                    Em uso:{' '}
+                    {s.apikey_origem === 'servico'
+                      ? 'a chave própria desta API'
+                      : s.apikey_origem === 'geral'
+                        ? 'a apikey padrão acima'
+                        : s.apikey_origem === 'ambiente'
+                          ? 'a chave do servidor (variável de ambiente)'
+                          : s.chave === 'bg'
+                            ? 'usuário e senha do SAP (direto)'
+                            : 'nenhuma chave'}
+                  </span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-[10rem_1fr_7rem]">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor={`sap-header-${s.chave}`} className="text-xs">Nome do header</Label>
+                    <Input
+                      id={`sap-header-${s.chave}`}
+                      value={headersSv[s.chave] ?? ''}
+                      onChange={(e) => setHeadersSv((a) => ({ ...a, [s.chave]: e.target.value }))}
+                      placeholder="apikey"
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor={`sap-apikey-${s.chave}`} className="text-xs">Valor da apikey</Label>
+                    <Input
+                      id={`sap-apikey-${s.chave}`}
+                      type="password"
+                      autoComplete="new-password"
+                      value={apikeysSv[s.chave] ?? ''}
+                      onChange={(e) => setApikeysSv((a) => ({ ...a, [s.chave]: e.target.value }))}
+                      placeholder={s.apikey_definida ? '•••••••• (definida para esta API)' : 'vazio = usa a padrão'}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor={`sap-client-${s.chave}`} className="text-xs">Mandante</Label>
+                    <Input
+                      id={`sap-client-${s.chave}`}
+                      inputMode="numeric"
+                      maxLength={3}
+                      value={clientesSv[s.chave] ?? ''}
+                      onChange={(e) => setClientesSv((a) => ({ ...a, [s.chave]: e.target.value.replace(/\D/g, '') }))}
+                      placeholder={s.chave === 'wk' ? 'não envia' : 'o padrão'}
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  QAS e PRD têm chaves diferentes: informe aqui a chave desta API. Gravada criptografada, nunca mostrada de volta; deixe o valor
+                  vazio para manter a atual. Mandante vazio usa o padrão{s.chave === 'wk' ? ' (em Centros, vazio = não envia o sap-client)' : ''}.
+                  {s.apikey_definida && (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        className="underline underline-offset-2 hover:text-foreground"
+                        onClick={() => salvar.mutate({ sap: { servicos: { [s.chave]: { limpar_apikey: true } } } })}
+                      >
+                        Remover a chave desta API
+                      </button>
+                    </>
+                  )}
+                </p>
               </div>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <ResultadoLinha r={s.ultimo_resultado} ultima={s.ultima_execucao} />
@@ -332,8 +395,8 @@ function Formulario({ data }: { data: Config }) {
                   size="sm"
                   variant="outline"
                   onClick={() => testar.mutate(s.chave)}
-                  disabled={!temCredencial || testar.isPending}
-                  title={temCredencial ? 'Faz uma leitura de 1 registro no SAP' : 'Salve a apikey (ou o usuário e a senha) antes de testar'}
+                  disabled={!(temCredencial || s.apikey_definida) || testar.isPending}
+                  title={temCredencial || s.apikey_definida ? 'Faz uma leitura de teste no SAP' : 'Salve a apikey (ou o usuário e a senha) antes de testar'}
                 >
                   <PlugZap className="mr-1 size-3.5" />
                   {testar.isPending && testar.variables === s.chave ? 'Testando...' : 'Testar conexão'}

@@ -78,12 +78,16 @@ type resultadoSalvo struct {
 }
 
 type servicoConfig struct {
-	Chave           string          `json:"chave"`
-	Nome            string          `json:"nome"`
-	Diaria          bool            `json:"diaria"` // false = consulta sob demanda (saldo), sem leitura das 06:00
-	Ativo           bool            `json:"ativo"`
-	URLBase         string          `json:"url_base"`
-	ApiKeyDefinida  bool            `json:"apikey_definida"` // apikey própria deste serviço
+	Chave          string `json:"chave"`
+	Nome           string `json:"nome"`
+	Diaria         bool   `json:"diaria"` // false = consulta sob demanda (saldo), sem leitura das 06:00
+	Ativo          bool   `json:"ativo"`
+	URLBase        string `json:"url_base"`
+	ApiKeyDefinida bool   `json:"apikey_definida"` // apikey própria deste serviço
+	// 26/11: cada API (QAS e PRD têm chaves diferentes) tem o seu header, a sua chave e o seu mandante.
+	ApiKeyHeader    string          `json:"apikey_header"`
+	SapClient       string          `json:"sap_client"`
+	ApiKeyOrigem    string          `json:"apikey_origem"` // servico | geral | ambiente | "" (nenhuma: usa usuário e senha)
 	UltimaExecucao  string          `json:"ultima_execucao"`
 	UltimoResultado *resultadoSalvo `json:"ultimo_resultado,omitempty"`
 }
@@ -134,7 +138,19 @@ func montarResposta(m map[string]string) configuracoesResposta {
 			Ativo:          m[cfgServico(sv, "ativo")] == "true",
 			URLBase:        m[cfgServico(sv, "url_base")],
 			ApiKeyDefinida: m[cfgServico(sv, "apikey")] != "",
+			ApiKeyHeader:   headerDoServico(m, sv),
+			SapClient:      m[cfgServico(sv, "sap_client")],
 			UltimaExecucao: m[cfgServico(sv, "ultima_execucao")],
+		}
+		switch {
+		case m[cfgServico(sv, "apikey")] != "":
+			sc.ApiKeyOrigem = "servico"
+		case sv.Chave == sapodata.SaldoOrcamentario.Chave:
+			// o saldo nunca usa a chave geral nem a do servidor (credencialSaldo)
+		case m[cfgSapApiKey] != "":
+			sc.ApiKeyOrigem = "geral"
+		case sapodata.ModoGateway():
+			sc.ApiKeyOrigem = "ambiente"
 		}
 		if raw := m[cfgServico(sv, "ultimo_resultado")]; raw != "" {
 			var rs resultadoSalvo
@@ -188,6 +204,21 @@ type servicoEntrada struct {
 	URLBase      *string `json:"url_base"`
 	ApiKey       *string `json:"apikey"`
 	LimparApiKey bool    `json:"limpar_apikey"`
+	ApiKeyHeader *string `json:"apikey_header"`
+	SapClient    *string `json:"sap_client"`
+}
+
+var (
+	reHeaderAPIKey = regexp.MustCompile(`^[A-Za-z0-9_-]{1,50}$`)
+	reSapClient    = regexp.MustCompile(`^[0-9]{3}$`)
+)
+
+// headerDoServico: nome do header da chave desta API (padrão "apikey").
+func headerDoServico(m map[string]string, sv sapodata.Servico) string {
+	if h := strings.TrimSpace(m[cfgServico(sv, "apikey_header")]); h != "" {
+		return h
+	}
+	return "apikey"
 }
 
 type configuracoesEntrada struct {
@@ -315,6 +346,20 @@ func validarEntrada(in configuracoesEntrada, atual map[string]string) (map[strin
 			grava[cfgServico(sv, "apikey")] = cifrada
 			svKeyFinal = true
 		}
+		if sc.ApiKeyHeader != nil {
+			h := strings.TrimSpace(*sc.ApiKeyHeader)
+			if h != "" && !reHeaderAPIKey.MatchString(h) {
+				return nil, errors.New(sv.Nome + ": nome do header inválido (só letras, números, - e _)")
+			}
+			grava[cfgServico(sv, "apikey_header")] = h
+		}
+		if sc.SapClient != nil {
+			c := strings.TrimSpace(*sc.SapClient)
+			if c != "" && !reSapClient.MatchString(c) {
+				return nil, errors.New(sv.Nome + ": o mandante (sap-client) tem 3 dígitos")
+			}
+			grava[cfgServico(sv, "sap_client")] = c
+		}
 		gw := apikeyFinal || svKeyFinal
 		urlFinal := atual[cfgServico(sv, "url_base")]
 		if sc.URLBase != nil {
@@ -424,8 +469,17 @@ func credencialSAP(m map[string]string, sv sapodata.Servico) sapodata.Config {
 			log.Printf("[SAP] Erro ao decifrar a apikey do gateway: %v", err)
 		}
 	}
-	return sapodata.Config{URLBase: m[cfgServico(sv, "url_base")], Usuario: m[cfgSapUsuario], Senha: senha,
-		APIKey: apikey, SapClient: m[cfgSapClient]}.DoGateway()
+	cliente := m[cfgSapClient]
+	if c := m[cfgServico(sv, "sap_client")]; c != "" {
+		cliente = c // o mandante da própria API vale mais que o geral
+	}
+	cfg := sapodata.Config{URLBase: m[cfgServico(sv, "url_base")], Usuario: m[cfgSapUsuario], Senha: senha,
+		APIKey: apikey, SapClient: cliente, APIKeyHeader: headerDoServico(m, sv)}.DoGateway()
+	if sv.Chave == sapodata.Centros.Chave {
+		// Centros: só o mandante informado no próprio serviço (o geral/do servidor é o do QAS)
+		cfg.SapClient = m[cfgServico(sv, "sap_client")]
+	}
+	return cfg
 }
 
 func guardarResultado(db *sql.DB, sv sapodata.Servico, res sapodata.Resultado, origem string, quando time.Time) {

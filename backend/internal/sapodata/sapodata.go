@@ -74,6 +74,8 @@ type Config struct {
 	// Com APIKey, a chamada vai com o header apikey (e ?sap-client=) em vez de Basic.
 	APIKey    string
 	SapClient string
+	// APIKeyHeader: nome do header da chave no gateway (padrão "apikey"); cada API pode ter o seu (26/11).
+	APIKeyHeader string
 }
 
 // ModoGateway diz se o servidor tem a chave do gateway no ambiente (SAP_API_KEY). A chave também pode
@@ -199,7 +201,11 @@ func montarURL(cfg Config, entidade string, q url.Values) string {
 // autenticar põe a credencial certa na requisição (apikey no gateway, Basic direto no SAP).
 func autenticar(req *http.Request, cfg Config) {
 	if cfg.APIKey != "" {
-		req.Header.Set("apikey", cfg.APIKey)
+		h := strings.TrimSpace(cfg.APIKeyHeader)
+		if h == "" {
+			h = "apikey"
+		}
+		req.Header.Set(h, cfg.APIKey)
 	} else {
 		req.SetBasicAuth(cfg.Usuario, cfg.Senha)
 	}

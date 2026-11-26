@@ -105,9 +105,12 @@ func lerPaginaCentros(ctx context.Context, cfg Config, pular int) ([]centroLinha
 	return env.Value, nil
 }
 
-// urlColecao: a URL configurada JÁ é a da coleção. O mandante (sap-client) não é enviado: a rota do gateway
-// define o ambiente (o SAP_CLIENT do servidor é o do QAS).
+// urlColecao: a URL configurada JÁ é a da coleção. O mandante (sap-client) só vai se estiver informado no
+// próprio serviço (Configurações); o geral/do servidor é o do QAS e não é usado aqui.
 func urlColecao(cfg Config, q url.Values) string {
+	if cfg.APIKey != "" && cfg.SapClient != "" {
+		q.Set("sap-client", cfg.SapClient)
+	}
 	enc := strings.ReplaceAll(q.Encode(), "+", "%20")
 	return strings.TrimRight(strings.TrimSpace(cfg.URLBase), "/") + "?" + enc
 }

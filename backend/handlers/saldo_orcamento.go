@@ -89,10 +89,13 @@ func r2f(v float64) *float64 { x := math.Round(v*100) / 100; return &x }
 // credencialSaldo: o serviço de saldo é consultado DIRETO no SAP (Basic) ou por apikey PRÓPRIA do serviço; nunca
 // usa a apikey geral/ambiente do gateway (essa é a chave do Kong, não do SAP).
 func credencialSaldo(m map[string]string) sapodata.Config {
-	cfg := sapodata.Config{URLBase: m[cfgServico(sapodata.SaldoOrcamentario, "url_base")]}
+	cfg := sapodata.Config{URLBase: m[cfgServico(sapodata.SaldoOrcamentario, "url_base")], APIKeyHeader: headerDoServico(m, sapodata.SaldoOrcamentario)}
 	if c := m[cfgServico(sapodata.SaldoOrcamentario, "apikey")]; c != "" {
 		if txt, err := crypto.DecryptField(c); err == nil {
 			cfg.APIKey, cfg.SapClient = txt, m[cfgSapClient]
+			if c := m[cfgServico(sapodata.SaldoOrcamentario, "sap_client")]; c != "" {
+				cfg.SapClient = c
+			}
 		}
 		return cfg
 	}

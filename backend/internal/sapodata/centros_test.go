@@ -8,12 +8,13 @@ import (
 	"testing"
 )
 
-// Rota do gateway em PRD: a URL já é a da coleção; vai a apikey, não vai sap-client, e pagina por $skip.
+// Rota do gateway em PRD: a URL já é a da coleção; a chave vai no header configurado para a API, o sap-client
+// só vai se informado no serviço (aqui não), e pagina por $skip.
 func TestLerCentros_GatewayPaginaSemSapClient(t *testing.T) {
 	var caminhos []string
 	cfg := comServidor(t, func(w http.ResponseWriter, r *http.Request) {
 		caminhos = append(caminhos, r.URL.Path)
-		if r.Header.Get("apikey") != "chave" || r.URL.Query().Get("sap-client") != "" {
+		if r.Header.Get("X-Chave-PRD") != "chave" || r.Header.Get("apikey") != "" || r.URL.Query().Get("sap-client") != "" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -32,7 +33,7 @@ func TestLerCentros_GatewayPaginaSemSapClient(t *testing.T) {
 		fmt.Fprint(w, `{"value":[{"Centro":"9999","Nome":"Último","Estado":"BA"},{"Centro":"0001","Nome":"repetido"}]}`)
 	})
 	cfg.URLBase = strings.Replace(cfg.URLBase, "/sap/opu/odata/sap/API_COSTCENTER_SRV", "/sap/prd/centros/", 1)
-	cfg.Usuario, cfg.Senha, cfg.APIKey, cfg.SapClient = "", "", "chave", "300"
+	cfg.Usuario, cfg.Senha, cfg.APIKey, cfg.SapClient, cfg.APIKeyHeader = "", "", "chave", "", "X-Chave-PRD"
 	cs, err := LerCentros(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
