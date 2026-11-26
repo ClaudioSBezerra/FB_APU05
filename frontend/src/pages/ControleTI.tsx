@@ -584,6 +584,23 @@ function Importar({ modelo }: { modelo: TiModelo }) {
   const [confirmando, setConfirmando] = useState(false);
   const [resultados, setResultados] = useState<ResultadoArquivo[] | null>(null);
 
+  // KSB1/KSB2 pelas APIs do SAP (26/11): a mesma carga das planilhas, sem arquivo — liga em Configurações → Integração SAP
+  const doSAP = useMutation({
+    mutationFn: async () => {
+      const resp = await fetch('/api/ti/sap/atualizar', { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.error || `Erro HTTP ${resp.status}`);
+      return data as { ksb1: { ok: boolean; mensagem: string }; ksb2: { ok: boolean; mensagem: string } };
+    },
+    onSuccess: (r) => {
+      queryClient.invalidateQueries({ queryKey: ['ti-modelo'] });
+      queryClient.invalidateQueries({ queryKey: ['ti-conferencia'] });
+      (r.ksb1.ok ? toast.success : toast.error)(`KSB1 (realizado): ${r.ksb1.mensagem}`, { duration: 10000 });
+      (r.ksb2.ok ? toast.success : toast.error)(`KSB2 (compromissado): ${r.ksb2.mensagem}`, { duration: 10000 });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const importar = useMutation({
     mutationFn: async (files: File[]) => {
       const corpo = new FormData();
@@ -617,6 +634,18 @@ function Importar({ modelo }: { modelo: TiModelo }) {
 
   return (
     <section className="flex max-w-3xl flex-col gap-4 rounded-lg border border-border bg-card p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-dashed p-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">Realizado (KSB1) e compromissado (KSB2) direto do SAP</p>
+          <p className="text-xs text-fg-helper">
+            Busca pelas APIs do SAP os centros de custo do módulo (KSB1 do ano; KSB2 em aberto) e grava como a importação das planilhas. Roda sozinho todo dia às 06:00
+            quando ligado em Configurações → Integração SAP.
+          </p>
+        </div>
+        <Button variant="outline" disabled={doSAP.isPending} onClick={() => doSAP.mutate()}>
+          {doSAP.isPending ? 'Atualizando…' : 'Atualizar do SAP agora'}
+        </Button>
+      </div>
       <div>
         <h2 className="text-base font-semibold text-foreground">Importar planilhas</h2>
         <p className="mt-1 text-sm text-fg-secondary">

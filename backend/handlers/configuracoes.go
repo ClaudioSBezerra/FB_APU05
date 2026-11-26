@@ -600,6 +600,8 @@ func RotinaSAPDiaria(db *sql.DB, agora time.Time) {
 			res = cargaGL(ctx, db, cfg)
 		} else if sv.Chave == sapodata.Centros.Chave {
 			res = cargaCentros(ctx, db, cfg)
+		} else if sv.Chave == sapodata.Realizado.Chave || sv.Chave == sapodata.Compromissado.Chave {
+			res = cargaKSBdoSAP(ctx, db, sv, cfg, "", agora)
 		} else {
 			res = sondaSAP(ctx, sv, credencialSAP(m, sv))
 		}

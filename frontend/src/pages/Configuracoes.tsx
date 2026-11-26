@@ -28,7 +28,7 @@ function ambienteDaURL(url: string): 'PRD' | 'QAS' | '' {
 }
 
 interface ServicoSAP {
-  chave: 'cc' | 'gl' | 'bg' | 'wk';
+  chave: 'cc' | 'gl' | 'bg' | 'wk' | 'k1' | 'k2';
   diaria: boolean; // false = consulta sob demanda (saldo), sem leitura das 06:00
   nome: string;
   ativo: boolean;
@@ -331,7 +331,7 @@ function Formulario({ data }: { data: Config }) {
                 />
                 <p className="text-xs text-muted-foreground">
                   Direto no SAP: só https, em servidor de um domínio da Ferreira Costa. Pelo gateway (com apikey): http da rede interna,
-                  ex.: <code>http://10.131.1.80:8000/sap/{s.chave === 'wk' ? 'prd/centros' : s.chave === 'cc' ? 'qas/cost-center-read/' : 'qas/gl-account-read/'}</code>.{s.chave === 'wk' && ' Filiais (Centros SAP / Plant) — não confundir com Centros de custo: a URL já é a da coleção. Use o endereço interno 10.131.1.80 — o externo (sap-api-gateway) não é alcançado pelo servidor. Carga diária na tabela de centros.'}{s.chave === 'bg' && ' Saldo orçamentário (OData V4): consulta direta no SAP com o usuário e a senha acima (ou apikey própria); mostra o saldo no formulário como aviso.'} Troque pela de
+                  ex.: <code>http://10.131.1.80:8000/sap/{s.chave === 'wk' ? 'prd/centros' : s.chave === 'cc' ? 'qas/cost-center-read/' : 'qas/gl-account-read/'}</code>.{(s.chave === 'k1' || s.chave === 'k2') && ' Realizado/Compromissado do Controle de Despesas (KSB1/KSB2): URL da raiz do serviço (…/0001) ou da coleção; carga diária no Controle de Despesas, com o botão "Atualizar do SAP agora" lá.'}{s.chave === 'wk' && ' Filiais (Centros SAP / Plant) — não confundir com Centros de custo: a URL já é a da coleção. Use o endereço interno 10.131.1.80 — o externo (sap-api-gateway) não é alcançado pelo servidor. Carga diária na tabela de centros.'}{s.chave === 'bg' && ' Saldo orçamentário (OData V4): consulta direta no SAP com o usuário e a senha acima (ou apikey própria); mostra o saldo no formulário como aviso.'} Troque pela de
                   produção quando for liberada.
                 </p>
               </div>

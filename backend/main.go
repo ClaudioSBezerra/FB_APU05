@@ -505,6 +505,7 @@ func main() {
 	http.HandleFunc("POST /api/ti/enviar-resumo", handlers.RequireAuth(withDB(handlers.TIEnviarResumoHandler), ""))
 	http.HandleFunc("POST /api/ti/importar", handlers.RequireAuth(withDB(handlers.TIImportarHandler), ""))
 	http.HandleFunc("GET /api/ti/conferencia", handlers.RequireAuth(withDB(handlers.TIConferenciaHandler), ""))
+	http.HandleFunc("POST /api/ti/sap/atualizar", handlers.RequireAuth(withDB(handlers.TIAtualizarSAPHandler), ""))
 
 	// tela "Solicitações": todos os chamados para quem atende; só os próprios para o solicitante (precisa vir antes de {id})
 	http.HandleFunc("GET /api/solicitacoes/busca", handlers.RequireAuth(withDB(handlers.BuscarSolicitacoesHandler), ""))

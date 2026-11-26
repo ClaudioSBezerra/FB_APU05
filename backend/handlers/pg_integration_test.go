@@ -1184,3 +1184,44 @@ func TestPG_TerceiraLeva(t *testing.T) {
 		t.Fatalf("CRIAR cita as duas ordens: %q", m3)
 	}
 }
+
+// KSB1/KSB2 pela API (26/11): lê os CCs do módulo, grava pelo mesmo caminho da planilha; resposta vazia não apaga.
+func TestPG_CargaKSBdaAPI(t *testing.T) {
+	e := pgSetup(t)
+	_, _ = e.admin.Exec(`DELETE FROM ti_ksb1; DELETE FROM ti_ksb2`)
+	if _, err := e.admin.Exec(`INSERT INTO ti_ksb2 (carga_id, pedido, cc_sap, conta, valor) SELECT NULL, 'P0', '10026440', '1', 1 WHERE false`); err != nil {
+		t.Log(err)
+	}
+	var cargaID int64
+	if err := e.admin.QueryRow(`INSERT INTO ti_cargas_sap (tipo, arquivo, linhas, aproveitadas) VALUES ('ksb2', 'seed', 1, 1) RETURNING id`).Scan(&cargaID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.admin.Exec(`INSERT INTO ti_ksb2 (carga_id, pedido, item, cc_sap, conta, fornecedor, valor, texto) VALUES ($1, 'P-ANTIGO', '10', '10026440', '4210400004', '', 5, '')`, cargaID); err != nil {
+		t.Fatal(err)
+	}
+	origR, origC := lerRealizadoSAP, lerCompromissadoSAP
+	t.Cleanup(func() { lerRealizadoSAP, lerCompromissadoSAP = origR, origC })
+	var ccsVistos []string
+	lerRealizadoSAP = func(_ context.Context, _ sapodata.Config, ccs []string, de, ate time.Time) ([]sapodata.RealizadoLinha, error) {
+		ccsVistos = ccs
+		return []sapodata.RealizadoLinha{{PurchaseOrder: "4521982314", CostCenter: "10026440", CostElement: "4210400004", AmountControllingCurrency: 450, PostingDate: "2026-02-10"}}, nil
+	}
+	lerCompromissadoSAP = func(context.Context, sapodata.Config, []string, time.Time, time.Time) ([]sapodata.CompromissadoLinha, error) {
+		return nil, nil // vazio: não pode apagar a KSB2 atual
+	}
+	agora := time.Date(2026, 11, 26, 12, 0, 0, 0, locRecife)
+	r1 := cargaKSBdoSAP(context.Background(), e.app, sapodata.Realizado, sapodata.Config{}, "", agora)
+	if !r1.OK || len(ccsVistos) == 0 {
+		t.Fatalf("KSB1: %+v ccs=%v", r1, ccsVistos)
+	}
+	var n int
+	_ = e.admin.QueryRow(`SELECT count(*) FROM ti_ksb1 WHERE pedido = '4521982314'`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("KSB1 gravada: %d", n)
+	}
+	r2 := cargaKSBdoSAP(context.Background(), e.app, sapodata.Compromissado, sapodata.Config{}, "", agora)
+	_ = e.admin.QueryRow(`SELECT count(*) FROM ti_ksb2 WHERE pedido = 'P-ANTIGO'`).Scan(&n)
+	if r2.OK || n != 1 {
+		t.Fatalf("KSB2 vazia não pode apagar: %+v restantes=%d", r2, n)
+	}
+}
