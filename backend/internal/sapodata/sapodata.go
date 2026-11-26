@@ -53,7 +53,7 @@ var (
 )
 
 // Todos é a ordem em que a rotina diária processa os serviços.
-var Todos = []Servico{CentrosCusto, ContasContabeis, SaldoOrcamentario}
+var Todos = []Servico{CentrosCusto, ContasContabeis, SaldoOrcamentario, Centros}
 
 // PorChave devolve o serviço da chave ("cc"/"gl").
 func PorChave(chave string) (Servico, bool) {
@@ -221,6 +221,9 @@ var (
 
 // Sonda faz a chamada de leitura e devolve o resultado (nunca erro: tudo vira Resultado.Mensagem).
 func Sonda(ctx context.Context, sv Servico, cfg Config) Resultado {
+	if sv.Chave == Centros.Chave {
+		return sondaCentros(ctx, cfg)
+	}
 	if sv.V4 {
 		return sondaSaldo(ctx, sv, cfg)
 	}

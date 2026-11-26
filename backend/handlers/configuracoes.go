@@ -538,6 +538,8 @@ func RotinaSAPDiaria(db *sql.DB, agora time.Time) {
 			res = cargaCC(ctx, db, cfg, agora)
 		} else if sv.Chave == sapodata.ContasContabeis.Chave && cfg.APIKey != "" {
 			res = cargaGL(ctx, db, cfg)
+		} else if sv.Chave == sapodata.Centros.Chave {
+			res = cargaCentros(ctx, db, cfg)
 		} else {
 			res = sondaSAP(ctx, sv, credencialSAP(m, sv))
 		}

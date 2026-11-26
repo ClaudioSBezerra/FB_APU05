@@ -20,7 +20,7 @@ interface ResultadoSAP {
   origem: 'agendada' | 'manual';
 }
 interface ServicoSAP {
-  chave: 'cc' | 'gl' | 'bg';
+  chave: 'cc' | 'gl' | 'bg' | 'wk';
   diaria: boolean; // false = consulta sob demanda (saldo), sem leitura das 06:00
   nome: string;
   ativo: boolean;
@@ -302,7 +302,7 @@ function Formulario({ data }: { data: Config }) {
                 />
                 <p className="text-xs text-muted-foreground">
                   Direto no SAP: só https, em servidor de um domínio da Ferreira Costa. Pelo gateway (com apikey): http da rede interna,
-                  ex.: <code>http://10.131.1.80:8000/sap/qas/{s.chave === 'cc' ? 'cost-center-read' : 'gl-account-read'}/</code>.{s.chave === 'bg' && ' Saldo orçamentário (OData V4): consulta direta no SAP com o usuário e a senha acima (ou apikey própria); mostra o saldo no formulário como aviso.'} Troque pela de
+                  ex.: <code>http://10.131.1.80:8000/sap/{s.chave === 'wk' ? 'prd/centros' : s.chave === 'cc' ? 'qas/cost-center-read/' : 'qas/gl-account-read/'}</code>.{s.chave === 'wk' && ' Centros (filiais): a URL já é a da coleção (produção). Use o endereço interno 10.131.1.80 — o externo (sap-api-gateway) não é alcançado pelo servidor. Carga diária na tabela de centros.'}{s.chave === 'bg' && ' Saldo orçamentário (OData V4): consulta direta no SAP com o usuário e a senha acima (ou apikey própria); mostra o saldo no formulário como aviso.'} Troque pela de
                   produção quando for liberada.
                 </p>
               </div>
