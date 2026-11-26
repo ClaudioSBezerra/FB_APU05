@@ -238,9 +238,9 @@ func RemoverCompartilhamentoHandler(db *sql.DB) http.HandlerFunc {
 
 func avisarCompartilhamento(email, nome, quemNome, codigo, id string) {
 	link := strings.TrimRight(os.Getenv("APP_URL"), "/") + "/solicitacoes/" + id
-	corpo := fmt.Sprintf(`<p>Olá, %s.</p><p>%s compartilhou com você o chamado <strong>%s</strong> do Sistema de Orçamento. Você pode acompanhar o andamento (somente leitura):</p><p><a href="%s">Abrir o chamado %s</a></p>`,
+	corpo := fmt.Sprintf(`<p>Olá, %s.</p><p>%s incluiu você em cópia no chamado <strong>%s</strong> do Sistema de Orçamento. Você acompanha o andamento, pode comentar e recebe os avisos do chamado:</p><p><a href="%s">Abrir o chamado %s</a></p>`,
 		html.EscapeString(nome), html.EscapeString(quemNome), html.EscapeString(codigo), html.EscapeString(link), html.EscapeString(codigo))
-	if err := enviarEmailCompartilhamento([]string{email}, "Chamado "+codigo+" compartilhado com você", corpo); err != nil {
+	if err := enviarEmailCompartilhamento([]string{email}, "Você está em cópia no chamado "+codigo, corpo); err != nil {
 		log.Printf("[Compartilhamento] e-mail não enviado para %s: %v", email, err)
 	}
 }

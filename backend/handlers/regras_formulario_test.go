@@ -159,3 +159,7 @@ func TestTotalImobilizado(t *testing.T) {
 func init() {
 	avisarAcompanhantes = func(*sql.DB, string, string, string, string) {}
 }
+
+func init() {
+	avisarInclusaoEmCopia = func(*sql.DB, string, string, []string, []string) {}
+}

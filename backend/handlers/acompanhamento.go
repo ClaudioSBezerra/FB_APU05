@@ -24,6 +24,8 @@ import (
 	"unicode/utf8"
 
 	"fb_apu05/services"
+
+	"github.com/lib/pq"
 )
 
 // sqlAcompanha: condição SQL "o usuário (parâmetro p) acompanha o chamado s" — compartilhado direto com ele ou membro
@@ -99,6 +101,43 @@ func avisarEvento(db *sql.DB, solicitacaoID, autorID, assunto, detalhe string) {
 		corpo += `<blockquote style="border-left:3px solid #ccc;margin:0;padding-left:8px;white-space:pre-wrap">` + html.EscapeString(detalhe) + `</blockquote>`
 	}
 	avisarAcompanhantes(db, solicitacaoID, autorID, assunto, corpo)
+}
+
+// avisarInclusaoEmCopia (26/11, retorno da Wanessa): quem entra em cópia — direto ou por grupo — recebe o e-mail com
+// o link do chamado também quando é incluído na ABERTURA (antes só recebia quem era incluído depois, no detalhe).
+// Trocável nos testes.
+var avisarInclusaoEmCopia = func(db *sql.DB, solicitacaoID, autorID string, usuarios, grupos []string) {
+	if len(usuarios) == 0 && len(grupos) == 0 {
+		return
+	}
+	var quemNome string
+	var numero int64
+	_ = db.QueryRow(`SELECT nome FROM usuarios WHERE id = $1`, autorID).Scan(&quemNome)
+	_ = db.QueryRow(`SELECT numero FROM solicitacoes WHERE id = $1`, solicitacaoID).Scan(&numero)
+	ids := unicos(usuarios)
+	gs := unicos(grupos)
+	rows, err := db.Query(`
+		SELECT u.id, u.nome, u.email FROM usuarios u WHERE u.ativo AND u.id::text = ANY($1)
+		UNION
+		SELECT u.id, u.nome, u.email FROM grupos g JOIN grupo_membros gm ON gm.grupo_id = g.id JOIN usuarios u ON u.id = gm.usuario_id
+		 WHERE g.ativo AND u.ativo AND g.id::text = ANY($2)
+		UNION
+		SELECT u.id, u.nome, u.email FROM grupos g JOIN usuarios u ON u.id = g.gestor_id WHERE g.ativo AND u.ativo AND g.id::text = ANY($2)`,
+		pq.Array(ids), pq.Array(gs))
+	if err != nil {
+		log.Printf("[Avisos] destinatários da cópia de %s: %v", solicitacaoID, err)
+		return
+	}
+	defer rows.Close()
+	vistos := map[string]bool{}
+	for rows.Next() {
+		var id, nome, email string
+		if rows.Scan(&id, &nome, &email) != nil || id == autorID || vistos[strings.ToLower(email)] || !strings.Contains(email, "@") {
+			continue
+		}
+		vistos[strings.ToLower(email)] = true
+		avisarCompartilhamento(email, nome, quemNome, CodigoChamado(numero), solicitacaoID)
+	}
 }
 
 // ---------------------------------------------------------------- nota interna (§2)
@@ -280,6 +319,7 @@ func IncluirGrupoNoChamadoHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
+		go avisarInclusaoEmCopia(db, id, GetUserIDFromContext(r), nil, []string{req.GrupoID})
 		responderVisualizadores(w, db, id)
 	}
 }

@@ -213,6 +213,9 @@ func ComentarSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 		log.Printf("[Fila] %s comentou em %s (versao=%d, status=%s)", solicitanteID, resultado.ID, resultado.Versao, resultado.Status)
 		if statusAntes == "pendente" && resultado.Status != "pendente" {
 			go avisarEvento(db, id, solicitanteID, "chamado reaberto pelo solicitante", comentario)
+		} else if perfilAtende(GetPerfilFromContext(r)) {
+			// retorno do atendimento (retorno da Wanessa, 26/11): o solicitante e quem está em cópia recebem o comentário
+			go avisarEvento(db, id, solicitanteID, "novo comentário do atendimento", comentario)
 		}
 		responderSolicitacaoFila(w, resultado)
 	}

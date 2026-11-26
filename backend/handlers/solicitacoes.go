@@ -626,6 +626,7 @@ func AbrirSolicitacaoHandler(db *sql.DB) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
 		}
+		go avisarInclusaoEmCopia(db, solicitacaoID, solicitanteID, req.Visualizadores, req.Grupos)
 
 		log.Printf("[Solicitacoes] %s abriu solicitação %s (tipo=%s, cc=%s, aprovador=%s/%s, status=%s)",
 			solicitanteID, solicitacaoID, req.TipoSolicitacao, centroCustoID, aprovadorResolvido.Tipo, aprovadorResolvido.Nome, statusInicial)
@@ -1309,6 +1310,7 @@ func abrirSolicitacaoObras(w http.ResponseWriter, r *http.Request, db *sql.DB, r
 		jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 		return
 	}
+	go avisarInclusaoEmCopia(db, solicitacaoID, solicitanteID, req.Visualizadores, req.Grupos)
 
 	log.Printf("[Solicitacoes] %s abriu solicitação %s (tipo=obras, classificacao=%s, aprovador=%s/%s)",
 		solicitanteID, solicitacaoID, req.Classificacao, aprovadorResolvido.Tipo, aprovadorResolvido.Nome)
