@@ -234,6 +234,7 @@ func finishLogin(db *sql.DB, w http.ResponseWriter, r *http.Request, user User, 
 	setRefreshCookie(w, r, refreshToken)
 
 	log.Printf("[Login] Sucesso para %s (perfil=%s). Duração: %v", user.Email, user.Perfil, time.Since(start))
+	registrarAcesso(db, r, user.ID) // último acesso e histórico de logins (26/11)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(AuthResponse{Token: token, User: user})

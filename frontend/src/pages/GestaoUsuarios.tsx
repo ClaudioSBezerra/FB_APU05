@@ -61,6 +61,7 @@ interface Usuario {
   aprovador: boolean;
   // controle_ti (migration 025): libera o menu e as rotas do módulo Controle TI.
   controle_ti: boolean;
+  ultimo_acesso?: string; // 26/11: último login (senha ou login corporativo)
 }
 
 interface CentroCusto {
@@ -106,7 +107,50 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+// Histórico de acessos de um usuário (26/11): os 100 logins mais recentes, com a forma de entrada e o IP.
+function HistoricoAcessos({ usuario, onFechar }: { usuario: Usuario; onFechar: () => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['usuario-acessos', usuario.id],
+    queryFn: async () => {
+      const r = await fetch(`/api/admin/usuarios/${usuario.id}/acessos`);
+      if (!r.ok) throw new Error(`Erro HTTP ${r.status}`);
+      return (await r.json()) as { items: { quando: string; via: string; ip: string }[] };
+    },
+  });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onFechar()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Acessos de {usuario.nome}</DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground">Registrados a partir de 26/11/2026. Mostra os 100 mais recentes.</p>
+        {isLoading && <p className="text-sm text-muted-foreground">Carregando…</p>}
+        {data && data.items.length === 0 && <p className="text-sm text-muted-foreground">Nenhum acesso registrado ainda.</p>}
+        {data && data.items.length > 0 && (
+          <div className="max-h-80 overflow-y-auto rounded-md border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-xs text-muted-foreground">
+                <tr><th className="p-2 text-left">Quando</th><th className="p-2 text-left">Entrada</th><th className="p-2 text-left">IP</th></tr>
+              </thead>
+              <tbody>
+                {data.items.map((a, i) => (
+                  <tr key={i} className="border-t">
+                    <td className="p-2 tabular-nums">{new Date(a.quando).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' })}</td>
+                    <td className="p-2">{a.via === 'sso' ? 'Login corporativo' : 'Senha'}</td>
+                    <td className="p-2 tabular-nums text-muted-foreground">{a.ip || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const GestaoUsuarios = () => {
+  const [vendoAcessos, setVendoAcessos] = useState<Usuario | null>(null);
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [email, setEmail] = useState('');
@@ -399,6 +443,7 @@ const GestaoUsuarios = () => {
               <TableHead>Controle TI</TableHead>
               <TableHead>Centro de custo</TableHead>
               <TableHead>Criado em</TableHead>
+              <TableHead>Último acesso</TableHead>
               <TableHead>Ações</TableHead>
             </TableRow>
           </TableHeader>
@@ -455,6 +500,11 @@ const GestaoUsuarios = () => {
                 <TableCell className="text-muted-foreground">{u.centro_custo_nome ?? '—'}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {new Date(u.created_at).toLocaleDateString('pt-BR')}
+                </TableCell>
+                <TableCell className="text-xs">
+                  <button type="button" className="text-left text-link underline-offset-2 hover:underline" onClick={() => setVendoAcessos(u)} title="Ver o histórico de acessos">
+                    {u.ultimo_acesso ? new Date(u.ultimo_acesso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'Sem registro'}
+                  </button>
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-2">
@@ -521,6 +571,7 @@ const GestaoUsuarios = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {vendoAcessos && <HistoricoAcessos usuario={vendoAcessos} onFechar={() => setVendoAcessos(null)} />}
     </div>
   );
 };

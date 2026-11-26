@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/lib/pq"
 )
@@ -560,6 +561,8 @@ type UsuarioListItem struct {
 	Aprovador bool `json:"aprovador"`
 	// ControleTI (migration 025): ver AdminUpdateUsuarioRequest.ControleTI.
 	ControleTI bool `json:"controle_ti"`
+	// UltimoAcesso (26/11): último login (senha ou login corporativo); nil = ainda não registrado
+	UltimoAcesso *time.Time `json:"ultimo_acesso,omitempty"`
 }
 
 // ListarUsuariosHandler — GET /api/admin/usuarios, paginado (pagina/tamanho,
@@ -604,6 +607,14 @@ func ListarUsuariosHandler(db *sql.DB) http.HandlerFunc {
 			log.Printf("[Admin] Erro ao iterar usuários: %v", err)
 			jsonErr(w, http.StatusInternalServerError, "Erro no servidor")
 			return
+		}
+		// último acesso (26/11): numa consulta à parte, para não mexer na listagem
+		acessos := ultimosAcessos(db)
+		for i := range items {
+			if t, ok := acessos[items[i].ID]; ok {
+				t := t
+				items[i].UltimoAcesso = &t
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"net/http"
 	"regexp"
 	"strings"
 	"testing"
@@ -173,6 +174,7 @@ func TestTotalImobilizado(t *testing.T) {
 }
 
 func init() {
+	registrarAcesso = func(*sql.DB, *http.Request, string) {}
 	conferirNaoCadastrado = func(consultaRowCtx, sql.NullString, bool) (string, error) { return "", nil }
 	conferirGraoObras = func(*sql.Tx, string, []obraLinhaValidado) (string, error) { return "", nil }
 	conferirTipoDestino = func(consultaRowCtx, []lancamentoValidado, string) (string, error) { return "", nil }
