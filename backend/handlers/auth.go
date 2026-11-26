@@ -361,8 +361,11 @@ func ForgotPasswordHandler(db *sql.DB) http.HandlerFunc {
 		var passwordHash sql.NullString
 		err := db.QueryRow(`SELECT id, password_hash FROM usuarios WHERE LOWER(email) = LOWER($1)`, req.Email).
 			Scan(&userID, &passwordHash)
-		if err == sql.ErrNoRows || !passwordHash.Valid {
-			// E-mail inexistente OU conta só-SSO (sem password_hash): mesma
+		// 26/11/2026: conta só-SSO (sem senha local) com e-mail corporativo (@ferreiracosta, @fcxlabs) também pode
+		// criar uma senha local pelo link — reserva caso o login corporativo (Keycloak) saia. O link prova a posse
+		// do e-mail. Para os demais domínios, conta só-SSO continua sem redefinição.
+		if err == sql.ErrNoRows || (err == nil && !passwordHash.Valid && !dominioCorporativo(req.Email)) {
+			// E-mail inexistente OU conta só-SSO fora do domínio corporativo: mesma
 			// resposta genérica, sem token gerado nem e-mail enviado.
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"message": genericMsg})
@@ -608,4 +611,22 @@ func LogoutHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"message": "Sessão encerrada com sucesso"})
 	}
+}
+
+// dominiosCorporativos: e-mails que podem criar senha local mesmo sendo contas do login corporativo.
+var dominiosCorporativos = []string{"ferreiracosta.com.br", "ferreiracosta.com", "fcxlabs.com.br", "fcxlabs.com"}
+
+// dominioCorporativo: o domínio do e-mail é um dos corporativos (ou subdomínio deles).
+func dominioCorporativo(email string) bool {
+	i := strings.LastIndex(email, "@")
+	if i < 0 {
+		return false
+	}
+	d := strings.ToLower(strings.TrimSpace(email[i+1:]))
+	for _, c := range dominiosCorporativos {
+		if d == c || strings.HasSuffix(d, "."+c) {
+			return true
+		}
+	}
+	return false
 }

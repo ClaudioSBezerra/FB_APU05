@@ -279,3 +279,29 @@ func TestChangePasswordHandler_Succeeds(t *testing.T) {
 		t.Fatalf("expectativas sqlmock não satisfeitas: %v", err)
 	}
 }
+
+// 26/11: conta só-SSO com e-mail corporativo pode criar senha local pelo link (reserva se o Keycloak sair).
+func TestForgotPasswordHandler_SSOCorporativo_GeraToken(t *testing.T) {
+	db, mock := newSQLMock(t)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, password_hash FROM usuarios WHERE LOWER(email) = LOWER($1)")).
+		WithArgs("wanessa@fcxlabs.com.br").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "password_hash"}).AddRow("u1", nil))
+	// o token é gerado (aqui o INSERT falha de propósito, para não tentar o SMTP no teste)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO verification_tokens")).WillReturnError(sql.ErrConnDone)
+	rec := httptest.NewRecorder()
+	ForgotPasswordHandler(db)(rec, httptest.NewRequest(http.MethodPost, "/api/auth/forgot-password", strings.NewReader(`{"email":"wanessa@fcxlabs.com.br"}`)))
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("deveria tentar gerar o token para e-mail corporativo: %v", err)
+	}
+}
+
+func TestDominioCorporativo(t *testing.T) {
+	for e, quer := range map[string]bool{
+		"a@ferreiracosta.com.br": true, "a@FCXLABS.com.br": true, "a@ferreiracosta.com": true, "a@mail.ferreiracosta.com.br": true,
+		"a@fortesbezerra.com.br": false, "a@ferreiracosta.com.br.evil.io": false, "a@evilferreiracosta.com.br": false, "sem-arroba": false,
+	} {
+		if dominioCorporativo(e) != quer {
+			t.Errorf("%s: esperado %v", e, quer)
+		}
+	}
+}
