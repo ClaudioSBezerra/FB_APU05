@@ -127,8 +127,16 @@ func (e ExportadorVBA) GerarLoteObra(db *sql.DB, solicitacaoIDs []string, admini
 		return Lote{}, nil, ErrTemplateAusente
 	}
 
-	arquivo, err := montarXLSMComLinhas(templateBytes, montarSheetDataXMLObra(linhas))
+	var arquivo []byte
+	if templateTemAba(templateBytes, abaRoboKO22) {
+		arquivo, err = montarLoteRoboKO22(db, templateBytes, linhas)
+	} else {
+		arquivo, err = montarXLSMComLinhas(templateBytes, montarSheetDataXMLObra(linhas))
+	}
 	if err != nil {
+		if errorsIsRobo(err) {
+			return Lote{}, nil, err
+		}
 		return Lote{}, nil, fmt.Errorf("exportacao: montar .xlsm: %w", err)
 	}
 

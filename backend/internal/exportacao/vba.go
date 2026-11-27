@@ -140,8 +140,16 @@ func (e ExportadorVBA) GerarLoteDespesa(db *sql.DB, solicitacaoIDs []string, adm
 		return Lote{}, nil, ErrTemplateAusente
 	}
 
-	arquivo, err := montarXLSM(templateBytes, linhas)
+	var arquivo []byte
+	if templateTemAba(templateBytes, abaRoboKP06Operacoes) {
+		arquivo, err = montarLoteRoboKP06(db, templateBytes, solicitacaoIDs, administradorID)
+	} else {
+		arquivo, err = montarXLSM(templateBytes, linhas)
+	}
 	if err != nil {
+		if errorsIsRobo(err) {
+			return Lote{}, nil, err
+		}
 		return Lote{}, nil, fmt.Errorf("exportacao: montar .xlsm: %w", err)
 	}
 

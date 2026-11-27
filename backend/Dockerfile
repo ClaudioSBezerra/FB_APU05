@@ -31,6 +31,8 @@ RUN adduser -D -u 1000 appuser
 WORKDIR /home/appuser/
 COPY --from=builder /app/server .
 COPY --from=builder /app/migrations ./migrations
+# modelos dos robôs do SAP (KP06 despesa / KO22 obras, 27/11/2026) — caminho padrão do exportador
+COPY --from=builder /app/internal/exportacao/templates ./internal/exportacao/templates
 USER appuser
 EXPOSE 8081
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

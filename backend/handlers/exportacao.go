@@ -176,6 +176,8 @@ func tratarErroExportacao(w http.ResponseWriter, err error) bool {
 		jsonErr(w, http.StatusBadRequest, "uma ou mais solicitações não são do tipo elegível para este lote")
 	case errors.Is(err, exportacao.ErrExercicioMisto):
 		jsonErr(w, http.StatusBadRequest, "as solicitações selecionadas têm exercícios orçamentários diferentes")
+	case errors.As(err, new(*exportacao.ErrLoteRobo)):
+		jsonErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, exportacao.ErrTemplateAusente):
 		jsonErr(w, http.StatusServiceUnavailable, "modelo de exportação indisponível — contate o administrador do sistema")
 	default:
