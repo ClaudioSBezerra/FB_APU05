@@ -418,6 +418,12 @@ func DecidirAprovacaoManualHandler(db, dbPriv *sql.DB) http.HandlerFunc {
 			return
 		}
 		id, quem := r.PathValue("id"), GetUserIDFromContext(r)
+		// 27/11 (pré-pentest): segregação de funções — quem abriu o chamado não registra a aprovação dele.
+		var solicitante string
+		if err := db.QueryRow(`SELECT solicitante_id FROM solicitacoes WHERE id = $1`, id).Scan(&solicitante); err == nil && solicitante == quem {
+			jsonErr(w, http.StatusForbidden, "Você abriu este chamado: a aprovação manual tem de ser registrada por outra pessoa do atendimento.")
+			return
+		}
 		s, err := fila.Decidir(dbPriv, id, in.Versao, in.Decisao == "aprovada")
 		if err != nil {
 			var conflito *fila.ErrConflitoVersao

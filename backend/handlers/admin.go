@@ -103,6 +103,7 @@ func AdminUpdateUsuarioHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		alvoID := r.PathValue("id")
+		defer esquecerEstadoUsuario(alvoID) // perfil/ativo novos valem já na próxima requisição
 		if alvoID == "" {
 			jsonErr(w, http.StatusBadRequest, "id do usuário é obrigatório")
 			return

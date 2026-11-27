@@ -5,7 +5,7 @@
 # novo possível nela). Subir pra 1.26.10 corrige 15 vulnerabilidades de
 # biblioteca padrão achadas via `govulncheck` (net/http, crypto/tls,
 # crypto/x509, net/url) — acompanha o bump do go.mod (go 1.22.0 -> 1.26.1).
-FROM golang:1.26.10-alpine AS builder
+FROM golang:1.26.11-alpine AS builder
 WORKDIR /app
 
 # Copy go.mod and go.sum from the backend directory

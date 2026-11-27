@@ -196,6 +196,7 @@ func initDBAsync() {
 					db = conn
 					dbErr = nil
 					dbMutex.Unlock()
+					handlers.SetAuthDB(conn)
 					handlers.SetDBError("migrations", nil)
 
 					fmt.Println("Successfully connected to the database!")

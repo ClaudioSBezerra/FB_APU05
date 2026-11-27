@@ -454,10 +454,14 @@ func BaixarAnexoHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		contentType := meta.ContentType
-		if contentType == "" {
+		// 27/11 (pré-pentest): anexo antigo com tipo que o navegador executa nunca sai com esse tipo
+		if ct := strings.ToLower(contentType); contentType == "" || strings.Contains(ct, "html") || strings.Contains(ct, "svg") ||
+			strings.Contains(ct, "xml") || strings.Contains(ct, "javascript") {
 			contentType = "application/octet-stream"
 		}
 		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", meta.NomeArquivo))
 		_, _ = io.Copy(w, conteudo)
 	}

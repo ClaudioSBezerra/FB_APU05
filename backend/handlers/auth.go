@@ -208,7 +208,7 @@ func CheckPasswordHash(password, hash string) bool {
 func fetchUserByEmail(db *sql.DB, email string) (user User, err error) {
 	err = db.QueryRow(`
 		SELECT id, email, nome, perfil, created_at
-		FROM usuarios WHERE LOWER(email) = LOWER($1)
+		FROM usuarios WHERE LOWER(email) = LOWER($1) AND ativo
 	`, email).Scan(&user.ID, &user.Email, &user.Nome, &user.Perfil, &user.CreatedAt)
 	return
 }
@@ -253,7 +253,7 @@ type LoginRequest struct {
 func fetchUserForLocalLogin(db *sql.DB, email string) (user User, passwordHash sql.NullString, err error) {
 	err = db.QueryRow(`
 		SELECT id, email, nome, perfil, created_at, password_hash
-		FROM usuarios WHERE LOWER(email) = LOWER($1)
+		FROM usuarios WHERE LOWER(email) = LOWER($1) AND ativo
 	`, email).Scan(&user.ID, &user.Email, &user.Nome, &user.Perfil, &user.CreatedAt, &passwordHash)
 	return
 }
@@ -360,7 +360,7 @@ func ForgotPasswordHandler(db *sql.DB) http.HandlerFunc {
 
 		var userID string
 		var passwordHash sql.NullString
-		err := db.QueryRow(`SELECT id, password_hash FROM usuarios WHERE LOWER(email) = LOWER($1)`, req.Email).
+		err := db.QueryRow(`SELECT id, password_hash FROM usuarios WHERE LOWER(email) = LOWER($1) AND ativo`, req.Email).
 			Scan(&userID, &passwordHash)
 		// 26/11/2026: conta só-SSO (sem senha local) com e-mail corporativo (@ferreiracosta, @fcxlabs) também pode
 		// criar uma senha local pelo link — reserva caso o login corporativo (Keycloak) saia. O link prova a posse

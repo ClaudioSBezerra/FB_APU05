@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"fb_apu05/internal/exportacao"
 )
@@ -84,11 +85,11 @@ func PreviewLoteDespesaCSVHandler(db *sql.DB) http.HandlerFunc {
 			if l.Mes.Valid {
 				mes = l.Mes.Time.Format("2006-01-02")
 			}
-			_ = escritor.Write([]string{
+			_ = escritor.Write(csvSeguro([]string{
 				l.TipoSolicitacao, l.SolicitacaoID, l.SolicitanteNome, l.Lado,
 				l.DivisaoCodigo, l.CentroCustoCodigo, l.ContaOuClasseCodigo, mes,
 				strconv.FormatFloat(l.Valor, 'f', 2, 64),
-			})
+			}))
 		}
 		escritor.Flush()
 	}
@@ -128,12 +129,24 @@ func PreviewLoteObraCSVHandler(db *sql.DB) http.HandlerFunc {
 			if l.Lado.Valid {
 				lado = l.Lado.String
 			}
-			_ = escritor.Write([]string{
+			_ = escritor.Write(csvSeguro([]string{
 				l.TipoSolicitacao, l.SolicitacaoID, l.SolicitanteNome, l.Classificacao,
 				l.LocalObraCodigo, l.SubgrupoCodigo, l.OrdemInvestimento,
 				strconv.FormatFloat(l.Valor, 'f', 2, 64), lado,
-			})
+			}))
 		}
 		escritor.Flush()
 	}
+}
+
+// csvSeguro (27/11, pré-pentest): célula que começa com = + - @ TAB ou CR vira texto no Excel (prefixo ').
+func csvSeguro(c []string) []string {
+	for i, v := range c {
+		if v != "" && strings.ContainsRune("=+-@\t\r", rune(v[0])) {
+			if _, err := strconv.ParseFloat(v, 64); err != nil {
+				c[i] = "'" + v
+			}
+		}
+	}
+	return c
 }

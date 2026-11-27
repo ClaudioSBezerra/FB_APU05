@@ -82,6 +82,18 @@ func RequireAuth(next http.HandlerFunc, perfilExigido string) http.HandlerFunc {
 			jsonErr(w, http.StatusUnauthorized, "Token inválido")
 			return
 		}
+		// 27/11 (pré-pentest): perfil e "ativo" valem os do BANCO, não os do token — desativar ou rebaixar
+		// alguém corta o acesso em até 30 s, sem esperar o token de 8 h vencer.
+		if uid, _ := claims["user_id"].(string); uid != "" {
+			perfilAtual, ativo, conhecido := estadoUsuarioAtual(uid)
+			if conhecido {
+				if !ativo {
+					jsonErr(w, http.StatusUnauthorized, "Usuário desativado")
+					return
+				}
+				claims["perfil"] = perfilAtual
+			}
+		}
 
 		if perfilExigido != "" {
 			perfil, _ := claims["perfil"].(string)
